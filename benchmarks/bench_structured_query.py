@@ -31,7 +31,7 @@ TEST_CASES = [
     ("SEG-2part-long",   "Core/SearchEngine",      "SEGMENTS",  "2-segment: specific file in Core"),
     ("SEG-3part",        "/usr/local/bin",         "SEGMENTS",  "3-segment: name=bin, path has usr,local"),
     ("SEG-3part-file",   "/usr/bin/python",        "SEGMENTS",  "3-segment: python under /usr/bin"),
-    ("SEG-deep",         "/Users/wujian/data",     "SEGMENTS",  "3-segment: data under Users/wujian"),
+    ("SEG-deep",         "/Users/username/data",     "SEGMENTS",  "3-segment: data under Users/username"),
     ("SEG-wildcard",     "/usr/*/bin",             "SEGMENTS",  "Non-adjacent wildcard"),
     ("SEG-nomatch",      "/nonexist/qzxwv",        "SEGMENTS",  "No match structured"),
     ("SEG-single",       "/brew",                  "SEGMENTS",  "Single segment (name only)"),
@@ -40,7 +40,7 @@ TEST_CASES = [
     ("DIRLIST-usrbin",   "/usr/bin/*",             "DIR_LIST",  "List /usr/bin children"),
     ("DIRLIST-etc",      "/etc/*",                 "DIR_LIST",  "List /etc children"),
     ("DIRLIST-local",    "/usr/local/*",           "DIR_LIST",  "List /usr/local children"),
-    ("DIRLIST-deep",     "/wujian/data/*",         "DIR_LIST",  "List data dir children"),
+    ("DIRLIST-deep",     "/username/data/*",         "DIR_LIST",  "List data dir children"),
     ("DIRLIST-nomatch",  "/nonexistdir/*",         "DIR_LIST",  "No match dir list"),
 
     # DIR_EXACT mode (trailing /)

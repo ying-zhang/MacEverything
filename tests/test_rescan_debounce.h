@@ -14,8 +14,8 @@ static void runRescanDebounceTests() {
 
     check(isPathSubsumedBy("/", "/"), "exact match root");
     check(isPathSubsumedBy("/Users", "/"), "root subsumes /Users");
-    check(isPathSubsumedBy("/Users/wujian", "/"), "root subsumes nested path");
-    check(isPathSubsumedBy("/Users/wujian", "/Users"), "/Users subsumes /Users/wujian");
+    check(isPathSubsumedBy("/Users/username", "/"), "root subsumes nested path");
+    check(isPathSubsumedBy("/Users/username", "/Users"), "/Users subsumes /Users/username");
     check(isPathSubsumedBy("/Users", "/Users"), "exact match non-root");
     check(!isPathSubsumedBy("/Users2", "/Users"), "boundary: /Users does NOT subsume /Users2");
     check(!isPathSubsumedBy("/var", "/Users"), "disjoint paths");

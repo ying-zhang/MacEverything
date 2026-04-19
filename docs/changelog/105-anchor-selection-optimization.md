@@ -61,7 +61,7 @@ Feature 104 的性能基准测试发现，包含短/常见 namePattern 的 SEGME
 |---|---|---|---|
 | `/usr/local/bin` | 624 | **0.41** | 1522x |
 | `/usr/bin/python` | ~600 | **0.20** | ~3000x |
-| `/Users/wujian/data` | ~600 | **0.35** | ~1700x |
+| `/Users/username/data` | ~600 | **0.35** | ~1700x |
 | `Core/SearchEngine` | ~400 | **3.45** | ~116x |
 | `/usr/bin/` (DIR_EXACT) | N/A | **0.05** | — |
 

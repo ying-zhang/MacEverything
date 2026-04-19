@@ -38,7 +38,7 @@ static void runTildeExpansionTests() {
         check(engine.getRecord(res[0]).name == "f1.txt", "Tilde glob '~/Downloads/*.txt': correct file");
     }
 
-    // ~ alone (just home dir) — expands to e.g. "/Users/wujian"
+    // ~ alone (just home dir) — expands to e.g. "/Users/username"
     // This is a plain substring search; results depend on engine matching semantics.
     // At minimum it should not crash.
     res = engine.query("~");

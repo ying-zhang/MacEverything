@@ -157,7 +157,7 @@ static PreprocessedQuery preprocessQuery(const std::string& raw) {
     std::string result = raw.substr(start, end - start + 1);
 
     // 1) Expand leading ~ to the user's home directory so that patterns like
-    //    ~/*/*.txt match absolute indexed paths (e.g. /Users/wujian/Downloads/f1.txt).
+    //    ~/*/*.txt match absolute indexed paths (e.g. /Users/username/Downloads/f1.txt).
     if (!result.empty() && result[0] == '~') {
         const char* home = std::getenv("HOME");
         if (home) {

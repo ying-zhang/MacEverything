@@ -31,7 +31,7 @@ input normalisation.
 - **Unit tests**: Part 65 (7 tilde expansion tests) — all pass.
 - **Build**: `xcodebuild` Release build succeeded.
 - **HTTP**: `curl "localhost:19860/api/search?q=~/*/*.txt"` returns expected
-  results (e.g. `/Users/wujian/Downloads/f1.txt`).
+  results (e.g. `/Users/username/Downloads/f1.txt`).
 
 ## Risk
 

@@ -19,3 +19,15 @@ DerivedData/
 test_all_master
 .claude/string_search_bench
 .claude/worktrees/
+
+# Compiled binaries
+mac_scanner
+string_search_bench
+test_runner
+
+# Claude Code config (personal dev tooling)
+CLAUDE.md
+.claude/
+
+# Internal dev docs
+docs/superpowers/

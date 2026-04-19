@@ -2,12 +2,12 @@
 
 ## 问题
 
-搜索 `~/*/*.txt` 时返回 0 结果，但 `/Users/wujian/Downloads/f1.txt` 等文件应当匹配。
+搜索 `~/*/*.txt` 时返回 0 结果，但 `/Users/username/Downloads/f1.txt` 等文件应当匹配。
 
 ## 根因
 
 查询管道中没有对 `~` 字符做 Home 目录展开。`~` 被当作字面字符参与 glob 匹配，
-而索引中所有路径均为绝对路径（如 `/users/wujian/downloads/f1.txt`），
+而索引中所有路径均为绝对路径（如 `/Users/username/downloads/f1.txt`），
 因此模式 `~/*/*.txt` 永远无法匹配任何记录。
 
 ## 修复方案
@@ -15,8 +15,8 @@
 在 `SearchEngine::query()` 入口处（`SearchEngineQuery.cpp`），于 `keyword.empty()` 
 检查之后、`hasAdvancedSyntax` 判断之前，对以 `~` 或 `~/` 开头的关键词进行展开：
 
-- `~` → `$HOME`（如 `/Users/wujian`）
-- `~/xxx` → `$HOME/xxx`（如 `/Users/wujian/xxx`）
+- `~` → `$HOME`（如 `/Users/username`）
+- `~/xxx` → `$HOME/xxx`（如 `/Users/username/xxx`）
 - 非开头的 `~` 不受影响（如 `foo~bar` 不展开）
 
 展开后的字符串同时流入普通查询路径和高级查询路径（`queryAdvanced`），
