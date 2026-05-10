@@ -156,7 +156,11 @@ curl "http://localhost:19860/api/status"                          # 索引状态
 
 #### 从源码构建
 
-**环境要求：** macOS 13+，Xcode 15+
+**环境要求：** macOS 13+，Xcode 15+（完整 Xcode，不只是 Command Line Tools），Homebrew，RE2
+
+```bash
+brew install re2
+```
 
 ```bash
 git clone https://github.com/user/MacEverything.git && cd MacEverything
@@ -168,6 +172,8 @@ hdiutil create -volname MacEverything \
   -srcfolder build/Release/MacEverything.app \
   -ov -format UDZO MacEverything.dmg
 ```
+
+Release 构建会自动把 Homebrew 的 `libre2` 及其依赖嵌入 `.app/Contents/Frameworks`，避免发布包在未安装 Homebrew/RE2 的 Mac 上启动失败。
 
 #### CLI 守护进程
 

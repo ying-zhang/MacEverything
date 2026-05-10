@@ -156,7 +156,11 @@ curl "http://localhost:19860/api/status"                          # Index status
 
 #### Build from Source
 
-**Requirements:** macOS 13+, Xcode 15+
+**Requirements:** macOS 13+, Xcode 15+ (full Xcode, not just Command Line Tools), Homebrew, RE2
+
+```bash
+brew install re2
+```
 
 ```bash
 git clone https://github.com/user/MacEverything.git && cd MacEverything
@@ -168,6 +172,8 @@ hdiutil create -volname MacEverything \
   -srcfolder build/Release/MacEverything.app \
   -ov -format UDZO MacEverything.dmg
 ```
+
+Release builds automatically embed Homebrew's `libre2` and its dependencies into `.app/Contents/Frameworks` so the distributed app can launch on Macs without Homebrew/RE2 installed.
 
 #### CLI Daemon
 

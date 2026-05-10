@@ -2,7 +2,8 @@ CXX = clang++
 CXXFLAGS = -std=c++20 -O2 -Wall -Wextra
 FRAMEWORKS = -framework CoreServices
 CORE_SRCS = $(wildcard MacEverything/Core/*.cpp)
-RE2_PREFIX = /opt/homebrew/opt/re2
+HOMEBREW_PREFIX ?= /opt/homebrew
+RE2_PREFIX = $(HOMEBREW_PREFIX)/opt/re2
 RE2_CFLAGS = -I$(RE2_PREFIX)/include
 RE2_LDFLAGS = -L$(RE2_PREFIX)/lib -lre2
 
@@ -52,7 +53,8 @@ test-all: test_all
 app:
 	DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
 		-project MacEverything.xcodeproj -scheme MacEverything \
-		-configuration Release build SYMROOT=build
+		-configuration Release build SYMROOT=build \
+		CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM=""
 
 # === Package ===
 dmg: app
