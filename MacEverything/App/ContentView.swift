@@ -360,8 +360,9 @@ private struct ResultHeaderView: View {
             .font(.caption)
             .foregroundColor(.secondary)
             .padding(.horizontal, 5)
-            .frame(width: width, minHeight: 30, alignment: alignment)
-            .frame(maxWidth: width == nil ? .infinity : nil, minHeight: 30, alignment: alignment)
+            .frame(width: width, alignment: alignment)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
+            .frame(minHeight: 30, alignment: alignment)
             .background(settings.sortField == field ? Color.accentColor.opacity(0.10) : Color.clear)
             .contentShape(Rectangle())
         }
