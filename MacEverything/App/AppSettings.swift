@@ -312,7 +312,7 @@ final class AppSettings: ObservableObject {
     }
 
     private func saveArray(_ value: [String], _ key: String) {
-        defaults.set(normalizedPaths(value), forKey: key)
+        defaults.set(sortedSettingsList(normalizedPaths(value)), forKey: key)
     }
 
     private static func defaultIndexRoots() -> [String] {
@@ -377,6 +377,13 @@ func normalizedPaths(_ paths: [String]) -> [String] {
         result.append(standardized)
     }
     return result
+}
+
+@MainActor
+func sortedSettingsList(_ values: [String]) -> [String] {
+    values.sorted { lhs, rhs in
+        lhs.localizedStandardCompare(rhs) == .orderedAscending
+    }
 }
 
 @MainActor

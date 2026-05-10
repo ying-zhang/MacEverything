@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
     @ObservedObject private var searchOptions = SearchOptions.shared
+    @ObservedObject private var settings = AppSettings.shared
     @State private var scrollViewID = 0
     @FocusState private var isSearchFieldFocused: Bool
 
@@ -18,7 +19,9 @@ struct ContentView: View {
                     .foregroundColor(.blue)
                 HighlightedSearchField(
                     text: $viewModel.searchText,
-                    placeholder: L10n.tr("Search files... (infile: for content search)"),
+                    placeholder: settings.contentIndexingEnabled
+                        ? L10n.tr("Search files... (infile: for content search)")
+                        : L10n.tr("Search files..."),
                     ghostSuggestion: viewModel.ghostSuggestion,
                     isFocused: $isSearchFieldFocused,
                     onTab: {
@@ -320,7 +323,7 @@ private struct ResultHeaderView: View {
             }
         }
         .padding(.horizontal, 6)
-        .frame(minHeight: 30)
+        .frame(height: 22)
         .background(Color(nsColor: .controlBackgroundColor))
         .overlay(alignment: .bottom) {
             Rectangle()
@@ -334,7 +337,7 @@ private struct ResultHeaderView: View {
             Rectangle()
                 .fill(Color(nsColor: .separatorColor).opacity(0.55))
                 .frame(width: 1)
-                .padding(.vertical, 4)
+                .padding(.vertical, 3)
         }
         .frame(width: 10)
     }
@@ -362,7 +365,7 @@ private struct ResultHeaderView: View {
             .padding(.horizontal, 5)
             .frame(width: width, alignment: alignment)
             .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
-            .frame(minHeight: 30, alignment: alignment)
+            .frame(height: 22, alignment: alignment)
             .background(settings.sortField == field ? Color.accentColor.opacity(0.10) : Color.clear)
             .contentShape(Rectangle())
         }

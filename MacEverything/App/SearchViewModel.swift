@@ -305,7 +305,7 @@ class SearchViewModel: ObservableObject {
         }
 
         let lowerText = text.lowercased()
-        if lowerText.hasPrefix("infile:") {
+        if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
             isContentSearch = true
             displayItems = []
             cachedResults = []
@@ -667,7 +667,7 @@ class SearchViewModel: ObservableObject {
         searchGeneration &+= 1
         showingRecent = false
         let lowerText = searchText.lowercased()
-        if lowerText.hasPrefix("infile:") {
+        if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
             let keyword = String(searchText.dropFirst(7))
             contentKeyword = keyword
             isContentSearch = true

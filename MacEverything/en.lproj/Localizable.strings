@@ -1,4 +1,5 @@
 "Search files... (infile: for content search)" = "Search files... (infile: for content search)";
+"Search files..." = "Search files...";
 "Scanning... %d items scanned" = "Scanning... %d items scanned";
 "Syncing..." = "Syncing...";
 "Live" = "Live";
@@ -29,6 +30,7 @@
 "Launch at Login" = "Launch at Login";
 "Hide Dock Icon" = "Hide Dock Icon";
 "When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything." = "When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything.";
+"Dock visibility changes may require restarting MacEverything to fully take effect." = "Dock visibility changes may require restarting MacEverything to fully take effect.";
 "Quit MacEverything" = "Quit MacEverything";
 "Search" = "Search";
 "Regex" = "Regex";
@@ -79,6 +81,7 @@
 "Content Indexed Folders" = "Content Indexed Folders";
 "Content Excluded Folders" = "Content Excluded Folders";
 "Search Defaults" = "Search Defaults";
+"Search Options" = "Search Options";
 "Startup Results" = "Startup Results";
 "Empty List" = "Empty List";
 "Recent Changes" = "Recent Changes";
@@ -87,8 +90,11 @@
 "Default Case Sensitive" = "Default Case Sensitive";
 "Default Whole Word" = "Default Match Whole Word";
 "Default Match Filename" = "Default Filename Only";
+"Use regular expressions (advanced)" = "Use regular expressions (advanced)";
+"Regex quick start: . matches any character, .* matches any text, ^ anchors the start, and $ anchors the end." = "Regex quick start: . matches any character, .* matches any text, ^ anchors the start, and $ anchors the end.";
 "Maximum Results: %d" = "Maximum Results: %d";
 "Default Sort" = "Default Sort";
+"Sort Results By" = "Sort Results By";
 "Relevance" = "Relevance";
 "Name" = "Name";
 "Path" = "Path";

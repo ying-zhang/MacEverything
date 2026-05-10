@@ -230,6 +230,11 @@ struct HighlightedSearchField: NSViewRepresentable {
             textView.ghostSuggestion = ghostSuggestion
         }
 
+        if textView.placeholderString != placeholder {
+            textView.placeholderString = placeholder
+            textView.needsDisplay = true
+        }
+
         // Handle focus
         if isFocused.wrappedValue && textView.window != nil && textView.window?.firstResponder !== textView {
             textView.window?.makeFirstResponder(textView)

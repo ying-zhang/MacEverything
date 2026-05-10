@@ -1,4 +1,5 @@
 "Search files... (infile: for content search)" = "搜索文件...（使用 infile: 搜索文件内容）";
+"Search files..." = "搜索文件...";
 "Scanning... %d items scanned" = "正在扫描... 已扫描 %d 项";
 "Syncing..." = "正在同步...";
 "Live" = "实时";
@@ -29,6 +30,7 @@
 "Launch at Login" = "登录时启动";
 "Hide Dock Icon" = "不在 Dock 显示";
 "When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything." = "隐藏 Dock 图标后，可通过菜单栏图标或全局快捷键显示 MacEverything。";
+"Dock visibility changes may require restarting MacEverything to fully take effect." = "Dock 显示状态可能需要重启 MacEverything 后才会完全生效。";
 "Quit MacEverything" = "退出 MacEverything";
 "Search" = "搜索";
 "Regex" = "正则表达式";
@@ -79,6 +81,7 @@
 "Content Indexed Folders" = "内容索引文件夹";
 "Content Excluded Folders" = "内容排除文件夹";
 "Search Defaults" = "搜索默认值";
+"Search Options" = "搜索选项";
 "Startup Results" = "启动后结果";
 "Empty List" = "空列表";
 "Recent Changes" = "最近变动";
@@ -87,8 +90,11 @@
 "Default Case Sensitive" = "默认区分大小写";
 "Default Whole Word" = "默认仅匹配完整词";
 "Default Match Filename" = "默认仅匹配文件名";
+"Use regular expressions (advanced)" = "使用正则表达式（高级）";
+"Regex quick start: . matches any character, .* matches any text, ^ anchors the start, and $ anchors the end." = "正则入门：. 匹配任意单个字符，.* 匹配任意文本，^ 表示开头，$ 表示结尾。";
 "Maximum Results: %d" = "最大结果数：%d";
 "Default Sort" = "默认排序";
+"Sort Results By" = "排序方式";
 "Relevance" = "相关性";
 "Name" = "名称";
 "Path" = "路径";
