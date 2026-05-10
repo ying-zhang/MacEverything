@@ -166,6 +166,68 @@ struct SearchSyntaxHelpView: View {
     }
 }
 
+struct RegexHelpView: View {
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 20) {
+                SyntaxSection(title: L10n.tr("Regular Expression Search")) {
+                    SyntaxNote(L10n.tr("Regex mode treats the query as a regular expression. Normal search syntax such as AND by space, !, grouping, wildcards, filters, and macros is not parsed in regex mode."))
+                    SyntaxRow(L10n.tr("Search menu"), L10n.tr("Turn on regular expressions for the current search."))
+                    SyntaxRow("regex:pattern", L10n.tr("Use regex for a single query without changing the menu option."))
+                    SyntaxNote(L10n.tr("The regex: prefix treats the rest of the query as the pattern, including spaces and |."))
+                }
+
+                SyntaxSection(title: L10n.tr("Common Regex Patterns")) {
+                    SyntaxRow("a|b", L10n.tr("Match a or b"))
+                    SyntaxRow("gr(a|e)y", L10n.tr("Match gray or grey"))
+                    SyntaxRow(".", L10n.tr("Match any single character"))
+                    SyntaxRow(".*", L10n.tr("Match any text, including empty text"))
+                    SyntaxRow("[abc]", L10n.tr("Match one character: a, b, or c"))
+                    SyntaxRow("[^abc]", L10n.tr("Match one character except a, b, or c"))
+                    SyntaxRow("[a-z]", L10n.tr("Match one character in the range a to z"))
+                    SyntaxRow("[a-zA-Z]", L10n.tr("Match one ASCII letter"))
+                    SyntaxRow("^", L10n.tr("Match the start of the filename"))
+                    SyntaxRow("$", L10n.tr("Match the end of the filename"))
+                    SyntaxRow("\\", L10n.tr("Escape a special character"))
+                    SyntaxRow("\\.", L10n.tr("Match a literal dot"))
+                    SyntaxRow("\\\\", L10n.tr("Match a literal backslash"))
+                }
+
+                SyntaxSection(title: L10n.tr("Character Classes")) {
+                    SyntaxRow("\\d", L10n.tr("Match one digit: 0 to 9"))
+                    SyntaxRow("\\D", L10n.tr("Match one non-digit character"))
+                    SyntaxRow("\\w", L10n.tr("Match one word character: letter, digit, or underscore"))
+                    SyntaxRow("\\W", L10n.tr("Match one non-word character"))
+                    SyntaxRow("\\s", L10n.tr("Match one whitespace character, such as a space or tab"))
+                    SyntaxRow("\\S", L10n.tr("Match one non-whitespace character"))
+                }
+
+                SyntaxSection(title: L10n.tr("Repetition")) {
+                    SyntaxRow("*", L10n.tr("Repeat the previous element zero or more times"))
+                    SyntaxRow("?", L10n.tr("Repeat the previous element zero or one time"))
+                    SyntaxRow("+", L10n.tr("Repeat the previous element one or more times"))
+                    SyntaxRow("{3}", L10n.tr("Repeat the previous element exactly 3 times"))
+                    SyntaxRow("{2,}", L10n.tr("Repeat the previous element 2 or more times"))
+                    SyntaxRow("{2,5}", L10n.tr("Repeat the previous element between 2 and 5 times"))
+                }
+
+                SyntaxSection(title: L10n.tr("Examples")) {
+                    SyntaxRow("^README", L10n.tr("Names starting with README"))
+                    SyntaxRow("\\.(swift|mm|cpp)$", L10n.tr("Swift, Objective-C++, or C++ files"))
+                    SyntaxRow("^[^.]+$", L10n.tr("Names without a dot"))
+                    SyntaxRow("[0-9]{4}-[0-9]{2}-[0-9]{2}", L10n.tr("Dates such as 2026-05-11"))
+                    SyntaxRow("\\d{4}", L10n.tr("Any 4 consecutive digits"))
+                    SyntaxRow("^IMG_\\d{4}\\.jpg$", L10n.tr("Names such as IMG_0001.jpg"))
+                    SyntaxRow("^\\w+$", L10n.tr("Names made only of letters, digits, or underscores"))
+                    SyntaxRow("\\s", L10n.tr("Names containing whitespace"))
+                    SyntaxRow("[^\\x00-\\x7F]", L10n.tr("Names containing non-ASCII characters"))
+                }
+            }
+            .padding(24)
+        }
+    }
+}
+
 // MARK: - Helper Components
 
 private struct SyntaxSection<Content: View>: View {

@@ -7,6 +7,8 @@
 #include <algorithm>
 #include <atomic>
 #include <cstring>
+#include <initializer_list>
+#include <string_view>
 #include <thread>
 #include <tuple>
 #include <unordered_set>
@@ -54,6 +56,88 @@ uint32_t normalizationQueryLimit(uint32_t maxResults) {
     if (maxResults == 0) return 0;
     constexpr uint32_t kMinNormalizationMergeLimit = 1000;
     return std::max(maxResults, kMinNormalizationMergeLimit);
+}
+
+std::string quoteAliasTerm(const std::string& term) {
+    if (term.find_first_of(" \t|!<>\"") == std::string::npos) return term;
+    std::string quoted = "\"";
+    for (char c : term) {
+        if (c != '"') quoted += c;
+    }
+    quoted += '"';
+    return quoted;
+}
+
+std::string expandSystemAppAliasQuery(const std::string& original,
+                                      const std::string& lower) {
+    struct Alias {
+        const char* zh;
+        std::initializer_list<const char*> names;
+    };
+    static const Alias aliases[] = {
+        {"终端", {"terminal"}},
+        {"活动监视器", {"activity monitor"}},
+        {"磁盘工具", {"disk utility"}},
+        {"系统设置", {"system settings", "system preferences"}},
+        {"系统偏好设置", {"system preferences", "system settings"}},
+        {"访达", {"finder"}},
+        {"文本编辑", {"textedit"}},
+        {"预览", {"preview"}},
+        {"计算器", {"calculator"}},
+        {"日历", {"calendar"}},
+        {"通讯录", {"contacts"}},
+        {"邮件", {"mail"}},
+        {"信息", {"messages"}},
+        {"照片", {"photos"}},
+        {"音乐", {"music"}},
+        {"地图", {"maps"}},
+        {"备忘录", {"notes"}},
+        {"提醒事项", {"reminders"}},
+        {"图书", {"books"}},
+        {"播客", {"podcasts"}},
+        {"语音备忘录", {"voice memos"}},
+        {"快捷指令", {"shortcuts"}},
+        {"自动操作", {"automator"}},
+        {"脚本编辑器", {"script editor"}},
+        {"控制台", {"console"}},
+        {"钥匙串访问", {"keychain access"}},
+        {"字体册", {"font book"}},
+        {"屏幕共享", {"screen sharing"}},
+        {"截屏", {"screenshot"}},
+        {"数码测色计", {"digital color meter"}},
+        {"迁移助理", {"migration assistant"}},
+        {"时间机器", {"time machine"}},
+        {"启动台", {"launchpad"}},
+        {"国际象棋", {"chess"}},
+        {"图像捕捉", {"image capture"}},
+        {"快速播放器", {"quicktime player"}},
+        {"应用商店", {"app store"}}
+    };
+
+    for (const auto& alias : aliases) {
+        if (lower != alias.zh) continue;
+        std::string expanded = "<" + quoteAliasTerm(original);
+        for (const char* name : alias.names) {
+            expanded += "|";
+            expanded += quoteAliasTerm(name);
+        }
+        expanded += ">";
+        return expanded;
+    }
+    return original;
+}
+
+bool isSimpleSystemAppAliasQuery(const std::string& query) {
+    return query.find_first_of(" \t|!<>\"/\\:*?") == std::string::npos;
+}
+
+std::string stripAppExtension(std::string_view name) {
+    constexpr std::string_view ext = ".app";
+    if (name.size() >= ext.size() &&
+        name.substr(name.size() - ext.size()) == ext) {
+        name.remove_suffix(ext.size());
+    }
+    return std::string(name);
 }
 
 } // namespace
@@ -217,7 +301,17 @@ static PreprocessedQuery preprocessQuery(const std::string& raw) {
 
     // 2) Compute canonical lowercase once — eliminates redundant me::toLower()
     //    calls in parseQuery(), transformSlashTerms(), and makeTerm().
-    return { result, me::toLower(result) };
+    auto lower = me::toLower(result);
+    if (isSimpleSystemAppAliasQuery(result)) {
+        auto base = stripAppExtension(lower);
+        auto originalBase = stripAppExtension(result);
+        auto expanded = expandSystemAppAliasQuery(originalBase, base);
+        if (expanded != originalBase) {
+            result = std::move(expanded);
+            lower = me::toLower(result);
+        }
+    }
+    return { result, lower };
 }
 
 // ---------------------------------------------------------------------------

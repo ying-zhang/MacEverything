@@ -20,8 +20,8 @@ struct ContentView: View {
                 HighlightedSearchField(
                     text: $viewModel.searchText,
                     placeholder: settings.contentIndexingEnabled
-                        ? L10n.tr("Search files... (infile: for content search)")
-                        : L10n.tr("Search files..."),
+                        ? L10n.tr("Search files... (Chinese initials supported, infile: for content)")
+                        : L10n.tr("Search files... (Chinese initials supported)"),
                     ghostSuggestion: viewModel.ghostSuggestion,
                     isFocused: $isSearchFieldFocused,
                     onTab: {

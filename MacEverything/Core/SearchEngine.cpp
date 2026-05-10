@@ -41,6 +41,7 @@ void SearchEngine::tombstoneAt(uint32_t idx) {
     modTimes_[idx] = 0;
     if (idx < inodes_.size()) inodes_[idx] = 0;
     if (idx < devIds_.size()) devIds_[idx] = 0;
+    pinyinInitialsPool_.tombstone(idx);
     namePool_.tombstone(idx);
     origNamePool_.tombstone(idx);
 }
@@ -162,7 +163,9 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     }
 
     // Build trigram index for fast filename search
+    buildPinyinInitialsPoolFromOrigNames();
     buildTrigramIndex();
+    buildPinyinInitialsIndex();
     // Build path trigram index for fast path-only search
     buildPathTrigramIndex();
     rebuildPathIdxToRecords();
@@ -277,6 +280,8 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
 
     // Build trigram index for fast filename search
     buildTrigramIndex();
+    buildPinyinInitialsPoolFromOrigNames();
+    buildPinyinInitialsIndex();
     buildPathTrigramIndex();
     rebuildPathIdxToRecords();
     buildExtensionIndex();
@@ -326,6 +331,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
         uint32_t oldIdx = existIt->second;
         time_t oldModTime = static_cast<time_t>(modTimes_[oldIdx]);
         removeTrigramsForRecord(oldIdx);
+        removePinyinInitialsForRecord(oldIdx);
         removePathTrigramsForRecord(oldIdx);
         tombstoneAt(oldIdx);
         pathIndex_.erase(existIt);
@@ -342,6 +348,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
     record.path.shrink_to_fit();
 
     origNamePool_.append(record.name);
+    pinyinInitialsPool_.append(me::mandarinInitialsKey(record.name));
     pushRecord(std::move(record));
     uint32_t nameIdx = namePool_.append(lower);
     (void)nameIdx; // nameIdx == idx since namePool_ grows in lockstep
@@ -350,6 +357,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
 
     // Update trigram index
     addTrigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+    addPinyinInitialsForRecord(idx);
     addPathTrigramsForRecord(idx);
     addExtensionForRecord(idx);
 
@@ -374,6 +382,7 @@ bool SearchEngine::removeByPathUnlocked(const std::string& fullPath) {
     uint32_t idx = it->second;
     time_t oldModTime = static_cast<time_t>(modTimes_[idx]);
     removeTrigramsForRecord(idx);
+    removePinyinInitialsForRecord(idx);
     removePathTrigramsForRecord(idx);
     removeExtensionForRecord(idx);
     tombstoneAt(idx);
@@ -411,6 +420,7 @@ uint32_t SearchEngine::removeByPathPrefix(const std::string& pathPrefix) {
             time_t oldModTime = static_cast<time_t>(modTimes_[idx]);
             // Clean up trigram index (must happen before clearing namePool_)
             removeTrigramsForRecord(idx);
+            removePinyinInitialsForRecord(idx);
             removePathTrigramsForRecord(idx);
             removeExtensionForRecord(idx);
             tombstoneAt(idx);
@@ -448,6 +458,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
             }
 
             removeTrigramsForRecord(idx);
+            removePinyinInitialsForRecord(idx);
             removePathTrigramsForRecord(idx);
             removeExtensionForRecord(idx);
             tombstoneAt(idx);
@@ -475,11 +486,13 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         record.path.shrink_to_fit();
 
         origNamePool_.append(record.name);
+        pinyinInitialsPool_.append(me::mandarinInitialsKey(record.name));
         pushRecord(std::move(record));
         namePool_.append(lower);
         pathIndices_.push_back(pIdx);
         pathIndex_[me::toLower(fullPath)] = newIdx;
         addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+        addPinyinInitialsForRecord(newIdx);
         addPathTrigramsForRecord(newIdx);
         addExtensionForRecord(newIdx);
         if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
@@ -505,6 +518,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
         time_t oldModTime = static_cast<time_t>(modTimes_[idx]);
         // Clean up trigram index (must happen before tombstoning namePool_)
         removeTrigramsForRecord(idx);
+        removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
         tombstoneAt(idx);
@@ -527,11 +541,13 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
     updated.path.shrink_to_fit();
 
     origNamePool_.append(updated.name);
+    pinyinInitialsPool_.append(me::mandarinInitialsKey(updated.name));
     pushRecord(std::move(updated));
     namePool_.append(lower);
     pathIndices_.push_back(pIdx);
     pathIndex_[me::toLower(newFullPath)] = newIdx;
     addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+    addPinyinInitialsForRecord(newIdx);
     addPathTrigramsForRecord(newIdx);
     addExtensionForRecord(newIdx);
     if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
@@ -611,6 +627,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     cdDevIds.reserve(snapSize);
     StringPool cdNamePool;
     StringPool cdOrigNamePool;
+    StringPool cdPinyinInitialsPool;
     std::vector<uint32_t> cdPathIndices;
     cdPathIndices.reserve(snapSize);
     StringPool cdPathPool;
@@ -645,6 +662,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         // Copy name from snapshot pool into compacted pool
         cdOrigNamePool.append(snapOrigNamePool.data(i), snapOrigNamePool.length(i));
         cdNamePool.append(snapNamePool.data(i), snapNamePool.length(i));
+        cdPinyinInitialsPool.append(me::mandarinInitialsKey(snapName));
         cdPathIndices.push_back(newPIdx);
         cdTypes.push_back(snapTypes[i]);
         cdSizes.push_back(snapSizes[i]);
@@ -656,6 +674,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
 
     // Build trigram index, path trigram index, extension index, and recent cache outside any lock
     auto cdTrigramIndex = buildTrigramIndexFromData(cdTypes, cdNamePool);
+    auto cdPinyinInitialsTrigramIndex = buildTrigramIndexFromData(cdTypes, cdPinyinInitialsPool);
     auto cdPathTrigramIndex = buildPathTrigramIndexFromData(cdLowerPathPool);
     auto cdPathIdxToRecords = buildPathIdxToRecordsFromData(cdTypes, cdPathIndices, cdPathPool.entryCount());
     auto cdExtensionIndex = buildExtensionIndexFromData(cdTypes, cdNamePool);
@@ -692,6 +711,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         devIds_ = std::move(cdDevIds);
         origNamePool_ = std::move(cdOrigNamePool);
         namePool_ = std::move(cdNamePool);
+        pinyinInitialsPool_ = std::move(cdPinyinInitialsPool);
         pathIndices_ = std::move(cdPathIndices);
         pathPool_ = std::move(cdPathPool);
         lowerPathPool_ = std::move(cdLowerPathPool);
@@ -699,6 +719,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         lowerPathLookup_ = std::move(cdLowerPathLookup);
         pathIndex_ = std::move(cdPathIndex);
         nameTrigramIndex_ = std::move(cdTrigramIndex);
+        pinyinInitialsTrigramIndex_ = std::move(cdPinyinInitialsTrigramIndex);
         pathTrigramIndex_ = std::move(cdPathTrigramIndex);
         pathIdxToRecords_ = std::move(cdPathIdxToRecords);
         extensionIndex_ = std::move(cdExtensionIndex);
@@ -719,9 +740,11 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             // Copy name from old pool into current pool
             origNamePool_.append(oldOrigNamePool.data(i), oldOrigNamePool.length(i));
             namePool_.append(oldNamePool.data(i), oldNamePool.length(i));
+            pinyinInitialsPool_.append(me::mandarinInitialsKey(origName));
             pathIndex_[fullPath] = newIdx;
             pathIndices_.push_back(pIdx);
             addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+            addPinyinInitialsForRecord(newIdx);
             addToRecentCache(newIdx, static_cast<time_t>(oldModTimes[i]));
             // Push SoA columns for replayed record
             types_.push_back(oldTypes[i]);
@@ -745,6 +768,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             uint32_t newIdx = it->second;
             if (newIdx < types_.size() && types_[newIdx] != 0) {
                 removeTrigramsForRecord(newIdx);
+                removePinyinInitialsForRecord(newIdx);
                 removePathTrigramsForRecord(newIdx);
                 removeExtensionForRecord(newIdx);
                 time_t oldMod = static_cast<time_t>(modTimes_[newIdx]);
@@ -869,6 +893,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             if (existIt != pathIndex_.end()) {
                 uint32_t oldIdx = existIt->second;
                 removeTrigramsForRecord(oldIdx);
+                removePinyinInitialsForRecord(oldIdx);
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
                 tombstoneAt(oldIdx);
@@ -886,11 +911,13 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             e.record.path.shrink_to_fit();
 
             origNamePool_.append(e.record.name);
+            pinyinInitialsPool_.append(me::mandarinInitialsKey(e.record.name));
             pushRecord(std::move(e.record));
             namePool_.append(lower);
             pathIndices_.push_back(pIdx);
             pathIndex_[lowerFull] = idx;
             addTrigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+            addPinyinInitialsForRecord(idx);
             addPathTrigramsForRecord(idx);
             addExtensionForRecord(idx);
             if (idx / kRecordsPerPage >= dirtyPages_.size()) {
@@ -905,6 +932,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             if (it == pathIndex_.end()) break; // silently ignore
             uint32_t idx = it->second;
             removeTrigramsForRecord(idx);
+            removePinyinInitialsForRecord(idx);
             removePathTrigramsForRecord(idx);
             removeExtensionForRecord(idx);
             tombstoneAt(idx);
@@ -918,6 +946,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             if (it != pathIndex_.end()) {
                 uint32_t oldIdx = it->second;
                 removeTrigramsForRecord(oldIdx);
+                removePinyinInitialsForRecord(oldIdx);
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
                 tombstoneAt(oldIdx);
@@ -935,11 +964,13 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             e.record.path.shrink_to_fit();
 
             origNamePool_.append(e.record.name);
+            pinyinInitialsPool_.append(me::mandarinInitialsKey(e.record.name));
             pushRecord(std::move(e.record));
             namePool_.append(lower);
             pathIndices_.push_back(pIdx);
             pathIndex_[lowerFull] = newIdx;
             addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+            addPinyinInitialsForRecord(newIdx);
             addPathTrigramsForRecord(newIdx);
             addExtensionForRecord(newIdx);
             if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {

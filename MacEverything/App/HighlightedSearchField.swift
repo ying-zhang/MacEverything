@@ -108,12 +108,16 @@ enum QueryHighlightTokenizer {
                         // Re-collect the argument: for filters, < > are allowed in the arg
                         let argStartInInput = wordStart + nameLen
                         var argEnd = argStartInInput
-                        while argEnd < len {
-                            let ch = chars[argEnd]
-                            if ch == 0x20 || ch == 0x09 || ch == 0x7C || ch == 0x21 || ch == 0x22 {
-                                break
+                        if name == "regex" {
+                            argEnd = len
+                        } else {
+                            while argEnd < len {
+                                let ch = chars[argEnd]
+                                if ch == 0x20 || ch == 0x09 || ch == 0x7C || ch == 0x21 || ch == 0x22 {
+                                    break
+                                }
+                                argEnd += 1
                             }
-                            argEnd += 1
                         }
                         if argEnd > argStartInInput {
                             tokens.append(QueryToken(

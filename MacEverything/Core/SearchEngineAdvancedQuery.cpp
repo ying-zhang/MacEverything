@@ -114,6 +114,20 @@ static bool anchoredNameMatch(const char* candidate, size_t candidateLen,
     return false;
 }
 
+static bool isAsciiAlphaNumericQuery(const std::string& s) {
+    if (s.empty()) return false;
+    bool hasAlpha = false;
+    for (unsigned char c : s) {
+        if (std::isalpha(c)) {
+            hasAlpha = true;
+            continue;
+        }
+        if (std::isdigit(c)) continue;
+        return false;
+    }
+    return hasAlpha;
+}
+
 /// Pre-compiled regex cache, keyed by QueryNode pointer.
 /// Uses RE2 for guaranteed linear-time matching (no backtracking).
 using RegexCache = std::unordered_map<const QueryNode*, std::unique_ptr<re2::RE2>>;
@@ -277,6 +291,7 @@ static bool evalFilter(const QueryNode& node,
 static bool evalTerm(const QueryNode& node,
                      const char* nameData, uint16_t nameLen,
                      const char* pathData, uint16_t pathLen,
+                     const char* pinyinData, uint16_t pinyinLen,
                      const char* origNameData, uint16_t origNameLen,
                      const char* origPathData, uint16_t origPathLen,
                      std::vector<char>& pathBuf,
@@ -319,6 +334,10 @@ static bool evalTerm(const QueryNode& node,
             return anchoredNameMatch(nameData, nameLen, lower, node.nameKind);
         }
         if (me::simdContains(nameData, nameLen, lower.data(), lower.size())) {
+            return true;
+        }
+        if (isAsciiAlphaNumericQuery(lower) &&
+            me::simdContains(pinyinData, pinyinLen, lower.data(), lower.size())) {
             return true;
         }
         // Skip full-path matching when nameOnly is set
@@ -401,6 +420,7 @@ static bool evalNode(const QueryNode& node,
                      uint8_t recType, uint64_t recSize, time_t recModTime,
                      const char* nameData, uint16_t nameLen,
                      const char* pathData, uint16_t pathLen,
+                     const char* pinyinData, uint16_t pinyinLen,
                      const char* origNameData, uint16_t origNameLen,
                      const char* origPathData, uint16_t origPathLen,
                      std::vector<char>& pathBuf,
@@ -408,6 +428,7 @@ static bool evalNode(const QueryNode& node,
     switch (node.type) {
         case QueryNodeType::TERM:
             return evalTerm(node, nameData, nameLen, pathData, pathLen,
+                            pinyinData, pinyinLen,
                             origNameData, origNameLen, origPathData, origPathLen,
                             pathBuf, regexCache);
 
@@ -415,6 +436,7 @@ static bool evalNode(const QueryNode& node,
             for (auto& child : node.children) {
                 if (!evalNode(*child, recType, recSize, recModTime,
                               nameData, nameLen, pathData, pathLen,
+                              pinyinData, pinyinLen,
                               origNameData, origNameLen, origPathData, origPathLen,
                               pathBuf, regexCache))
                     return false;
@@ -425,6 +447,7 @@ static bool evalNode(const QueryNode& node,
             for (auto& child : node.children) {
                 if (evalNode(*child, recType, recSize, recModTime,
                              nameData, nameLen, pathData, pathLen,
+                             pinyinData, pinyinLen,
                              origNameData, origNameLen, origPathData, origPathLen,
                              pathBuf, regexCache))
                     return true;
@@ -435,6 +458,7 @@ static bool evalNode(const QueryNode& node,
             if (node.children.empty()) return true;
             return !evalNode(*node.children[0], recType, recSize, recModTime,
                              nameData, nameLen, pathData, pathLen,
+                             pinyinData, pinyinLen,
                              origNameData, origNameLen, origPathData, origPathLen,
                              pathBuf, regexCache);
 
@@ -712,6 +736,17 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             }
         }
 
+        if (!stageTooMany && isAsciiAlphaNumericQuery(trigramKey) &&
+            !pinyinInitialsTrigramIndex_.empty()) {
+            bool pinyinAllFound = false;
+            auto pinyinCands = intersectPostingLists(pinyinInitialsTrigramIndex_, trigramKey, pinyinAllFound);
+            if (pinyinAllFound) {
+                anyCovered = true;
+                unionSortedInto(nameCands, pinyinCands);
+                stageTooMany = nameCands.size() > candidateThreshold;
+            }
+        }
+
         if (!stageTooMany && !pathTrigramIndex_.empty()) {
             bool pathAllFound = false;
             auto pathIdxCands = intersectPostingLists(pathTrigramIndex_, trigramKey, pathAllFound);
@@ -885,6 +920,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             const auto* sizesPtr = sizes_.data();
             const auto* modTimesPtr = modTimes_.data();
             const auto& namePool = namePool_;
+            const auto& pinyinPool = pinyinInitialsPool_;
             const auto& origNamePool = origNamePool_;
             const auto& lowerPathPool = lowerPathPool_;
             const auto& pathPool = pathPool_;
@@ -913,6 +949,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (typesPtr[idx] == 0) continue;
                     const char* nd = namePool.data(idx);
                     uint16_t nl = namePool.length(idx);
+                    const char* pyd = pinyinPool.data(idx);
+                    uint16_t pyl = pinyinPool.length(idx);
                     uint32_t pi = pIndices[idx];
                     const char* pd = lowerPathPool.data(pi);
                     uint16_t pl = lowerPathPool.length(pi);
@@ -922,12 +960,15 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     uint16_t opl = pathPool.length(pi);
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, pd, pl, ond, onl, opd, opl,
+                                  nd, nl, pd, pl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
                     uint8_t priority = 2;
                     if (!sTerm.empty()) {
                         if (me::simdContains(nd, nl, sTerm.data(), sTerm.size())) {
                             priority = namePriority(nd, nl, sTerm.data(), sTerm.size());
+                        } else if (isAsciiAlphaNumericQuery(sTerm) &&
+                                   me::simdContains(pyd, pyl, sTerm.data(), sTerm.size())) {
+                            priority = 3;
                         } else {
                             priority = 3;
                         }
@@ -957,6 +998,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 if (smallTypesPtr[idx] == 0) continue;
                 const char* nd = namePool_.data(idx);
                 uint16_t nl = namePool_.length(idx);
+                const char* pyd = pinyinInitialsPool_.data(idx);
+                uint16_t pyl = pinyinInitialsPool_.length(idx);
                 uint32_t pi = pathIndices_[idx];
                 const char* pd = lowerPathPool_.data(pi);
                 uint16_t pl = lowerPathPool_.length(pi);
@@ -966,12 +1009,15 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 uint16_t opl = pathPool_.length(pi);
                 if (!evalNode(*ast, smallTypesPtr[idx], smallSizesPtr[idx],
                               static_cast<time_t>(smallModTimesPtr[idx]),
-                              nd, nl, pd, pl, ond, onl, opd, opl,
+                              nd, nl, pd, pl, pyd, pyl, ond, onl, opd, opl,
                               pathBuf, regexCache)) continue;
                 uint8_t priority = 2;
                 if (!scoringTerm.empty()) {
                     if (me::simdContains(nd, nl, scoringTerm.data(), scoringTerm.size())) {
                         priority = namePriority(nd, nl, scoringTerm.data(), scoringTerm.size());
+                    } else if (isAsciiAlphaNumericQuery(scoringTerm) &&
+                               me::simdContains(pyd, pyl, scoringTerm.data(), scoringTerm.size())) {
+                        priority = 3;
                     } else {
                         priority = 3;
                     }
@@ -999,6 +1045,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         const auto* sizesPtr = sizes_.data();
         const auto* modTimesPtr = modTimes_.data();
         const auto& namePool = namePool_;
+        const auto& pinyinPool = pinyinInitialsPool_;
         const auto& origNamePool = origNamePool_;
         const auto& lowerPathPool = lowerPathPool_;
         const auto& pathPool = pathPool_;
@@ -1030,7 +1077,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (typesPtr[idx] == 0) continue;
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                                  nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                   localPathBuf, regCache)) continue;
                     local.push_back({static_cast<uint32_t>(idx), 2, 0});
                 }
@@ -1047,7 +1094,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         size_t ri = idx + bit;
                         if (evalNode(*astPtr, typesPtr[ri], sizesPtr[ri],
                                      static_cast<time_t>(modTimesPtr[ri]),
-                                     nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                                     nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                      localPathBuf, regCache)) {
                             local.push_back({static_cast<uint32_t>(ri), 2, 0});
                         }
@@ -1060,7 +1107,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (typesPtr[idx] == 0) continue;
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
+                                  nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                   localPathBuf, regCache)) continue;
                     local.push_back({static_cast<uint32_t>(idx), 2, 0});
                 }
@@ -1072,6 +1119,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (typesPtr[idx] == 0) continue;
                     const char* nd = namePool.data(static_cast<uint32_t>(idx));
                     uint16_t nl = namePool.length(static_cast<uint32_t>(idx));
+                    const char* pyd = pinyinPool.data(static_cast<uint32_t>(idx));
+                    uint16_t pyl = pinyinPool.length(static_cast<uint32_t>(idx));
                     uint32_t pi = pIndices[idx];
                     const char* pd = lowerPathPool.data(pi);
                     uint16_t pl = lowerPathPool.length(pi);
@@ -1082,13 +1131,16 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, pd, pl, ond, onl, opd, opl,
+                                  nd, nl, pd, pl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
 
                     uint8_t priority = 2;
                     if (!sTerm.empty()) {
                         if (me::simdContains(nd, nl, sTerm.data(), sTerm.size())) {
                             priority = namePriority(nd, nl, sTerm.data(), sTerm.size());
+                        } else if (isAsciiAlphaNumericQuery(sTerm) &&
+                                   me::simdContains(pyd, pyl, sTerm.data(), sTerm.size())) {
+                            priority = 3;
                         } else {
                             priority = 3;
                         }

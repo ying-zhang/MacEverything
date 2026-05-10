@@ -57,10 +57,11 @@
 
 | 查询 | 说明 |
 |------|------|
-| `readme` | 文件名包含 "readme" |
+| `readme` | 文件名或路径包含 "readme" |
 | `*.swift` | 所有 Swift 源文件 |
 | `ext:py size:>1mb` | 大于 1MB 的 Python 文件 |
 | `dm:today` | 今天修改过的文件 |
+| `ying pdf` | 同时匹配路径/文件名片段，如 `/Users/ying/xx/xx.pdf` |
 | `config path:/usr` | `/usr` 下包含 "config" 的文件 |
 | `"exact phrase"` | 精确短语匹配 |
 | `foo OR bar` | 布尔 OR 运算 |
@@ -69,6 +70,12 @@
 | `type:folder node_modules` | 仅搜索目录 |
 | `~/Documents/*.pdf` | Tilde 展开 + glob |
 | `infile:TODO ext:cpp` | C++ 文件中搜索 "TODO" |
+
+#### 文件名与路径片段匹配
+
+默认搜索面向文件名和完整路径：空格分隔的多个普通词按 AND 组合，每个词可以命中文件名或路径任意位置。因此 `ying pdf` 可以匹配 `/Users/ying/xx/xx.pdf`，也保留 Everything 式“随手输入片段即可命中”的体验。
+
+带 `/` 的查询会启用结构化路径匹配，并继续保持子串匹配语义。比如 `src/main` 表示文件名包含 `main` 且父路径包含 `src`；`/project/*/target` 可匹配非相邻路径段；`/local/bin/*` 用于列出目录的直接子项。非 ASCII 查询会在查询阶段自动尝试 macOS 常见的 Unicode NFC/NFD 归一化，不额外扩大持久索引。
 
 <details>
 <summary><b>全部过滤器列表</b></summary>
@@ -218,7 +225,7 @@ make daemon
 | 组件 | 关键设计 |
 |------|---------|
 | **DirectoryScanner** | 多线程工作窃取 + `getattrlistbulk` 单次系统调用批量获取文件属性，4–32 线程自适应 |
-| **SearchEngine** | Trigram 倒排索引（name + path 双索引）+ 竞争选择最优候选集 + SoA 列式过滤 |
+| **SearchEngine** | Trigram 倒排索引（name + path 双索引）+ 多词路径/文件名候选合并 + 竞争选择最优候选集 + SoA 列式过滤 |
 | **ContentIndex** | Trigram 全文倒排索引，FNV-1a 哈希增量更新，仅重新索引变更文件 |
 | **SIMDSearch** | ARM NEON 128-bit first-last byte 向量化匹配 + 2x 循环展开，单线程 11.5 GB/s |
 | **IndexPersistence** | WAL + CRC32 + 分页脏页刷写 + 原子 rename，COW 无阻塞压缩（锁持有 < 100ms） |
@@ -262,12 +269,14 @@ make daemon
 |------|------|
 | `getattrlistbulk` | 单次系统调用批量获取文件属性 — 避免逐文件 `stat` |
 | Trigram 倒排索引 | 亚线性搜索：比线性扫描快 33x–308x |
+| 文件名/路径双索引 | 普通词同时检索文件名与完整路径，复用现有 Trigram 和 PathTable，不增加内容索引级别的磁盘占用 |
 | SoA 列式布局 | 缓存友好的内存访问模式，纯过滤查询 SIMD 批量判断 16 条记录 |
 | `__builtin_prefetch` | 预取距离 8，隐藏候选验证阶段的随机内存访问延迟 |
 | ARM NEON SIMD | 128-bit 向量化字符串匹配，2x 循环展开，逼近内存带宽上限 |
 | GCD 并行扫描 | Trigram 无法加速时启用多核线性扫描 |
 | StringPool 连续内存 | 文件名紧凑排列在单一 `char` 缓冲区，SIMD 友好 |
 | PathTable intern 化 | 目录路径仅存 `uint32` 索引 — 百万文件节省 ~550MB |
+| Unicode 查询归一化 | 对非 ASCII 查询在查询阶段尝试 NFC/NFD 变体，兼容 macOS 文件名表示且不维护第二份索引 |
 | Generation 计数器 | 每 1024 次迭代检查，快速输入时零开销取消过时查询 |
 | APFS Firmlink 去重 | inode + devid 检测，正确处理 macOS Data/System 卷合并环路 |
 | Regex Trigram 预过滤 | 从正则中提取字面量生成 trigram 候选，~7s → <100ms |

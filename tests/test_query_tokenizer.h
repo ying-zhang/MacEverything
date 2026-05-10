@@ -149,5 +149,14 @@ static void runQueryTokenizerTests() {
         check(tokens[0].value == "unclosed", "54.15 value captured");
     }
 
+    // 54.16 regex: consumes the rest of the query as one pattern
+    {
+        auto tokens = QueryTokenizer::tokenize("regex:a|b c");
+        check(tokens.size() == 2, "54.16 regex token count");
+        check(tokens[0].type == TokenType::FILTER, "54.16 regex is FILTER");
+        check(tokens[0].filterName == "regex", "54.16 regex filter name");
+        check(tokens[0].filterArg == "a|b c", "54.16 regex arg preserves operators and spaces");
+    }
+
     std::cout << "  Passed: " << localPassed << "  Failed: " << localFailed << "\n\n";
 }
