@@ -91,6 +91,29 @@ static bool isWholeWordMatch(const char* text, size_t textLen,
     return true;
 }
 
+static bool anchoredNameMatch(const char* candidate, size_t candidateLen,
+                              const std::string& needle,
+                              PathSegmentKind kind) {
+    if (!candidate) return false;
+    const size_t needleLen = needle.size();
+    if (needleLen == 0) return true;
+    if (candidateLen < needleLen) return false;
+
+    switch (kind) {
+        case PathSegmentKind::PREFIX:
+            return std::memcmp(candidate, needle.data(), needleLen) == 0;
+        case PathSegmentKind::SUFFIX:
+            return std::memcmp(candidate + candidateLen - needleLen,
+                               needle.data(), needleLen) == 0;
+        case PathSegmentKind::EXACT:
+            return candidateLen == needleLen &&
+                   std::memcmp(candidate, needle.data(), needleLen) == 0;
+        case PathSegmentKind::SUBSTRING:
+            return me::simdContains(candidate, candidateLen, needle.data(), needleLen);
+    }
+    return false;
+}
+
 /// Pre-compiled regex cache, keyed by QueryNode pointer.
 /// Uses RE2 for guaranteed linear-time matching (no backtracking).
 using RegexCache = std::unordered_map<const QueryNode*, std::unique_ptr<re2::RE2>>;
@@ -139,14 +162,8 @@ static bool evalFilter(const QueryNode& node,
     // __pathseg: internal filter — structured path segment matching
     if (name == "__pathseg") {
         if (!nameData || !pathData) return true;
-        // Build full path: pathData/nameData for component-level matching
-        size_t fullLen = static_cast<size_t>(pathLen) + 1 + nameLen;
-        if (pathBuf.size() < fullLen) pathBuf.resize(fullLen * 2);
-        memcpy(pathBuf.data(), pathData, pathLen);
-        pathBuf[pathLen] = '/';
-        memcpy(pathBuf.data() + pathLen + 1, nameData, nameLen);
-        std::string_view fullPath(pathBuf.data(), fullLen);
-        return SearchEngine::pathSegmentsMatch(fullPath, node.pathSegments);
+        return SearchEngine::pathSegmentsMatch(
+            std::string_view(pathData, pathLen), node.pathSegments);
     }
 
     // ext: — match file extension (requires name data)
@@ -271,6 +288,9 @@ static bool evalTerm(const QueryNode& node,
         if (node.caseSensitive) {
             // Case-sensitive: compare against original-case name
             const auto& term = node.text;
+            if (node.nameOnly && node.useNameKind) {
+                return anchoredNameMatch(origNameData, origNameLen, term, node.nameKind);
+            }
             // Check name
             if (origNameLen >= term.size()) {
                 for (size_t i = 0; i + term.size() <= origNameLen; ++i) {
@@ -295,6 +315,9 @@ static bool evalTerm(const QueryNode& node,
         }
         // Case-insensitive (default): use lowercase nameData
         const auto& lower = node.textLower;
+        if (node.nameOnly && node.useNameKind) {
+            return anchoredNameMatch(nameData, nameLen, lower, node.nameKind);
+        }
         if (me::simdContains(nameData, nameLen, lower.data(), lower.size())) {
             return true;
         }

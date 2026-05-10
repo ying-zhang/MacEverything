@@ -215,7 +215,7 @@ void ServiceEngine::stopMonitoring() {
 void ServiceEngine::scheduleRescanForPaths(const std::vector<std::string>& paths) {
     std::lock_guard<std::mutex> lock(pendingRescanMutex_);
 
-    pendingRescanPaths_ = mergeRescanPaths(pendingRescanPaths_, paths);
+    pendingRescanPaths_ = mergeRescanPaths(pendingRescanPaths_, minimizeRescanPaths(paths));
 
     LOG_INFO("FSWatcher", "Debounce: " << pendingRescanPaths_.size()
              << " pending rescan path(s), scheduling " << kRescanDebounceDelaySec << "s delay");

@@ -10,6 +10,7 @@
 #include <vector>
 #include <unordered_map>
 #include <chrono>
+#include <algorithm>
 
 /// Returns true if `child` is the same path as `parent` or a descendant of it.
 /// Correctly handles the root path "/" and path boundaries
@@ -55,6 +56,35 @@ inline std::set<std::string> mergeRescanPaths(
         result.insert(np);
     }
 
+    return result;
+}
+
+/// Collapse a batch to the shallowest paths that cover all requested rescans.
+/// This keeps bursty FSEvents batches from carrying thousands of redundant
+/// descendant directories into the debounce queue.
+inline std::vector<std::string> minimizeRescanPaths(std::vector<std::string> paths) {
+    paths.erase(std::remove(paths.begin(), paths.end(), ""), paths.end());
+    std::sort(paths.begin(), paths.end(), [](const std::string& a, const std::string& b) {
+        const auto depthA = std::count(a.begin(), a.end(), '/');
+        const auto depthB = std::count(b.begin(), b.end(), '/');
+        if (depthA != depthB) return depthA < depthB;
+        return a < b;
+    });
+    paths.erase(std::unique(paths.begin(), paths.end()), paths.end());
+
+    std::vector<std::string> result;
+    result.reserve(paths.size());
+    for (const auto& path : paths) {
+        bool covered = false;
+        for (const auto& parent : result) {
+            if (isPathSubsumedBy(path, parent)) {
+                covered = true;
+                break;
+            }
+        }
+        if (!covered) result.push_back(path);
+    }
+    std::sort(result.begin(), result.end());
     return result;
 }
 

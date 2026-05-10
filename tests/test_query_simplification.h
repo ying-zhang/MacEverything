@@ -229,5 +229,19 @@ static void runQuerySimplificationTests() {
         check(!globMatchImpl("test??.h", "test1.h"), "66.18 globMatchImpl test?.h no match (too short)");
     }
 
+    // ── 66.19 Unicode NFC/NFD query fallback ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord r1; r1.name = "Cafe\xCC\x81" ".txt"; r1.path = "/tmp"; r1.type = 1;
+        FileRecord r2; r2.name = "plain.txt"; r2.path = "/tmp"; r2.type = 1;
+        records.push_back(std::move(r1));
+        records.push_back(std::move(r2));
+        engine.loadRecords(std::move(records));
+
+        auto results = engine.query("Caf\xC3\xA9", 100, false);
+        check(results.size() == 1, "66.19 NFC query matches NFD filename");
+    }
+
     std::cout << "  Part 67 summary: " << localPassed << " passed, " << localFailed << " failed\n";
 }

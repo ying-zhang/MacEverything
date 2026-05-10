@@ -140,6 +140,29 @@ static void runSlashQueryTests() {
         check(res.size() == 1, "AbsPath: '/etc/hosts' matches hosts in /etc");
     }
 
+    // -- Test 7b: Single-segment slash anchors --
+    std::cout << "\n  --- Test 7b: Single-segment slash anchors ---\n";
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        records.push_back({"report-final.txt", "/docs", 1, 100, 1000});
+        records.push_back({"draft-report", "/docs", 1, 200, 2000});
+        records.push_back({"report", "/docs", 1, 300, 3000});
+        records.push_back({"myreport", "/docs", 1, 400, 4000});
+        engine.loadRecords(std::move(records));
+
+        auto res = engine.query("/report");
+        check(res.size() == 2, "Slash anchors: '/report' matches names starting with report");
+
+        res = engine.query("report/");
+        check(res.size() == 3, "Slash anchors: 'report/' matches names ending with report");
+
+        res = engine.query("/report/");
+        check(res.size() == 1, "Slash anchors: '/report/' matches exact filename");
+        auto rec = engine.getRecord(res[0]);
+        check(std::string(rec.name) == "report", "Slash anchors: exact result is report");
+    }
+
     // -- Test 9: Non-adjacent match with * --
     std::cout << "\n  --- Test 9: Non-adjacent wildcard ---\n";
     {

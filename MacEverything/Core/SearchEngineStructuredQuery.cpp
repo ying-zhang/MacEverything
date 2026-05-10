@@ -11,6 +11,38 @@
 // ---------------------------------------------------------------------------
 // pathSegmentsMatch: check if dirPath satisfies path segment constraints
 // ---------------------------------------------------------------------------
+bool SearchEngine::segmentTextMatches(std::string_view candidate,
+                                      std::string_view needle,
+                                      PathSegmentKind kind) {
+    if (needle.empty()) return true;
+    if (candidate.size() < needle.size()) return false;
+    switch (kind) {
+        case PathSegmentKind::PREFIX:
+            return candidate.compare(0, needle.size(), needle) == 0;
+        case PathSegmentKind::SUFFIX:
+            return candidate.compare(candidate.size() - needle.size(), needle.size(), needle) == 0;
+        case PathSegmentKind::EXACT:
+            return candidate == needle;
+        case PathSegmentKind::SUBSTRING:
+        default:
+            return candidate.find(needle) != std::string_view::npos;
+    }
+}
+
+bool SearchEngine::namePatternMatches(const ParsedQuery& pq,
+                                      const char* nameData,
+                                      uint16_t nameLen,
+                                      uint8_t recType) {
+    const auto& namePattern = pq.namePattern;
+    if (namePattern.empty()) return true;
+    std::string_view nameView(nameData, nameLen);
+    if (pq.mode == QueryMode::DIR_EXACT) {
+        if (recType != 2) return false;
+        return nameView == namePattern;
+    }
+    return segmentTextMatches(nameView, namePattern, pq.nameKind);
+}
+
 bool SearchEngine::pathSegmentsMatch(std::string_view dirPath,
                                      const std::vector<PathSegment>& segments) {
     if (segments.empty()) return true;
@@ -34,7 +66,9 @@ bool SearchEngine::pathSegmentsMatch(std::string_view dirPath,
 
     while (segIdx >= 0 && compIdx >= 0) {
         // Input is already lowercase — direct string_view find
-        if (components[compIdx].find(segments[segIdx].text) != std::string_view::npos) {
+        if (segmentTextMatches(components[compIdx],
+                               segments[segIdx].text,
+                               segments[segIdx].kind)) {
             segIdx--;
             compIdx--;
         } else {
@@ -100,13 +134,7 @@ void SearchEngine::treeWalkDown(uint32_t dirIdx, const ParsedQuery& pq,
             const char* nd = namePool_.data(childIdx);
             uint16_t nl = namePool_.length(childIdx);
 
-            if (pq.mode == QueryMode::DIR_EXACT) {
-                if (types_[childIdx] != 2) continue;
-                if (nl != namePattern.size()) continue;
-                if (std::memcmp(nd, namePattern.data(), nl) != 0) continue;
-            } else {
-                if (!me::simdContains(nd, nl, namePattern.data(), namePattern.size())) continue;
-            }
+            if (!namePatternMatches(pq, nd, nl, types_[childIdx])) continue;
 
             uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
             uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
@@ -123,8 +151,9 @@ void SearchEngine::treeWalkDown(uint32_t dirIdx, const ParsedQuery& pq,
         if (types_[childIdx] != 2) continue; // must be directory
         const char* nd = namePool_.data(childIdx);
         uint16_t nl = namePool_.length(childIdx);
-        // Segment match: name must contain segment text
-        if (!me::simdContains(nd, nl, segText.data(), segText.size())) continue;
+        if (!segmentTextMatches(std::string_view(nd, nl),
+                                segText,
+                                pq.pathSegments[fromSegIdx].kind)) continue;
 
         // Recurse to next level
         treeWalkDown(childIdx, pq, fromSegIdx + 1, toSegIdx, totalSize, cancel, merged);
@@ -212,13 +241,7 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
                 const char* nd = namePool_.data(idx);
                 uint16_t nl = namePool_.length(idx);
 
-                if (pq.mode == QueryMode::DIR_EXACT) {
-                    if (types_[idx] != 2) continue;
-                    if (nl != namePattern.size()) continue;
-                    if (std::memcmp(nd, namePattern.data(), nl) != 0) continue;
-                } else {
-                    if (!me::simdContains(nd, nl, namePattern.data(), namePattern.size())) continue;
-                }
+                if (!namePatternMatches(pq, nd, nl, types_[idx])) continue;
 
                 uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[idx]) + 1 + nl);
@@ -257,45 +280,56 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
         }
     } else {
         // No path segments: buffer-scan the contiguous namePool_ buffer
-        // with SIMD, then resolve byte offsets → record indices.
-        std::vector<size_t> hitOffsets;
-        me::simdFindAll(namePool_.rawBuffer(), namePool_.rawSize(),
-                        namePattern.data(), namePattern.size(), hitOffsets);
+        // with SIMD for substring mode; anchored modes scan entries directly.
+        if (pq.nameKind == PathSegmentKind::SUBSTRING) {
+            std::vector<size_t> hitOffsets;
+            me::simdFindAll(namePool_.rawBuffer(), namePool_.rawSize(),
+                            namePattern.data(), namePattern.size(), hitOffsets);
 
-        if (cancel.cancelled()) return;
+            if (cancel.cancelled()) return;
 
-        const auto* entries = namePool_.entries();
-        uint32_t entryCount = namePool_.entryCount();
+            const auto* entries = namePool_.entries();
+            uint32_t entryCount = namePool_.entryCount();
 
-        // hitOffsets are in ascending order. Walk cursor in sync — O(hits + entries).
-        uint32_t cursor = 0;
-        uint32_t lastIdx = UINT32_MAX;
+            // hitOffsets are in ascending order. Walk cursor in sync — O(hits + entries).
+            uint32_t cursor = 0;
+            uint32_t lastIdx = UINT32_MAX;
 
-        for (size_t hitOff : hitOffsets) {
-            while (cursor + 1 < entryCount &&
-                   entries[cursor + 1].offset <= static_cast<uint32_t>(hitOff)) {
-                cursor++;
+            for (size_t hitOff : hitOffsets) {
+                while (cursor + 1 < entryCount &&
+                       entries[cursor + 1].offset <= static_cast<uint32_t>(hitOff)) {
+                    cursor++;
+                }
+
+                uint32_t entryEnd = entries[cursor].offset + entries[cursor].length;
+                if (hitOff < entries[cursor].offset ||
+                    hitOff + namePattern.size() > entryEnd)
+                    continue;
+
+                if (cursor == lastIdx) continue;
+                lastIdx = cursor;
+
+                if (types_[cursor] == 0) continue;
+
+                if (!namePatternMatches(pq, namePool_.data(cursor), namePool_.length(cursor), types_[cursor])) continue;
+
+                uint8_t priority = namePriority(namePool_.data(cursor), namePool_.length(cursor),
+                                                 namePattern.data(), namePattern.size());
+                uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[cursor]) + 1 + entries[cursor].length);
+                merged.push_back({cursor, priority, pLen});
             }
-
-            uint32_t entryEnd = entries[cursor].offset + entries[cursor].length;
-            if (hitOff < entries[cursor].offset ||
-                hitOff + namePattern.size() > entryEnd)
-                continue;
-
-            if (cursor == lastIdx) continue;
-            lastIdx = cursor;
-
-            if (types_[cursor] == 0) continue;
-
-            if (pq.mode == QueryMode::DIR_EXACT) {
-                if (types_[cursor] != 2) continue;
-                if (entries[cursor].length != namePattern.size()) continue;
+        } else {
+            uint32_t entryCount = namePool_.entryCount();
+            for (uint32_t idx = 0; idx < entryCount; idx++) {
+                if ((idx & 4095) == 0 && cancel.cancelled()) return;
+                if (types_[idx] == 0) continue;
+                const char* nd = namePool_.data(idx);
+                uint16_t nl = namePool_.length(idx);
+                if (!namePatternMatches(pq, nd, nl, types_[idx])) continue;
+                uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
+                uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[idx]) + 1 + nl);
+                merged.push_back({idx, priority, pLen});
             }
-
-            uint8_t priority = namePriority(namePool_.data(cursor), namePool_.length(cursor),
-                                             namePattern.data(), namePattern.size());
-            uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[cursor]) + 1 + entries[cursor].length);
-            merged.push_back({cursor, priority, pLen});
         }
     }
 }
@@ -320,13 +354,7 @@ bool SearchEngine::queryStructuredNameAnchor(const ParsedQuery& pq,
         const char* nameData = namePool_.data(idx);
         uint16_t nameLen = namePool_.length(idx);
 
-        if (pq.mode == QueryMode::DIR_EXACT) {
-            if (types_[idx] != 2) continue;
-            if (nameLen != namePattern.size()) continue;
-            if (std::memcmp(nameData, namePattern.data(), nameLen) != 0) continue;
-        } else {
-            if (!me::simdContains(nameData, nameLen, namePattern.data(), namePattern.size())) continue;
-        }
+        if (!namePatternMatches(pq, nameData, nameLen, types_[idx])) continue;
 
         if (!pq.pathSegments.empty()) {
             if (!pathSegmentsMatch(lowerPathPool_.view(pathIndices_[idx]), pq.pathSegments)) continue;
@@ -372,7 +400,7 @@ bool SearchEngine::queryStructuredPathAnchor(const ParsedQuery& pq,
 
         const char* nd = namePool_.data(idx);
         uint16_t nl = namePool_.length(idx);
-        if (!me::simdContains(nd, nl, anchorText.data(), anchorText.size())) continue;
+        if (!segmentTextMatches(std::string_view(nd, nl), anchorText, pq.pathSegments[anchorIdx].kind)) continue;
 
         // Verify ancestor segments [0..anchorIdx-1] against this record's path
         if (anchorIdx > 0) {

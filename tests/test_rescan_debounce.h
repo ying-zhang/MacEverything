@@ -92,6 +92,25 @@ static void runRescanDebounceTests() {
 
     std::cout << "  mergeRescanPaths: all passed\n\n";
 
+    // ── minimizeRescanPaths ──
+
+    {
+        auto r = minimizeRescanPaths({"/a/b/c", "/a", "/a/b", "/c/d", "/c"});
+        check(r.size() == 2 && r[0] == "/a" && r[1] == "/c",
+              "minimize: parent paths cover descendants");
+    }
+    {
+        auto r = minimizeRescanPaths({"/Users", "/Users2", "/Users/name", "/Users"});
+        check(r.size() == 2 && r[0] == "/Users" && r[1] == "/Users2",
+              "minimize: dedup and boundary correctness");
+    }
+    {
+        auto r = minimizeRescanPaths({"", "/tmp/a", "/tmp/a/b"});
+        check(r.size() == 1 && r[0] == "/tmp/a", "minimize: ignores empty paths");
+    }
+
+    std::cout << "  minimizeRescanPaths: all passed\n\n";
+
     // ── shouldThrottleRescan ──
 
     {

@@ -11,6 +11,46 @@
 #include <unordered_set>
 #include <dispatch/dispatch.h>
 
+namespace {
+
+bool containsNonAscii(const std::string& s) {
+    for (unsigned char c : s) {
+        if (c >= 128) return true;
+    }
+    return false;
+}
+
+std::string alternateUnicodeNormalization(const std::string& s) {
+    if (!containsNonAscii(s)) return {};
+
+    const auto nfc = me::normalizeNFC(s);
+    if (nfc != s) return nfc;
+
+    const auto nfd = me::normalizeNFD(s);
+    if (nfd != s) return nfd;
+
+    return {};
+}
+
+void mergeQueryResults(std::vector<uint32_t>& primary,
+                       const std::vector<uint32_t>& secondary,
+                       uint32_t maxResults) {
+    if (secondary.empty()) return;
+
+    std::unordered_set<uint32_t> seen;
+    seen.reserve(primary.size() + secondary.size());
+    for (uint32_t idx : primary) seen.insert(idx);
+
+    for (uint32_t idx : secondary) {
+        if (seen.insert(idx).second) {
+            primary.push_back(idx);
+            if (maxResults > 0 && primary.size() >= maxResults) break;
+        }
+    }
+}
+
+} // namespace
+
 // ---------------------------------------------------------------------------
 // Match priority
 // ---------------------------------------------------------------------------
@@ -129,7 +169,6 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
         const auto& childRecords = pathIdxToRecords_[childPathIdx];
         for (uint32_t childIdx : childRecords) {
             if (types_[childIdx] == 0) continue; // skip tombstones
-            const char* nd = namePool_.data(childIdx);
             uint16_t nl = namePool_.length(childIdx);
             uint8_t priority = 2; // children are all "contains" priority
             uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
@@ -248,8 +287,27 @@ std::vector<uint32_t> SearchEngine::query(const std::string& keyword, uint32_t m
         return result;
     }
 
-    // All non-DIR_LIST queries go through the unified Advanced path
-    return queryAdvanced(pq.original, maxResults, useTrigram, timing, myGen, genAtom.get());
+    // All non-DIR_LIST queries go through the unified Advanced path.
+    auto result = queryAdvanced(pq.original, maxResults, useTrigram, timing, myGen, genAtom.get());
+    if (genAtom->load(std::memory_order_relaxed) != myGen) return {};
+
+    // macOS often stores filenames as decomposed Unicode while users type NFC.
+    // Retry the alternate normalization on demand without adding a second index.
+    auto alternate = alternateUnicodeNormalization(pq.original);
+    if (!alternate.empty()) {
+        QueryTimingInfo altTiming;
+        auto altResult = queryAdvanced(alternate, maxResults, useTrigram,
+                                       altTiming, myGen, genAtom.get());
+        if (genAtom->load(std::memory_order_relaxed) != myGen) return {};
+        mergeQueryResults(result, altResult, maxResults);
+        if (!altResult.empty()) {
+            timing.totalMs += altTiming.totalMs;
+            timing.resultCount = result.size();
+            timing.searchPath += "+unicode-normalization";
+        }
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------
