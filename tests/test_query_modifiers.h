@@ -52,6 +52,17 @@ static void runQueryModifierTests() {
         check(node->mode == MatchMode::REGEX, "A3: regex:^test mode = REGEX");
     }
 
+    // A3b: regex:a|b c → TERM("a|b c", REGEX), not an OR/AND query
+    {
+        auto node = QueryParser::parse("regex:a|b c");
+        check(node != nullptr, "A3b: regex:a|b c parses");
+        if (node) {
+            check(node->type == QueryNodeType::TERM, "A3b: regex:a|b c → TERM type");
+            check(node->text == "a|b c", "A3b: regex:a|b c text preserves operators and spaces");
+            check(node->mode == MatchMode::REGEX, "A3b: regex:a|b c mode = REGEX");
+        }
+    }
+
     // A4: ww:hello → TERM("hello", WHOLEWORD)
     {
         auto node = QueryNode::makeFilter("ww", "hello");

@@ -10,6 +10,7 @@ class SearchOptions: ObservableObject {
             if isRegex {
                 isWholeWord = false
                 isMatchFilename = false
+                RegexHelpWindowController.shared.showFirstUseIfNeeded()
             }
         }
     }

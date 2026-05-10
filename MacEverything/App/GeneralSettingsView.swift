@@ -187,8 +187,14 @@ struct GeneralSettingsView: View {
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
-            Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: $settings.defaultRegex)
-            Text(L10n.tr("Regex quick start: . matches any character, .* matches any text, ^ anchors the start, and $ anchors the end."))
+            HStack {
+                Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: defaultRegexBinding)
+                Spacer()
+                Button(L10n.tr("Regular Expression Help...")) {
+                    RegexHelpWindowController.shared.showWindow()
+                }
+            }
+            Text(L10n.tr("Regex uses patterns such as ^README, \\.(swift|mm|cpp)$, [0-9]{4}, and .* to match filenames more precisely."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .textSelection(.enabled)
@@ -209,6 +215,18 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Sort Ascending"), isOn: $settings.sortAscending)
                 .disabled(settings.sortField == .relevance)
         }
+    }
+
+    private var defaultRegexBinding: Binding<Bool> {
+        Binding(
+            get: { settings.defaultRegex },
+            set: { enabled in
+                settings.defaultRegex = enabled
+                if enabled {
+                    RegexHelpWindowController.shared.showFirstUseIfNeeded()
+                }
+            }
+        )
     }
 
     private var historySection: some View {

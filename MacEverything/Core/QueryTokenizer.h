@@ -106,14 +106,20 @@ public:
                         size_t argStart = wordStart + colonPos + 1;
                         i = argStart;
                         std::string arg;
-                        while (i < len) {
-                            char ch = input[i];
-                            if (ch == ' ' || ch == '\t' || ch == '|' || ch == '!'
-                                || ch == '"') {
-                                break;
+
+                        if (lowerName == "regex") {
+                            arg = input.substr(argStart);
+                            i = len;
+                        } else {
+                            while (i < len) {
+                                char ch = input[i];
+                                if (ch == ' ' || ch == '\t' || ch == '|' || ch == '!'
+                                    || ch == '"') {
+                                    break;
+                                }
+                                arg += ch;
+                                i++;
                             }
-                            arg += ch;
-                            i++;
                         }
                         Token t;
                         t.type = TokenType::FILTER;
