@@ -40,6 +40,8 @@
 		A1000034 /* FlatIndexWriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000049; };
 		A1000035 /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000050; };
 		A1000036 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A9000101; };
+		A1000037 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000053; };
+		A1000038 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000054; };
 		A100001A /* StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000028; };
 		A100001B /* Logger.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A200002A; };
 		A100001C /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200002B; };
@@ -155,6 +157,8 @@
 		A2000050 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
 		A2000051 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
 		A2000052 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
+		A2000053 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
+		A2000054 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2000001 /* mcp_main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mcp_main.cpp; sourceTree = "<group>"; };
@@ -313,6 +317,8 @@
 				A2000043 /* SearchOptions.swift */,
 				A2000045 /* SearchSyntaxHelpView.swift */,
 				A2000050 /* L10n.swift */,
+				A2000053 /* AppSettings.swift */,
+				A2000054 /* GeneralSettingsView.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -534,6 +540,8 @@
 				A1000029 /* SearchEngineStructuredQuery.cpp in Sources */,
 				A100002A /* SearchOptions.swift in Sources */,
 				A1000035 /* L10n.swift in Sources */,
+				A1000037 /* AppSettings.swift in Sources */,
+				A1000038 /* GeneralSettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

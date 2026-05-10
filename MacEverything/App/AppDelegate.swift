@@ -59,7 +59,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.tr("Rebuild Index"), action: #selector(rebuildIndex), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Shortcut Settings..."), action: #selector(openShortcutSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: L10n.tr("Content Settings..."), action: #selector(openContentSettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Settings..."), action: #selector(openSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Search Syntax Help..."), action: #selector(openSearchSyntaxHelp), keyEquivalent: ""))
 
         let mcpSubmenu = NSMenu(title: L10n.tr("MCP Integration"))
@@ -117,9 +117,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         ShortcutSettingsWindowController.shared.showWindow()
     }
 
-    @objc private func openContentSettings() {
+    @objc private func openSettings() {
         NSApp.activate(ignoringOtherApps: true)
-        ContentSettingsWindowController.shared.showWindow()
+        GeneralSettingsWindowController.shared.showWindow()
     }
 
     @objc private func openSearchSyntaxHelp() {

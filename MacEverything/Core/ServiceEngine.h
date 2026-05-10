@@ -4,6 +4,7 @@
 #include "ContentIndexPersistence.h"
 #include "IndexPersistence.h"
 #include "FileSystemWatcher.h"
+#include "DirectoryScanner.h"
 #include "HttpServer.h"
 #include "InstanceLock.h"
 #include "RescanDebounce.h"
@@ -19,9 +20,20 @@
 /// Configuration for ServiceEngine.
 struct ServiceConfig {
     std::string scanRoot = "/";
+    std::vector<std::string> scanRoots;
+    std::vector<std::string> excludedPaths;
+    std::vector<std::string> excludedPatterns;
+    std::vector<std::string> contentRoots;
+    std::vector<std::string> contentExcludedPaths;
     std::string cachePath;   // e.g. ~/Library/Caches/com.maceverything.app
     std::string logPath;     // e.g. ~/Library/Logs/MacEverything
     uint16_t httpPort = 0;   // 0 = no HTTP server; >0 = auto-start after index is ready
+    bool includeHidden = false;
+    bool includeSystem = false;
+    bool includeAppBundleContents = false;
+    bool realtimeMonitoring = true;
+    bool contentIndexingEnabled = true;
+    bool automaticMaintenanceEnabled = true;
 };
 
 /// Pure C++ orchestration engine — owns all core objects and lifecycle.
@@ -49,6 +61,7 @@ public:
     // ── HTTP ──
     void startHttpServer(uint16_t port);
     void stopHttpServer();
+    void updateConfig(const ServiceConfig& config);
 
     // ── Public operations ──
     void rescanSubtree(const std::string& dir);
@@ -107,6 +120,9 @@ private:
     // ── Static helpers ──
     static bool isInsideAppBundle(const std::string& path);
     static bool pathEndsWithApp(const std::string& path);
+    std::vector<std::string> effectiveScanRoots() const;
+    ScanConfig scanConfig() const;
+    bool isPathAllowedByConfig(const std::string& path, bool forContent) const;
 
     // ── Config ──
     ServiceConfig config_;

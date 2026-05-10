@@ -58,33 +58,43 @@ final class FileIconCache {
 struct ResultRow: View {
     let item: FileItem
     let hints: [HighlightHint]
+    @ObservedObject private var settings = AppSettings.shared
     @State private var isHovered = false
 
     var body: some View {
+        let dense = settings.resultDensity == .compact
         HStack(spacing: 8) {
             fileIcon(for: item)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 24, height: 24)
+                .frame(width: dense ? 20 : 24, height: dense ? 20 : 24)
 
-            VStack(alignment: .leading, spacing: 2) {
+            VStack(alignment: .leading, spacing: dense ? 0 : 2) {
                 let highlighted = highlightCrossMatches(
                     path: item.path, name: item.name, hints: hints,
                     nameFont: .title3, nameColor: .primary,
                     pathFont: .subheadline, pathColor: .secondary)
                 highlighted.nameText.lineLimit(1)
-                highlighted.pathText.lineLimit(1)
+                if settings.showPath {
+                    highlighted.pathText.lineLimit(1)
+                }
             }
 
             Spacer()
 
-            if item.type == 1 && item.size > 0 {
+            if settings.showModifiedDate {
+                Text(formatDate(item.modTime))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+            }
+
+            if settings.showSize && item.type == 1 && item.size > 0 {
                 Text(formatSize(item.size))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, dense ? 2 : 4)
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
@@ -133,6 +143,11 @@ struct ResultRow: View {
         }
         if unitIndex == 0 { return "\(bytes) B" }
         return String(format: "%.1f %@", size, units[unitIndex])
+    }
+
+    private func formatDate(_ modTime: time_t) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(modTime))
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func openFile(_ item: FileItem) {

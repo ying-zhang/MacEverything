@@ -1,9 +1,9 @@
 import Foundation
 
 /// Persists past search queries and provides prefix-based autocomplete suggestions.
+@MainActor
 final class SearchHistoryStore {
-    private static let defaultsKey = "searchHistory"
-    private static let maxEntries = 200
+    static let defaultsKey = "searchHistory"
     private static let minQueryLength = 2
 
     struct Entry: Codable {
@@ -21,6 +21,9 @@ final class SearchHistoryStore {
     // MARK: - Public API
 
     func recordQuery(_ query: String) {
+        let settings = AppSettings.shared.snapshot
+        guard settings.searchHistoryEnabled, settings.searchHistoryLimit > 0 else { return }
+
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= Self.minQueryLength,
               !trimmed.lowercased().hasPrefix("infile:") else { return }
@@ -36,15 +39,16 @@ final class SearchHistoryStore {
         }
 
         // Evict oldest entries when over capacity
-        if entries.count > Self.maxEntries {
+        if entries.count > settings.searchHistoryLimit {
             entries.sort { $0.lastUsed > $1.lastUsed }
-            entries = Array(entries.prefix(Self.maxEntries))
+            entries = Array(entries.prefix(settings.searchHistoryLimit))
         }
 
         save()
     }
 
     func bestMatch(for prefix: String) -> String? {
+        guard AppSettings.shared.snapshot.searchHistoryEnabled else { return nil }
         guard !prefix.isEmpty else { return nil }
         let lowerPrefix = prefix.lowercased()
 

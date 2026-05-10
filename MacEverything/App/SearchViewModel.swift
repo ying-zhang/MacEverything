@@ -50,6 +50,7 @@ class SearchViewModel: ObservableObject {
     }
 
     private let bridge = MacSearchBridge.shared()
+    private let settings = AppSettings.shared
     private let historyStore = SearchHistoryStore()
     private let searchOptions = SearchOptions.shared
     private var searchTask: Task<Void, Never>?
@@ -62,7 +63,6 @@ class SearchViewModel: ObservableObject {
     private static let guiSessionId: UInt64 = 1
 
     private static let pageSize: Int = 100
-    private static let maxResults: UInt32 = 10000
     private static let indexChangeThrottleNs: UInt64 = 5_000_000_000 // 5 seconds
 
     private var indexChangeTask: Task<Void, Never>?
@@ -104,6 +104,10 @@ class SearchViewModel: ObservableObject {
         startIncremental()
     }
 
+    private var maxResults: UInt32 {
+        UInt32(settings.snapshot.maxResults)
+    }
+
     private func onSearchOptionsChanged() {
         guard scanComplete, !searchText.isEmpty, !isContentSearch else { return }
         searchTask?.cancel()
@@ -125,6 +129,7 @@ class SearchViewModel: ObservableObject {
         bridge.onContentIndexProgress = { [weak self] indexed, total in
             Task { @MainActor in
                 guard let self = self else { return }
+                guard self.settings.snapshot.contentIndexingEnabled else { return }
                 self.isContentIndexing = true
                 self.contentIndexProgress = (indexed, total)
             }
@@ -150,6 +155,10 @@ class SearchViewModel: ObservableObject {
             }
         }
 
+        isContentIndexing = false
+        contentIndexProgress = nil
+        applyRuntimeConfiguration()
+
         bridge.startIncremental(from: "/",
                                 cachePath: Self.cachePath,
                                 walPath: Self.walPath) { [weak self] count, didFullScan in
@@ -163,11 +172,32 @@ class SearchViewModel: ObservableObject {
 
                 if !self.searchText.isEmpty {
                     self.performSearch(self.searchText)
-                } else {
+                } else if self.settings.snapshot.startupDisplayMode == .recent {
                     self.loadRecentFiles()
+                } else {
+                    self.displayItems = []
+                    self.showingRecent = false
                 }
             }
         }
+    }
+
+    private func applyRuntimeConfiguration() {
+        let snapshot = settings.snapshot
+        bridge.updateConfiguration(
+            withScanRoots: snapshot.indexRoots,
+            excludedPaths: snapshot.excludedPaths,
+            excludedPatterns: snapshot.excludedPatterns,
+            contentRoots: snapshot.contentIndexRoots,
+            contentExcludedPaths: snapshot.contentExcludedPaths,
+            includeHidden: snapshot.indexHiddenFiles,
+            includeSystem: snapshot.indexSystemFiles,
+            includeAppBundleContents: snapshot.indexAppBundleContents,
+            realtimeMonitoring: snapshot.refreshMode == .realtime,
+            contentIndexingEnabled: snapshot.contentIndexingEnabled,
+            automaticMaintenanceEnabled: snapshot.automaticMaintenanceEnabled,
+            httpPort: snapshot.httpServerEnabled ? UInt16(snapshot.httpPort) : UInt16(0)
+        )
     }
 
     func rebuildIndex() {
@@ -190,6 +220,7 @@ class SearchViewModel: ObservableObject {
         try? FileManager.default.removeItem(atPath: Self.pagesPath)
         try? FileManager.default.removeItem(atPath: Self.ptablePath)
 
+        applyRuntimeConfiguration()
         startIncremental()
     }
 
@@ -218,7 +249,12 @@ class SearchViewModel: ObservableObject {
                 recentTask = Task { @MainActor [weak self] in
                     try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
                     guard !Task.isCancelled, let self else { return }
-                    self.loadRecentFiles()
+                    if self.settings.snapshot.startupDisplayMode == .recent {
+                        self.loadRecentFiles()
+                    } else {
+                        self.displayItems = []
+                        self.showingRecent = false
+                    }
                 }
             } else {
                 displayItems = []
@@ -227,6 +263,11 @@ class SearchViewModel: ObservableObject {
             return
         }
         showingRecent = false
+
+        guard settings.snapshot.searchAsYouType else {
+            updateGhostSuggestion()
+            return
+        }
 
         let lowerText = text.lowercased()
         if lowerText.hasPrefix("infile:") {
@@ -269,7 +310,7 @@ class SearchViewModel: ObservableObject {
 
     private func performSearch(_ keyword: String) {
         let bridge = self.bridge
-        let maxResults = Self.maxResults
+        let maxResults = self.maxResults
         let pageSize = Self.pageSize
         let gen = searchGeneration
         let query = searchOptions.buildQuery(keyword)
@@ -296,7 +337,7 @@ class SearchViewModel: ObservableObject {
                 guard let self, self.searchGeneration == gen else { return }
                 self.cachedResults = results
                 self.loadedCount = firstPageCount
-                self.displayItems = items
+                self.displayItems = self.sorted(items)
                 self.totalMatches = totalCount
                 self.queryTimeMs = elapsed
             }
@@ -362,7 +403,7 @@ class SearchViewModel: ObservableObject {
                     self?.isLoadingMore = false
                     return
                 }
-                self.displayItems.append(contentsOf: newItems)
+                self.displayItems.append(contentsOf: self.sorted(newItems))
                 self.loadedCount = nextEnd
                 self.isLoadingMore = false
             }
@@ -388,9 +429,32 @@ class SearchViewModel: ObservableObject {
             }
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
-                self.displayItems = items
+                self.displayItems = self.sorted(items)
                 self.showingRecent = true
             }
+        }
+    }
+
+    private func sorted(_ items: [FileItem]) -> [FileItem] {
+        let snapshot = settings.snapshot
+        guard snapshot.sortField != .relevance else { return items }
+
+        let ascending = snapshot.sortAscending
+        return items.sorted { lhs, rhs in
+            let ordered: Bool
+            switch snapshot.sortField {
+            case .relevance:
+                ordered = false
+            case .name:
+                ordered = lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            case .path:
+                ordered = lhs.path.localizedCaseInsensitiveCompare(rhs.path) == .orderedAscending
+            case .size:
+                ordered = lhs.size < rhs.size
+            case .modified:
+                ordered = lhs.modTime < rhs.modTime
+            }
+            return ascending ? ordered : !ordered
         }
     }
 
@@ -441,7 +505,7 @@ class SearchViewModel: ObservableObject {
             performSearch(searchText)
         } else if isContentSearch && !contentKeyword.isEmpty {
             performContentSearch(contentKeyword)
-        } else if showingRecent {
+        } else if showingRecent && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         }
     }
@@ -517,5 +581,30 @@ class SearchViewModel: ObservableObject {
         searchText = suggestion
         ghostSuggestion = nil
         historyStore.recordQuery(suggestion)
+        if !settings.snapshot.searchAsYouType {
+            onSearchTextChanged()
+            if !suggestion.isEmpty {
+                performSearch(suggestion)
+            }
+        }
+    }
+
+    func submitSearch() {
+        guard !searchText.isEmpty else { return }
+        searchTask?.cancel()
+        recentTask?.cancel()
+        searchGeneration &+= 1
+        showingRecent = false
+        let lowerText = searchText.lowercased()
+        if lowerText.hasPrefix("infile:") {
+            let keyword = String(searchText.dropFirst(7))
+            contentKeyword = keyword
+            isContentSearch = true
+            performContentSearch(keyword)
+        } else {
+            isContentSearch = false
+            performSearch(searchText)
+        }
+        scheduleHistoryRecord()
     }
 }

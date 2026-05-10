@@ -4,16 +4,18 @@ import AppKit
 struct ContentResultRow: View {
     let item: ContentFileItem
     let keyword: String
+    @ObservedObject private var settings = AppSettings.shared
     @State private var isHovered = false
 
     var body: some View {
+        let dense = settings.resultDensity == .compact
         HStack(spacing: 8) {
             fileIcon(for: item.filePath)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: 24, height: 24)
+                .frame(width: dense ? 20 : 24, height: dense ? 20 : 24)
 
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(alignment: .leading, spacing: dense ? 1 : 3) {
                 HStack(spacing: 6) {
                     Text(item.fileName)
                         .font(.title3)
@@ -21,20 +23,24 @@ struct ContentResultRow: View {
                         .foregroundColor(.primary)
                         .lineLimit(1)
 
-                    Text(directoryPath(item.filePath))
-                        .font(.subheadline)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+                    if settings.showPath {
+                        Text(directoryPath(item.filePath))
+                            .font(.subheadline)
+                            .foregroundColor(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                    }
                 }
 
-                highlightMatches(in: item.snippet, keyword: keyword, font: .caption, color: .secondary)
-                    .lineLimit(2)
+                if settings.showContentSnippets {
+                    highlightMatches(in: item.snippet, keyword: keyword, font: .caption, color: .secondary)
+                        .lineLimit(dense ? 1 : 2)
+                }
             }
 
             Spacer()
         }
-        .padding(.vertical, 5)
+        .padding(.vertical, dense ? 2 : 5)
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)

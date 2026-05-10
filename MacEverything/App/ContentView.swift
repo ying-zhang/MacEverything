@@ -27,6 +27,9 @@ struct ContentView: View {
                             return true
                         }
                         return false
+                    },
+                    onSubmit: {
+                        viewModel.submitSearch()
                     }
                 )
                 .frame(height: 36)
