@@ -45,10 +45,10 @@ struct ContentResultRow: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button("Open") { openFile() }
-            Button("Reveal in Finder") { revealInFinder() }
+            Button(L10n.tr("Open")) { openFile() }
+            Button(L10n.tr("Reveal in Finder")) { revealInFinder() }
             Divider()
-            Button("Copy Path") { copyPath() }
+            Button(L10n.tr("Copy Path")) { copyPath() }
         }
         .onDrag {
             return NSItemProvider(object: NSURL(fileURLWithPath: item.filePath))

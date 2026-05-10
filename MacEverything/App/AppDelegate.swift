@@ -55,30 +55,30 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let menu = NSMenu()
         menu.delegate = self
-        menu.addItem(NSMenuItem(title: "Show MacEverything", action: #selector(toggleWindow), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Show MacEverything"), action: #selector(toggleWindow), keyEquivalent: ""))
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Rebuild Index", action: #selector(rebuildIndex), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Shortcut Settings...", action: #selector(openShortcutSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Content Settings...", action: #selector(openContentSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: "Search Syntax Help...", action: #selector(openSearchSyntaxHelp), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Rebuild Index"), action: #selector(rebuildIndex), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Shortcut Settings..."), action: #selector(openShortcutSettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Content Settings..."), action: #selector(openContentSettings), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Search Syntax Help..."), action: #selector(openSearchSyntaxHelp), keyEquivalent: ""))
 
-        let mcpSubmenu = NSMenu(title: "MCP Integration")
+        let mcpSubmenu = NSMenu(title: L10n.tr("MCP Integration"))
         for client in MCPClient.allCases {
             let item = NSMenuItem(title: client.displayName, action: #selector(toggleMCPClient(_:)), keyEquivalent: "")
             item.representedObject = client
             mcpMenuItems[client] = item
             mcpSubmenu.addItem(item)
         }
-        let mcpItem = NSMenuItem(title: "MCP Integration", action: nil, keyEquivalent: "")
+        let mcpItem = NSMenuItem(title: L10n.tr("MCP Integration"), action: nil, keyEquivalent: "")
         mcpItem.submenu = mcpSubmenu
         menu.addItem(mcpItem)
 
         menu.addItem(.separator())
-        let loginItem = NSMenuItem(title: "Launch at Login", action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
+        let loginItem = NSMenuItem(title: L10n.tr("Launch at Login"), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem = loginItem
         menu.addItem(loginItem)
         menu.addItem(.separator())
-        menu.addItem(NSMenuItem(title: "Quit MacEverything", action: #selector(quitApp), keyEquivalent: "q"))
+        menu.addItem(NSMenuItem(title: L10n.tr("Quit MacEverything"), action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
     }
 
@@ -87,7 +87,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     func menuWillOpen(_ menu: NSMenu) {
         if let item = menu.items.first {
             let isVisible = mainSearchWindow?.isVisible ?? false
-            item.title = isVisible ? "Hide MacEverything" : "Show MacEverything"
+            item.title = isVisible ? L10n.tr("Hide MacEverything") : L10n.tr("Show MacEverything")
         }
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
         for (client, item) in mcpMenuItems {

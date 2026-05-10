@@ -18,7 +18,7 @@ struct ContentView: View {
                     .foregroundColor(.blue)
                 HighlightedSearchField(
                     text: $viewModel.searchText,
-                    placeholder: "Search files... (infile: for content search)",
+                    placeholder: L10n.tr("Search files... (infile: for content search)"),
                     ghostSuggestion: viewModel.ghostSuggestion,
                     isFocused: $isSearchFieldFocused,
                     onTab: {
@@ -65,23 +65,23 @@ struct ContentView: View {
                 if viewModel.isScanning {
                     ProgressView()
                         .controlSize(.small)
-                    Text("Scanning... \(viewModel.scannedCount) items scanned")
+                    Text(L10n.tr("Scanning... %d items scanned", Int(viewModel.scannedCount)))
                         .foregroundColor(.secondary)
                 } else if viewModel.scanComplete {
                     if viewModel.isSyncing {
                         ProgressView()
                             .controlSize(.small)
-                        Text("Syncing...")
+                        Text(L10n.tr("Syncing..."))
                             .foregroundColor(.orange)
                     } else if viewModel.isMonitoring {
                         Circle()
                             .fill(.green)
                             .frame(width: 6, height: 6)
-                        Text("Live")
+                        Text(L10n.tr("Live"))
                             .foregroundColor(.green)
                             .fontWeight(.medium)
                     }
-                    Text("\(viewModel.totalRecords) files indexed")
+                    Text(L10n.tr("%d files indexed", Int(viewModel.totalRecords)))
                         .foregroundColor(.secondary)
                         .accessibilityIdentifier("indexedCount")
                     if viewModel.isContentIndexing, let progress = viewModel.contentIndexProgress {
@@ -89,13 +89,13 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                         ProgressView()
                             .controlSize(.small)
-                        Text("Content indexing \(progress.indexed)/\(progress.total)")
+                        Text(L10n.tr("Content indexing %d/%d", Int(progress.indexed), Int(progress.total)))
                             .foregroundColor(.orange)
                     }
                     if viewModel.totalMatches > 0 {
                         Text("·")
                             .foregroundColor(.secondary)
-                        Text("\(viewModel.totalMatches) matches")
+                        Text(L10n.tr("%d matches", viewModel.totalMatches))
                             .foregroundColor(.secondary)
                             .accessibilityIdentifier("matchCount")
                         Text("·")
@@ -120,7 +120,7 @@ struct ContentView: View {
                     Spacer()
                     ProgressView()
                         .controlSize(.large)
-                    Text("Indexing files... \(viewModel.scannedCount) items scanned")
+                    Text(L10n.tr("Indexing files... %d items scanned", Int(viewModel.scannedCount)))
                         .font(.callout)
                         .foregroundColor(.secondary)
                     Spacer()
@@ -134,15 +134,15 @@ struct ContentView: View {
                             ProgressView()
                                 .controlSize(.large)
                                 .padding(.bottom, 4)
-                            Text("Content index is building...")
+                            Text(L10n.tr("Content index is building..."))
                                 .font(.headline)
                                 .foregroundColor(.orange)
                             if let progress = viewModel.contentIndexProgress {
-                                Text("Indexed \(progress.indexed) / \(progress.total) files")
+                                Text(L10n.tr("Indexed %d / %d files", Int(progress.indexed), Int(progress.total)))
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
                             }
-                            Text("Search results will appear after indexing completes")
+                            Text(L10n.tr("Search results will appear after indexing completes"))
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         } else {
@@ -150,10 +150,10 @@ struct ContentView: View {
                                 .font(.system(size: 36))
                                 .foregroundColor(.secondary.opacity(0.5))
                                 .padding(.bottom, 4)
-                            Text("No content matches found")
+                            Text(L10n.tr("No content matches found"))
                                 .foregroundColor(.secondary)
                             if viewModel.contentIndexedCount == 0 {
-                                Text("No files indexed. Configure extensions in Content Settings.")
+                                Text(L10n.tr("No files indexed. Configure extensions in Content Settings."))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
                             }
@@ -163,7 +163,7 @@ struct ContentView: View {
                 } else if viewModel.contentKeyword.isEmpty {
                     VStack {
                         Spacer()
-                        Text("Type a keyword after infile: to search file contents")
+                        Text(L10n.tr("Type a keyword after infile: to search file contents"))
                             .foregroundColor(.secondary)
                         Spacer()
                     }
@@ -183,7 +183,7 @@ struct ContentView: View {
                     if viewModel.totalMatches > 0 {
                         HStack {
                             Spacer()
-                            Text("\(viewModel.contentResults.count) content matches")
+                            Text(L10n.tr("%d content matches", viewModel.contentResults.count))
                                 .font(.callout)
                                 .foregroundColor(.secondary)
                                 .padding(8)
@@ -195,7 +195,7 @@ struct ContentView: View {
             } else if viewModel.displayItems.isEmpty && !viewModel.searchText.isEmpty && viewModel.scanComplete {
                 VStack {
                     Spacer()
-                    Text("No results found")
+                    Text(L10n.tr("No results found"))
                         .foregroundColor(.secondary)
                         .accessibilityIdentifier("noResultsLabel")
                     Spacer()
@@ -207,7 +207,7 @@ struct ContentView: View {
                             HStack {
                                 HStack(spacing: 4) {
                                     Image(systemName: "clock")
-                                    Text("Recent Files")
+                                    Text(L10n.tr("Recent Files"))
                                         .font(.callout)
                                         .fontWeight(.medium)
                                 }
@@ -234,7 +234,7 @@ struct ContentView: View {
                                 Spacer()
                                 ProgressView()
                                     .controlSize(.small)
-                                Text("Loading more results...")
+                                Text(L10n.tr("Loading more results..."))
                                     .font(.callout)
                                     .foregroundColor(.secondary)
                                 Spacer()
@@ -253,7 +253,7 @@ struct ContentView: View {
                 if viewModel.totalMatches > 0 {
                     HStack {
                         Spacer()
-                        Text("Showing \(viewModel.displayItems.count) of \(viewModel.totalMatches) results")
+                        Text(L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
                             .font(.callout)
                             .foregroundColor(.secondary)
                             .padding(8)

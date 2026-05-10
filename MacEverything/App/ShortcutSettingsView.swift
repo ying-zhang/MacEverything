@@ -9,25 +9,25 @@ struct ShortcutSettingsView: View {
 
     var body: some View {
         VStack(spacing: 20) {
-            Text("Global Hotkey Settings")
+            Text(L10n.tr("Global Hotkey Settings"))
                 .font(.title2)
                 .fontWeight(.semibold)
 
-            Text("Click the button below and press your desired key combination to set the global hotkey for showing/hiding MacEverything.")
+            Text(L10n.tr("Click the button below and press your desired key combination to set the global hotkey for showing/hiding MacEverything."))
                 .font(.body)
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 360)
 
             VStack(spacing: 12) {
-                Text("Current Shortcut")
+                Text(L10n.tr("Current Shortcut"))
                     .font(.subheadline)
                     .foregroundColor(.secondary)
 
                 Button(action: {
                     isRecording.toggle()
                 }) {
-                    Text(isRecording ? "Press a key combination..." : currentShortcut)
+                    Text(isRecording ? L10n.tr("Press a key combination...") : currentShortcut)
                         .font(.title3)
                         .fontWeight(.medium)
                         .foregroundColor(isRecording ? .accentColor : .primary)
@@ -61,14 +61,14 @@ struct ShortcutSettingsView: View {
             }
 
             HStack(spacing: 16) {
-                Button("Reset to Default") {
+                Button(L10n.tr("Reset to Default")) {
                     keyCode = UInt32(kVK_Space)
                     modifiers = UInt32(optionKey)
                     currentShortcut = describeShortcut(keyCode: keyCode, modifiers: modifiers)
                     saveAndApply()
                 }
 
-                Button("Close") {
+                Button(L10n.tr("Close")) {
                     NSApp.keyWindow?.close()
                 }
                 .keyboardShortcut(.cancelAction)
@@ -107,12 +107,12 @@ func describeShortcut(keyCode: UInt32, modifiers: UInt32) -> String {
 
     let keyName: String
     switch Int(keyCode) {
-    case kVK_Space: keyName = "Space"
-    case kVK_Return: keyName = "Return"
+    case kVK_Space: keyName = L10n.tr("Space")
+    case kVK_Return: keyName = L10n.tr("Return")
     case kVK_Tab: keyName = "Tab"
     case kVK_Escape: keyName = "Esc"
-    case kVK_Delete: keyName = "Delete"
-    case kVK_ForwardDelete: keyName = "Fwd Delete"
+    case kVK_Delete: keyName = L10n.tr("Delete")
+    case kVK_ForwardDelete: keyName = L10n.tr("Fwd Delete")
     case kVK_UpArrow: keyName = "↑"
     case kVK_DownArrow: keyName = "↓"
     case kVK_LeftArrow: keyName = "←"

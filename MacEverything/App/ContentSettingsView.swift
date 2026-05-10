@@ -13,14 +13,14 @@ struct ContentSettingsView: View {
 
     var body: some View {
         Form {
-            Section("Content Indexing") {
+            Section(L10n.tr("Content Indexing")) {
                 VStack(alignment: .leading, spacing: 8) {
-                    Text("Indexed Files: \(indexedCount)")
+                    Text(L10n.tr("Indexed Files: %d", Int(indexedCount)))
                         .font(.headline)
 
                     Divider()
 
-                    Text("Max File Size")
+                    Text(L10n.tr("Max File Size"))
                         .font(.subheadline)
                     HStack {
                         Slider(value: $maxFileSizeMB, in: 0.1...10.0, step: 0.1)
@@ -30,7 +30,7 @@ struct ContentSettingsView: View {
 
                     Divider()
 
-                    Text("File Extensions")
+                    Text(L10n.tr("File Extensions"))
                         .font(.subheadline)
 
                     ScrollView {
@@ -56,17 +56,17 @@ struct ContentSettingsView: View {
                     .frame(maxHeight: 120)
 
                     HStack {
-                        TextField("Add extension...", text: $newExtension)
+                        TextField(L10n.tr("Add extension..."), text: $newExtension)
                             .textFieldStyle(.roundedBorder)
                             .onSubmit { addExtension() }
-                        Button("Add") { addExtension() }
+                        Button(L10n.tr("Add")) { addExtension() }
                             .disabled(newExtension.isEmpty)
                     }
                 }
             }
 
             Section {
-                Button("Apply") {
+                Button(L10n.tr("Apply")) {
                     applySettings()
                 }
             }
