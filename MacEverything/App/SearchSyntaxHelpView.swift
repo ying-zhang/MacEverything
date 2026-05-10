@@ -193,6 +193,15 @@ struct RegexHelpView: View {
                     SyntaxRow("\\\\", L10n.tr("Match a literal backslash"))
                 }
 
+                SyntaxSection(title: L10n.tr("Character Classes")) {
+                    SyntaxRow("\\d", L10n.tr("Match one digit: 0 to 9"))
+                    SyntaxRow("\\D", L10n.tr("Match one non-digit character"))
+                    SyntaxRow("\\w", L10n.tr("Match one word character: letter, digit, or underscore"))
+                    SyntaxRow("\\W", L10n.tr("Match one non-word character"))
+                    SyntaxRow("\\s", L10n.tr("Match one whitespace character, such as a space or tab"))
+                    SyntaxRow("\\S", L10n.tr("Match one non-whitespace character"))
+                }
+
                 SyntaxSection(title: L10n.tr("Repetition")) {
                     SyntaxRow("*", L10n.tr("Repeat the previous element zero or more times"))
                     SyntaxRow("?", L10n.tr("Repeat the previous element zero or one time"))
@@ -207,6 +216,10 @@ struct RegexHelpView: View {
                     SyntaxRow("\\.(swift|mm|cpp)$", L10n.tr("Swift, Objective-C++, or C++ files"))
                     SyntaxRow("^[^.]+$", L10n.tr("Names without a dot"))
                     SyntaxRow("[0-9]{4}-[0-9]{2}-[0-9]{2}", L10n.tr("Dates such as 2026-05-11"))
+                    SyntaxRow("\\d{4}", L10n.tr("Any 4 consecutive digits"))
+                    SyntaxRow("^IMG_\\d{4}\\.jpg$", L10n.tr("Names such as IMG_0001.jpg"))
+                    SyntaxRow("^\\w+$", L10n.tr("Names made only of letters, digits, or underscores"))
+                    SyntaxRow("\\s", L10n.tr("Names containing whitespace"))
                     SyntaxRow("[^\\x00-\\x7F]", L10n.tr("Names containing non-ASCII characters"))
                 }
             }
