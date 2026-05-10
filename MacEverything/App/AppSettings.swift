@@ -134,6 +134,7 @@ final class AppSettings: ObservableObject {
         static let httpPort = "settings.httpPort"
         static let hideDockIcon = "settings.hideDockIcon"
         static let automaticMaintenanceEnabled = "settings.automaticMaintenanceEnabled"
+        static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
     @Published var indexRoots: [String] { didSet { saveArray(indexRoots, Key.indexRoots) } }
@@ -230,6 +231,8 @@ final class AppSettings: ObservableObject {
         httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
         automaticMaintenanceEnabled = defaults.object(forKey: Key.automaticMaintenanceEnabled) as? Bool ?? true
         hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
+
+        migrateSettingsIfNeeded()
     }
 
     var snapshot: AppSettingsSnapshot {
@@ -283,6 +286,15 @@ final class AppSettings: ObservableObject {
         UserDefaults.standard.removeObject(forKey: SearchHistoryStore.defaultsKey)
     }
 
+    private func migrateSettingsIfNeeded() {
+        let version = defaults.object(forKey: Key.settingsSchemaVersion) as? Int ?? 0
+        guard version < 1 else { return }
+
+        let appRoots = Self.defaultApplicationRoots()
+        indexRoots = normalizedPaths(appRoots + indexRoots)
+        defaults.set(1, forKey: Key.settingsSchemaVersion)
+    }
+
     private func save(_ value: Bool, _ key: String) {
         defaults.set(value, forKey: key)
     }
@@ -300,7 +312,7 @@ final class AppSettings: ObservableObject {
     }
 
     private func saveArray(_ value: [String], _ key: String) {
-        defaults.set(normalizedPaths(value), forKey: key)
+        defaults.set(sortedSettingsList(normalizedPaths(value)), forKey: key)
     }
 
     private static func defaultIndexRoots() -> [String] {
@@ -309,7 +321,11 @@ final class AppSettings: ObservableObject {
         let userFolders = names
             .map { home.appendingPathComponent($0).path }
             .filter { FileManager.default.fileExists(atPath: $0) }
-        return normalizedExistingPaths(["/Applications", "/System/Applications"] + userFolders)
+        return normalizedExistingPaths(defaultApplicationRoots() + userFolders)
+    }
+
+    private static func defaultApplicationRoots() -> [String] {
+        normalizedExistingPaths(["/Applications", "/System/Applications"])
     }
 
     private static func defaultExcludedPaths() -> [String] {
@@ -361,6 +377,13 @@ func normalizedPaths(_ paths: [String]) -> [String] {
         result.append(standardized)
     }
     return result
+}
+
+@MainActor
+func sortedSettingsList(_ values: [String]) -> [String] {
+    values.sorted { lhs, rhs in
+        lhs.localizedStandardCompare(rhs) == .orderedAscending
+    }
 }
 
 @MainActor

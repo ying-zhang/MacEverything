@@ -9,6 +9,7 @@ struct GeneralSettingsView: View {
     @State private var newExcludedPattern = ""
     @State private var newContentPath = ""
     @State private var newContentExcludedPath = ""
+    @State private var showingResetIndexDefaultsConfirmation = false
 
     var body: some View {
         TabView {
@@ -57,6 +58,14 @@ struct GeneralSettingsView: View {
             .tabItem { Text(L10n.tr("General")) }
         }
         .frame(width: 720, height: 620)
+        .alert(L10n.tr("Reset Index Defaults?"), isPresented: $showingResetIndexDefaultsConfirmation) {
+            Button(L10n.tr("Reset"), role: .destructive) {
+                settings.resetIndexDefaults()
+            }
+            Button(L10n.tr("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.tr("Resetting index defaults will replace indexed folders, exclusions, and related index options."))
+        }
     }
 
     private var indexingSection: some View {
@@ -90,13 +99,24 @@ struct GeneralSettingsView: View {
             }
 
             HStack {
-                Button(L10n.tr("Reset Index Defaults")) {
-                    settings.resetIndexDefaults()
-                }
-                Spacer()
                 Text(L10n.tr("Changes require rebuilding the index."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                Spacer()
+                Button(L10n.tr("Rebuild Index Now")) {
+                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button(role: .destructive) {
+                    showingResetIndexDefaultsConfirmation = true
+                } label: {
+                    Text(L10n.tr("Reset Index Defaults..."))
+                }
             }
         }
     }
@@ -158,7 +178,7 @@ struct GeneralSettingsView: View {
     }
 
     private var searchSection: some View {
-        SettingsSection(title: L10n.tr("Search Defaults")) {
+        SettingsSection(title: L10n.tr("Search Options")) {
             Picker(L10n.tr("Startup Results"), selection: $settings.startupDisplayMode) {
                 ForEach(StartupDisplayMode.allCases) { mode in
                     Text(mode.title).tag(mode)
@@ -167,16 +187,21 @@ struct GeneralSettingsView: View {
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
-            Toggle(L10n.tr("Default Regex"), isOn: $settings.defaultRegex)
-            Toggle(L10n.tr("Default Case Sensitive"), isOn: $settings.defaultCaseSensitive)
-            Toggle(L10n.tr("Default Whole Word"), isOn: $settings.defaultWholeWord)
-            Toggle(L10n.tr("Default Match Filename"), isOn: $settings.defaultMatchFilename)
+            Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: $settings.defaultRegex)
+            Text(L10n.tr("Regex quick start: . matches any character, .* matches any text, ^ anchors the start, and $ anchors the end."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .textSelection(.enabled)
+                .padding(.leading, 20)
+            Toggle(L10n.tr("Case Sensitive"), isOn: $settings.defaultCaseSensitive)
+            Toggle(L10n.tr("Whole Word"), isOn: $settings.defaultWholeWord)
+            Toggle(L10n.tr("Match Filename"), isOn: $settings.defaultMatchFilename)
 
             Stepper(value: $settings.maxResults, in: 100...100_000, step: 100) {
                 Text(L10n.tr("Maximum Results: %d", settings.maxResults))
             }
 
-            Picker(L10n.tr("Default Sort"), selection: $settings.sortField) {
+            Picker(L10n.tr("Sort Results By"), selection: $settings.sortField) {
                 ForEach(SortField.allCases) { field in
                     Text(field.title).tag(field)
                 }
@@ -234,6 +259,9 @@ struct GeneralSettingsView: View {
             ))
             Toggle(L10n.tr("Hide Dock Icon"), isOn: $settings.hideDockIcon)
             Text(L10n.tr("When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+            Text(L10n.tr("Dock visibility changes may require restarting MacEverything to fully take effect."))
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
@@ -315,7 +343,7 @@ private struct CompactPathListEditor: View {
             }
 
             List {
-                ForEach(paths, id: \.self) { path in
+                ForEach(sortedPaths, id: \.self) { path in
                     HStack {
                         Text((path as NSString).abbreviatingWithTildeInPath)
                             .lineLimit(1)
@@ -334,10 +362,16 @@ private struct CompactPathListEditor: View {
         }
     }
 
+    private var sortedPaths: [String] {
+        paths.sorted { lhs, rhs in
+            lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+    }
+
     private func addTypedPath() {
         let path = newPath.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !path.isEmpty else { return }
-        paths = normalizedPaths(paths + [path])
+        paths = sorted(normalizedPaths(paths + [path]))
         newPath = ""
     }
 
@@ -347,7 +381,13 @@ private struct CompactPathListEditor: View {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
         if panel.runModal() == .OK {
-            paths = normalizedPaths(paths + panel.urls.map(\.path))
+            paths = sorted(normalizedPaths(paths + panel.urls.map(\.path)))
+        }
+    }
+
+    private func sorted(_ values: [String]) -> [String] {
+        values.sorted { lhs, rhs in
+            lhs.localizedStandardCompare(rhs) == .orderedAscending
         }
     }
 }
@@ -364,7 +404,7 @@ private struct StringListEditor: View {
                 .font(.subheadline)
                 .foregroundColor(.secondary)
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 92), spacing: 4)], alignment: .leading, spacing: 4) {
-                ForEach(items, id: \.self) { item in
+                ForEach(sortedItems, id: \.self) { item in
                     HStack(spacing: 4) {
                         Text(item)
                             .font(.caption)
@@ -395,10 +435,18 @@ private struct StringListEditor: View {
         }
     }
 
+    private var sortedItems: [String] {
+        items.sorted { lhs, rhs in
+            lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
+    }
+
     private func addItem() {
         let item = newItem.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !item.isEmpty, !items.contains(item) else { return }
-        items.append(item)
+        items = (items + [item]).sorted { lhs, rhs in
+            lhs.localizedStandardCompare(rhs) == .orderedAscending
+        }
         newItem = ""
     }
 }

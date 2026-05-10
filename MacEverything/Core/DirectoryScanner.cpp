@@ -14,13 +14,99 @@
 
 static constexpr size_t ATTR_BUF_SIZE = 1 * 1024 * 1024; // 1 MB per-thread buffer
 
+namespace {
+
+bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
+    if (parent.empty()) return false;
+    size_t parentLen = parent.size();
+    while (parentLen > 1 && parent[parentLen - 1] == '/') {
+        parentLen--;
+    }
+    if (parentLen == 1 && parent[0] == '/') return !child.empty() && child[0] == '/';
+    if (child.size() == parentLen && child.compare(0, parentLen, parent) == 0) return true;
+    return child.size() > parentLen &&
+           child.compare(0, parentLen, parent) == 0 &&
+           child[parentLen] == '/';
+}
+
+bool pathContainsComponentPath(const std::string& path, const std::string& componentPath) {
+    if (componentPath.empty()) return false;
+    size_t pos = path.find(componentPath);
+    while (pos != std::string::npos) {
+        const bool startsAtComponent = pos == 0 || path[pos - 1] == '/';
+        const size_t end = pos + componentPath.size();
+        const bool endsAtComponent = end == path.size() || path[end] == '/';
+        if (startsAtComponent && endsAtComponent) {
+            return true;
+        }
+        pos = path.find(componentPath, pos + 1);
+    }
+    return false;
+}
+
+bool isSystemFilteredPath(const std::string& path) {
+    return path == "/System" ||
+           path.rfind("/System/", 0) == 0 ||
+           path == "/private/var" ||
+           path.rfind("/private/var/", 0) == 0 ||
+           pathContainsComponentPath(path, "Library/Caches") ||
+           pathContainsComponentPath(path, ".Spotlight-V100") ||
+           pathContainsComponentPath(path, ".fseventsd") ||
+           pathContainsComponentPath(path, ".Trashes");
+}
+
+std::vector<std::string> systemAllowedPathsForRoots(const std::vector<std::string>& rootPaths) {
+    std::vector<std::string> allowed;
+    allowed.reserve(rootPaths.size());
+    for (const auto& root : rootPaths) {
+        if (!root.empty() && root != "/" && isSystemFilteredPath(root)) {
+            allowed.push_back(root);
+        }
+    }
+    return allowed;
+}
+
+std::string normalizedRootPath(const std::string& path) {
+    size_t len = path.size();
+    while (len > 1 && path[len - 1] == '/') {
+        len--;
+    }
+    return path.substr(0, len);
+}
+
+std::vector<std::string> normalizedRootPaths(const std::vector<std::string>& rootPaths) {
+    std::vector<std::string> normalized;
+    normalized.reserve(rootPaths.size());
+    for (const auto& rootPath : rootPaths) {
+        if (!rootPath.empty()) {
+            normalized.push_back(normalizedRootPath(rootPath));
+        }
+    }
+    return normalized;
+}
+
+bool hasSystemAllowedPath(const ScanConfig& config, const std::string& path) {
+    for (const auto& allowed : config.systemAllowedPaths) {
+        if (pathContainsOrEquals(allowed, path)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+} // namespace
+
 void DirectoryScanner::scan(const std::string& rootPath) {
     scan(std::vector<std::string>{rootPath}, {});
 }
 
 void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const ScanConfig& config) {
     // Reset state so scanner can be reused across multiple scans
+    const auto roots = normalizedRootPaths(rootPaths);
     config_ = config;
+    if (config_.systemAllowedPaths.empty()) {
+        config_.systemAllowedPaths = systemAllowedPathsForRoots(roots);
+    }
     done_.store(false, std::memory_order_relaxed);
     cancelled_.store(false, std::memory_order_relaxed);
     activeTasks_.store(0, std::memory_order_relaxed);
@@ -55,7 +141,7 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
 
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
-        for (const auto& rootPath : rootPaths) {
+        for (const auto& rootPath : roots) {
             struct stat rootStat;
             if (stat(rootPath.c_str(), &rootStat) != 0) continue;
             if (!S_ISDIR(rootStat.st_mode)) continue;
@@ -355,15 +441,10 @@ bool DirectoryScanner::shouldExclude(const std::string& fullPath,
         return true;
     }
 
-    if (!config_.includeSystem) {
-        if (fullPath.rfind("/System/", 0) == 0 ||
-            fullPath.rfind("/private/var/", 0) == 0 ||
-            fullPath.find("/Library/Caches/") != std::string::npos ||
-            fullPath.find("/.Spotlight-V100/") != std::string::npos ||
-            fullPath.find("/.fseventsd/") != std::string::npos ||
-            fullPath.find("/.Trashes/") != std::string::npos) {
-            return true;
-        }
+    if (!config_.includeSystem &&
+        isSystemFilteredPath(fullPath) &&
+        !hasSystemAllowedPath(config_, fullPath)) {
+        return true;
     }
 
     for (const auto& excluded : config_.excludedPaths) {

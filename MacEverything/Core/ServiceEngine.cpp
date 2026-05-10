@@ -12,11 +12,61 @@ namespace {
 
 bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
     if (parent.empty()) return false;
-    if (child == parent) return true;
-    if (parent == "/") return !child.empty() && child[0] == '/';
-    return child.size() > parent.size() &&
-           child.compare(0, parent.size(), parent) == 0 &&
-           child[parent.size()] == '/';
+    size_t parentLen = parent.size();
+    while (parentLen > 1 && parent[parentLen - 1] == '/') {
+        parentLen--;
+    }
+    if (parentLen == 1 && parent[0] == '/') return !child.empty() && child[0] == '/';
+    if (child.size() == parentLen && child.compare(0, parentLen, parent) == 0) return true;
+    return child.size() > parentLen &&
+           child.compare(0, parentLen, parent) == 0 &&
+           child[parentLen] == '/';
+}
+
+bool pathContainsComponentPath(const std::string& path, const std::string& componentPath) {
+    if (componentPath.empty()) return false;
+    size_t pos = path.find(componentPath);
+    while (pos != std::string::npos) {
+        const bool startsAtComponent = pos == 0 || path[pos - 1] == '/';
+        const size_t end = pos + componentPath.size();
+        const bool endsAtComponent = end == path.size() || path[end] == '/';
+        if (startsAtComponent && endsAtComponent) {
+            return true;
+        }
+        pos = path.find(componentPath, pos + 1);
+    }
+    return false;
+}
+
+bool isSystemFilteredPath(const std::string& path) {
+    return path == "/System" ||
+           path.rfind("/System/", 0) == 0 ||
+           path == "/private/var" ||
+           path.rfind("/private/var/", 0) == 0 ||
+           pathContainsComponentPath(path, "Library/Caches") ||
+           pathContainsComponentPath(path, ".Spotlight-V100") ||
+           pathContainsComponentPath(path, ".fseventsd") ||
+           pathContainsComponentPath(path, ".Trashes");
+}
+
+std::vector<std::string> systemAllowedPathsForRoots(const std::vector<std::string>& roots) {
+    std::vector<std::string> allowed;
+    allowed.reserve(roots.size());
+    for (const auto& root : roots) {
+        if (!root.empty() && root != "/" && isSystemFilteredPath(root)) {
+            allowed.push_back(root);
+        }
+    }
+    return allowed;
+}
+
+bool hasSystemAllowedPath(const std::vector<std::string>& roots, const std::string& path) {
+    for (const auto& allowed : systemAllowedPathsForRoots(roots)) {
+        if (pathContainsOrEquals(allowed, path)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 std::vector<std::string> exclusionsForRoots(const std::vector<std::string>& roots,
@@ -496,8 +546,10 @@ std::vector<std::string> ServiceEngine::effectiveScanRoots() const {
 
 ScanConfig ServiceEngine::scanConfig() const {
     ScanConfig config;
-    config.excludedPaths = exclusionsForRoots(effectiveScanRoots(), config_.excludedPaths);
+    auto roots = effectiveScanRoots();
+    config.excludedPaths = exclusionsForRoots(roots, config_.excludedPaths);
     config.excludedPatterns = config_.excludedPatterns;
+    config.systemAllowedPaths = systemAllowedPathsForRoots(roots);
     config.includeHidden = config_.includeHidden;
     config.includeSystem = config_.includeSystem;
     config.includeAppBundleContents = config_.includeAppBundleContents;
@@ -533,9 +585,8 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
     std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
     if (!config_.includeHidden && !name.empty() && name[0] == '.') return false;
     if (!config_.includeSystem &&
-        (path.rfind("/System/", 0) == 0 ||
-         path.rfind("/private/var/", 0) == 0 ||
-         path.find("/Library/Caches/") != std::string::npos)) {
+        isSystemFilteredPath(path) &&
+        !hasSystemAllowedPath(roots, path)) {
         return false;
     }
 
