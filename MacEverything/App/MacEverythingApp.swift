@@ -12,42 +12,42 @@ struct MacEverythingApp: App {
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 600)
         .commands {
-            CommandMenu("Search") {
-                Toggle("Regex", isOn: $searchOptions.isRegex)
+            CommandMenu(Text(L10n.tr("Search"))) {
+                Toggle(L10n.tr("Regex"), isOn: $searchOptions.isRegex)
                     .keyboardShortcut("r", modifiers: [.command])
-                Toggle("Case Sensitive", isOn: $searchOptions.isCaseSensitive)
+                Toggle(L10n.tr("Case Sensitive"), isOn: $searchOptions.isCaseSensitive)
                     .keyboardShortcut("c", modifiers: [.command, .shift])
-                Toggle("Whole Word", isOn: $searchOptions.isWholeWord)
+                Toggle(L10n.tr("Whole Word"), isOn: $searchOptions.isWholeWord)
                     .keyboardShortcut("w", modifiers: [.command, .shift])
-                Toggle("Match Filename", isOn: $searchOptions.isMatchFilename)
+                Toggle(L10n.tr("Match Filename"), isOn: $searchOptions.isMatchFilename)
                     .keyboardShortcut("f", modifiers: [.command, .shift])
             }
 
             CommandGroup(replacing: .help) {
-                Button("Search Syntax Help") {
+                Button(L10n.tr("Search Syntax Help")) {
                     SearchSyntaxHelpWindowController.shared.showWindow()
                 }
                 .keyboardShortcut("/", modifiers: [.command, .shift])
             }
 
             CommandGroup(after: .appSettings) {
-                Button("Rebuild Index") {
+                Button(L10n.tr("Rebuild Index")) {
                     NotificationCenter.default.post(name: .rebuildIndex, object: nil)
                 }
                 .keyboardShortcut("r", modifiers: [.command, .shift])
 
-                Button("Shortcut Settings...") {
+                Button(L10n.tr("Shortcut Settings...")) {
                     ShortcutSettingsWindowController.shared.showWindow()
                 }
                 .keyboardShortcut(",", modifiers: [.command])
 
-                Button("Content Settings...") {
+                Button(L10n.tr("Content Settings...")) {
                     ContentSettingsWindowController.shared.showWindow()
                 }
 
                 Divider()
 
-                Menu("MCP Integration") {
+                Menu(L10n.tr("MCP Integration")) {
                     ForEach(MCPClient.allCases, id: \.self) { client in
                         Toggle(client.displayName, isOn: Binding(
                             get: { MCPConfigManager.isEnabled(for: client) },
@@ -77,7 +77,7 @@ class ContentSettingsWindowController {
         let settingsView = ContentSettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
         let win = NSWindow(contentViewController: hostingController)
-        win.title = "Content Settings"
+        win.title = L10n.tr("Content Settings")
         win.styleMask = [.titled, .closable]
         win.center()
         win.makeKeyAndOrderFront(nil)
@@ -98,7 +98,7 @@ class ShortcutSettingsWindowController {
         let settingsView = ShortcutSettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
         let win = NSWindow(contentViewController: hostingController)
-        win.title = "Shortcut Settings"
+        win.title = L10n.tr("Shortcut Settings")
         win.styleMask = [.titled, .closable]
         win.center()
         win.makeKeyAndOrderFront(nil)
@@ -119,7 +119,7 @@ class SearchSyntaxHelpWindowController {
         let helpView = SearchSyntaxHelpView()
         let hostingController = NSHostingController(rootView: helpView)
         let win = NSWindow(contentViewController: hostingController)
-        win.title = "Search Syntax Help"
+        win.title = L10n.tr("Search Syntax Help")
         win.styleMask = [.titled, .closable, .resizable]
         win.setContentSize(NSSize(width: 580, height: 720))
         win.minSize = NSSize(width: 450, height: 400)

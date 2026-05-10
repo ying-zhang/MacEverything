@@ -95,10 +95,10 @@ struct ResultRow: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button("Open") { openFile(item) }
-            Button("Reveal in Finder") { revealInFinder(item) }
+            Button(L10n.tr("Open")) { openFile(item) }
+            Button(L10n.tr("Reveal in Finder")) { revealInFinder(item) }
             Divider()
-            Button("Copy Path") { copyPath(item) }
+            Button(L10n.tr("Copy Path")) { copyPath(item) }
         }
         .onDrag {
             let fullPath = item.path + "/" + item.name

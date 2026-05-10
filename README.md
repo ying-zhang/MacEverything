@@ -49,6 +49,7 @@
 - **Ghost 文本自动补全** — 输入时自动显示半透明建议文字，来自搜索历史（按频率排序）或系统关键词（如输入 `ex` 提示 `ext:`）。按 **Tab** 一键接受
 - **搜索栏语法高亮** — 实时彩色标注：过滤器名紫色、参数蓝色、引号字符串橙色、运算符红色
 - **搜索选项徽章** — 搜索栏旁的彩色徽章，一键切换 Regex / Case Sensitive / Whole Word / Match Filename
+- **中英文界面** — 应用界面、菜单、设置窗口和搜索语法帮助支持简体中文与英文，跟随 macOS 首选语言自动切换
 
 ### Everything 风格查询语法
 
@@ -148,7 +149,7 @@ curl "http://localhost:19860/api/status"                          # 索引状态
 
 #### 下载 DMG（推荐）
 
-1. 从 [Releases](../../releases) 下载 `MacEverything.dmg`
+1. 从 [Releases](../../releases) 下载 `MacEverything.dmg`（由 GitHub Actions 构建）
 2. 将 `MacEverything.app` 拖入「应用程序」文件夹
 3. 启动后按提示授予 **完全磁盘访问权限**
 4. 等待初始扫描完成（约 14 秒）
@@ -156,7 +157,11 @@ curl "http://localhost:19860/api/status"                          # 索引状态
 
 #### 从源码构建
 
-**环境要求：** macOS 13+，Xcode 15+
+**环境要求：** macOS 13+，Xcode 15+（完整 Xcode，不只是 Command Line Tools），Homebrew，RE2
+
+```bash
+brew install re2
+```
 
 ```bash
 git clone https://github.com/user/MacEverything.git && cd MacEverything
@@ -168,6 +173,8 @@ hdiutil create -volname MacEverything \
   -srcfolder build/Release/MacEverything.app \
   -ov -format UDZO MacEverything.dmg
 ```
+
+Release 构建和 GitHub Actions 发布包会自动把 Homebrew 的 `libre2` 及其依赖嵌入 `.app/Contents/Frameworks`，避免发布包在未安装 Homebrew/RE2 的 Mac 上启动失败。
 
 #### CLI 守护进程
 

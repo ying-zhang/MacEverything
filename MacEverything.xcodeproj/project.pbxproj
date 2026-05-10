@@ -38,6 +38,8 @@
 		A1000032 /* HighlightHint.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000046; };
 		A1000033 /* SearchEngineV6.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000047; };
 		A1000034 /* FlatIndexWriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000049; };
+		A1000035 /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000050; };
+		A1000036 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A9000101; };
 		A100001A /* StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000028; };
 		A100001B /* Logger.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A200002A; };
 		A100001C /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200002B; };
@@ -150,6 +152,9 @@
 		A2000048 /* FlatIndexWriter.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = FlatIndexWriter.h; sourceTree = "<group>"; };
 		A2000049 /* FlatIndexWriter.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = FlatIndexWriter.cpp; sourceTree = "<group>"; };
 		A2000043 /* SearchOptions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchOptions.swift; sourceTree = "<group>"; };
+		A2000050 /* L10n.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = L10n.swift; sourceTree = "<group>"; };
+		A2000051 /* en */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = en; path = en.lproj/Localizable.strings; sourceTree = "<group>"; };
+		A2000052 /* zh-Hans */ = {isa = PBXFileReference; lastKnownFileType = text.plist.strings; name = "zh-Hans"; path = "zh-Hans.lproj/Localizable.strings"; sourceTree = "<group>"; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2000001 /* mcp_main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mcp_main.cpp; sourceTree = "<group>"; };
@@ -183,10 +188,45 @@
 			buildActionMask = 2147483647;
 			files = (
 				A1000015 /* Assets.xcassets in Resources */,
+				A1000036 /* Localizable.strings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXResourcesBuildPhase section */
+
+/* Begin PBXVariantGroup section */
+		A9000101 /* Localizable.strings */ = {
+			isa = PBXVariantGroup;
+			children = (
+				A2000051 /* en */,
+				A2000052 /* zh-Hans */,
+			);
+			name = Localizable.strings;
+			sourceTree = "<group>";
+		};
+/* End PBXVariantGroup section */
+
+/* Begin PBXShellScriptBuildPhase section */
+		E6000001 /* Embed Homebrew Dylibs */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Embed Homebrew Dylibs";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		BA000001 /* Frameworks */ = {
@@ -234,6 +274,7 @@
 				A4000005 /* Core */,
 				C4000001 /* CLI */,
 				A2000021 /* Assets.xcassets */,
+				A9000101 /* Localizable.strings */,
 				A2000010 /* MacEverything-Bridging-Header.h */,
 				A2000011 /* Info.plist */,
 				A2000012 /* MacEverything.entitlements */,
@@ -271,6 +312,7 @@
 				D2000001 /* MCPConfigManager.swift */,
 				A2000043 /* SearchOptions.swift */,
 				A2000045 /* SearchSyntaxHelpView.swift */,
+				A2000050 /* L10n.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -366,6 +408,7 @@
 				A3000001 /* Frameworks */,
 				A3000002 /* Resources */,
 				D6000001 /* Copy MCP Binary */,
+				E6000001 /* Embed Homebrew Dylibs */,
 			);
 			buildRules = (
 			);
@@ -426,6 +469,7 @@
 			hasScannedForEncodings = 0;
 			knownRegions = (
 				en,
+				"zh-Hans",
 				Base,
 			);
 			mainGroup = A4000001;
@@ -489,6 +533,7 @@
 				A1000028 /* SearchEngineAdvancedQuery.cpp in Sources */,
 				A1000029 /* SearchEngineStructuredQuery.cpp in Sources */,
 				A100002A /* SearchOptions.swift in Sources */,
+				A1000035 /* L10n.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -588,10 +633,14 @@
 					"$(SRCROOT)/MacEverything/Bridge",
 					"/opt/homebrew/opt/re2/include",
 					"/opt/homebrew/opt/abseil/include",
+					"/usr/local/opt/re2/include",
+					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"/opt/homebrew/opt/re2/lib",
 					"/opt/homebrew/opt/abseil/lib",
+					"/usr/local/opt/re2/lib",
+					"/usr/local/opt/abseil/lib",
 				);
 				OTHER_LDFLAGS = (
 					"-lre2",
@@ -621,10 +670,14 @@
 					"$(SRCROOT)/MacEverything/Bridge",
 					"/opt/homebrew/opt/re2/include",
 					"/opt/homebrew/opt/abseil/include",
+					"/usr/local/opt/re2/include",
+					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"/opt/homebrew/opt/re2/lib",
 					"/opt/homebrew/opt/abseil/lib",
+					"/usr/local/opt/re2/lib",
+					"/usr/local/opt/abseil/lib",
 				);
 				OTHER_LDFLAGS = (
 					"-lre2",
