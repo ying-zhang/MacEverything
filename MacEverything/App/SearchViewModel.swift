@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 struct FileItem: Identifiable {
     let id: String      // path-based stable ID
@@ -40,6 +41,7 @@ class SearchViewModel: ObservableObject {
     @Published var contentIndexedCount: UInt32 = 0
     @Published var isSyncing: Bool = false
     @Published var ghostSuggestion: String? = nil
+    @Published var selectedItemID: String? = nil
 
     /// Structured highlight hints extracted from the C++ query AST.
     /// Replaces the old keyword-based approach with field-aware, mode-aware hints.
@@ -58,6 +60,8 @@ class SearchViewModel: ObservableObject {
     private var settledTask: Task<Void, Never>?
     private var optionsSink: AnyCancellable?
     private var cachedResults: [MEFileResult] = []
+    private var sourceItems: [FileItem] = []
+    private var cachedItems: [FileItem] = []
     private var loadedCount: Int = 0
     private var searchGeneration: UInt64 = 0
     private static let guiSessionId: UInt64 = 1
@@ -220,6 +224,10 @@ class SearchViewModel: ObservableObject {
         searchGeneration &+= 1
         scanComplete = false
         displayItems = []
+        sourceItems = []
+        cachedItems = []
+        cachedResults = []
+        selectedItemID = nil
         totalMatches = 0
         queryTimeMs = 0
         contentResults = []
@@ -244,13 +252,17 @@ class SearchViewModel: ObservableObject {
         recentTask?.cancel()
         searchGeneration &+= 1
         isLoadingMore = false
+        selectedItemID = nil
         let text = searchText
 
         if text.isEmpty {
             totalMatches = 0
             queryTimeMs = 0
             cachedResults = []
+            sourceItems = []
+            cachedItems = []
             loadedCount = 0
+            selectedItemID = nil
             isContentSearch = false
             contentResults = []
             contentKeyword = "" // H-9: reset cached keyword
@@ -289,7 +301,10 @@ class SearchViewModel: ObservableObject {
             isContentSearch = true
             displayItems = []
             cachedResults = []
+            sourceItems = []
+            cachedItems = []
             loadedCount = 0
+            selectedItemID = nil
 
             let keyword = String(text.dropFirst(7))
             contentKeyword = keyword // H-9: cache computed keyword
@@ -334,26 +349,19 @@ class SearchViewModel: ObservableObject {
             // P-4: Use batch method — single engine lock, no NSNumber boxing
             let results = bridge.queryResults(query, maxResults: maxResults, sessionId: Self.guiSessionId)
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
-            let totalCount = results.count
-
-            let firstPageCount = min(totalCount, pageSize)
             var items: [FileItem] = []
-            items.reserveCapacity(firstPageCount)
-            for i in 0..<firstPageCount {
-                let r = results[i]
-                items.append(FileItem(
-                    id: "\(r.path)/\(r.name)", index: 0,
-                    name: r.name, path: r.path,
-                    type: r.type, size: r.size, modTime: r.modTime
-                ))
+            items.reserveCapacity(results.count)
+            for r in results {
+                items.append(Self.fileItem(from: r))
             }
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
                 self.cachedResults = results
-                self.loadedCount = firstPageCount
-                self.displayItems = self.sorted(items)
-                self.totalMatches = totalCount
+                self.sourceItems = items
+                self.cachedItems = items
+                self.applySortedResults(pageSize: pageSize)
+                self.totalMatches = items.count
                 self.queryTimeMs = elapsed
             }
         }
@@ -391,34 +399,21 @@ class SearchViewModel: ObservableObject {
 
     func loadMore() {
         guard !isLoadingMore else { return }
-        guard loadedCount < cachedResults.count else { return }
+        guard loadedCount < cachedItems.count else { return }
 
         isLoadingMore = true
-        let results = cachedResults
         let currentLoaded = loadedCount
         let pageSize = Self.pageSize
         let gen = searchGeneration
 
-        // P-4: Results are already fetched — just slice the next page, no bridge calls needed
         Task.detached { [weak self] in
-            let nextEnd = min(currentLoaded + pageSize, results.count)
-            var newItems: [FileItem] = []
-            newItems.reserveCapacity(nextEnd - currentLoaded)
-            for i in currentLoaded..<nextEnd {
-                let r = results[i]
-                newItems.append(FileItem(
-                    id: "\(r.path)/\(r.name)", index: 0,
-                    name: r.name, path: r.path,
-                    type: r.type, size: r.size, modTime: r.modTime
-                ))
-            }
-
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else {
                     self?.isLoadingMore = false
                     return
                 }
-                self.displayItems.append(contentsOf: self.sorted(newItems))
+                let nextEnd = min(currentLoaded + pageSize, self.cachedItems.count)
+                self.displayItems.append(contentsOf: self.cachedItems[currentLoaded..<nextEnd])
                 self.loadedCount = nextEnd
                 self.isLoadingMore = false
             }
@@ -436,18 +431,61 @@ class SearchViewModel: ObservableObject {
             items.reserveCapacity(results.count)
             for r in results {
                 guard !Task.isCancelled else { return }
-                items.append(FileItem(
-                    id: "\(r.path)/\(r.name)", index: 0,
-                    name: r.name, path: r.path,
-                    type: r.type, size: r.size, modTime: r.modTime
-                ))
+                items.append(Self.fileItem(from: r))
             }
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
-                self.displayItems = self.sorted(items)
+                self.cachedResults = results
+                self.sourceItems = items
+                self.cachedItems = items
+                self.applySortedResults(pageSize: Self.pageSize)
+                self.totalMatches = items.count
                 self.showingRecent = true
+                self.queryTimeMs = 0
             }
         }
+    }
+
+    func sortBy(_ field: SortField) {
+        if settings.sortField == field {
+            settings.sortAscending.toggle()
+        } else {
+            settings.sortField = field
+            settings.sortAscending = field == .modified || field == .size ? false : true
+        }
+        applySortedResults(pageSize: max(loadedCount, Self.pageSize))
+    }
+
+    func select(_ item: FileItem) {
+        selectedItemID = item.id
+    }
+
+    func activateSelectedOrFirstResult() -> Bool {
+        guard let first = displayItems.first else { return false }
+        if let selectedItemID,
+           let selected = displayItems.first(where: { $0.id == selectedItemID }) {
+            openFile(selected)
+        } else {
+            selectedItemID = first.id
+        }
+        return true
+    }
+
+    private func applySortedResults(pageSize: Int) {
+        cachedItems = sorted(sourceItems)
+        loadedCount = min(pageSize, cachedItems.count)
+        displayItems = Array(cachedItems.prefix(loadedCount))
+        if let selectedItemID, !displayItems.contains(where: { $0.id == selectedItemID }) {
+            self.selectedItemID = nil
+        }
+    }
+
+    private static func fileItem(from result: MEFileResult) -> FileItem {
+        FileItem(
+            id: "\(result.path)/\(result.name)", index: 0,
+            name: result.name, path: result.path,
+            type: result.type, size: result.size, modTime: result.modTime
+        )
     }
 
     private func sorted(_ items: [FileItem]) -> [FileItem] {
@@ -456,20 +494,34 @@ class SearchViewModel: ObservableObject {
 
         let ascending = snapshot.sortAscending
         return items.sorted { lhs, rhs in
-            let ordered: Bool
+            let result: ComparisonResult
             switch snapshot.sortField {
             case .relevance:
-                ordered = false
+                result = .orderedSame
             case .name:
-                ordered = lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+                result = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
             case .path:
-                ordered = lhs.path.localizedCaseInsensitiveCompare(rhs.path) == .orderedAscending
+                result = (lhs.path + "/" + lhs.name).localizedCaseInsensitiveCompare(rhs.path + "/" + rhs.name)
             case .size:
-                ordered = lhs.size < rhs.size
+                result = lhs.size == rhs.size ? .orderedSame : (lhs.size < rhs.size ? .orderedAscending : .orderedDescending)
             case .modified:
-                ordered = lhs.modTime < rhs.modTime
+                result = lhs.modTime == rhs.modTime ? .orderedSame : (lhs.modTime < rhs.modTime ? .orderedAscending : .orderedDescending)
             }
-            return ascending ? ordered : !ordered
+            if result == .orderedSame {
+                let fallback = (lhs.path + "/" + lhs.name).localizedCaseInsensitiveCompare(rhs.path + "/" + rhs.name)
+                return fallback == .orderedAscending
+            }
+            return ascending ? result == .orderedAscending : result == .orderedDescending
+        }
+    }
+
+    private func openFile(_ item: FileItem) {
+        let fullPath = item.path + "/" + item.name
+        if item.type == 5 {
+            let url = URL(fileURLWithPath: fullPath)
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+        } else if !NSWorkspace.shared.open(URL(fileURLWithPath: fullPath)) {
+            NSSound.beep()
         }
     }
 
@@ -526,7 +578,7 @@ class SearchViewModel: ObservableObject {
     }
 
     var hasMoreResults: Bool {
-        loadedCount < cachedResults.count
+        loadedCount < cachedItems.count
     }
 
     // H-9: Cached to avoid recomputing lowercased() + hasPrefix on every access
@@ -606,6 +658,9 @@ class SearchViewModel: ObservableObject {
 
     func submitSearch() {
         guard !searchText.isEmpty else { return }
+        if settings.snapshot.searchAsYouType, activateSelectedOrFirstResult() {
+            return
+        }
         searchTask?.cancel()
         recentTask?.cancel()
         searchGeneration &+= 1

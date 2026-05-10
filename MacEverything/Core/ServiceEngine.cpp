@@ -8,6 +8,43 @@
 
 namespace fs = std::filesystem;
 
+namespace {
+
+bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
+    if (parent.empty()) return false;
+    if (child == parent) return true;
+    if (parent == "/") return !child.empty() && child[0] == '/';
+    return child.size() > parent.size() &&
+           child.compare(0, parent.size(), parent) == 0 &&
+           child[parent.size()] == '/';
+}
+
+std::vector<std::string> exclusionsForRoots(const std::vector<std::string>& roots,
+                                            const std::vector<std::string>& excludedPaths) {
+    std::vector<std::string> filtered;
+    filtered.reserve(excludedPaths.size());
+
+    for (const auto& excluded : excludedPaths) {
+        if (excluded.empty()) continue;
+
+        bool overriddenByExplicitRoot = false;
+        for (const auto& root : roots) {
+            if (pathContainsOrEquals(excluded, root)) {
+                overriddenByExplicitRoot = true;
+                break;
+            }
+        }
+
+        if (!overriddenByExplicitRoot) {
+            filtered.push_back(excluded);
+        }
+    }
+
+    return filtered;
+}
+
+} // namespace
+
 // ═══════════════════════════════════════════════════════
 //  Construction / Destruction
 // ═══════════════════════════════════════════════════════
@@ -459,7 +496,7 @@ std::vector<std::string> ServiceEngine::effectiveScanRoots() const {
 
 ScanConfig ServiceEngine::scanConfig() const {
     ScanConfig config;
-    config.excludedPaths = config_.excludedPaths;
+    config.excludedPaths = exclusionsForRoots(effectiveScanRoots(), config_.excludedPaths);
     config.excludedPatterns = config_.excludedPatterns;
     config.includeHidden = config_.includeHidden;
     config.includeSystem = config_.includeSystem;
@@ -473,24 +510,21 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
         : effectiveScanRoots();
     bool insideRoot = roots.empty();
     for (const auto& root : roots) {
-        if (path == root ||
-            (path.size() > root.size() && path.compare(0, root.size(), root) == 0 &&
-             path[root.size()] == '/')) {
+        if (pathContainsOrEquals(root, path)) {
             insideRoot = true;
             break;
         }
     }
     if (!insideRoot) return false;
 
-    std::vector<std::string> excluded = config_.excludedPaths;
+    std::vector<std::string> excluded = exclusionsForRoots(roots, config_.excludedPaths);
     if (forContent) {
-        excluded.insert(excluded.end(), config_.contentExcludedPaths.begin(), config_.contentExcludedPaths.end());
+        auto contentExcluded = exclusionsForRoots(roots, config_.contentExcludedPaths);
+        excluded.insert(excluded.end(), contentExcluded.begin(), contentExcluded.end());
     }
     for (const auto& ex : excluded) {
         if (ex.empty()) continue;
-        if (path == ex ||
-            (path.size() > ex.size() && path.compare(0, ex.size(), ex) == 0 &&
-             path[ex.size()] == '/')) {
+        if (pathContainsOrEquals(ex, path)) {
             return false;
         }
     }

@@ -49,6 +49,7 @@
 "Add" = "添加";
 "Apply" = "应用";
 "Indexes" = "索引";
+"Content" = "内容";
 "Search & Results" = "搜索与结果";
 "General" = "通用";
 "Indexing Scope" = "索引范围";
@@ -65,6 +66,8 @@
 "Excluded Folders" = "排除文件夹";
 "Excluded Name Patterns" = "排除名称模式";
 "Add pattern..." = "添加模式...";
+"Exclusion changes take effect after rebuilding the index." = "排除项更改会在重建索引后生效。";
+"Rebuild Index Now" = "立即重建索引";
 "Enable content indexing" = "启用内容索引";
 "Content Indexed Folders" = "内容索引文件夹";
 "Content Excluded Folders" = "内容排除文件夹";

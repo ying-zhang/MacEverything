@@ -49,6 +49,7 @@
 "Add" = "Add";
 "Apply" = "Apply";
 "Indexes" = "Indexes";
+"Content" = "Content";
 "Search & Results" = "Search & Results";
 "General" = "General";
 "Indexing Scope" = "Indexing Scope";
@@ -65,6 +66,8 @@
 "Excluded Folders" = "Excluded Folders";
 "Excluded Name Patterns" = "Excluded Name Patterns";
 "Add pattern..." = "Add pattern...";
+"Exclusion changes take effect after rebuilding the index." = "Exclusion changes take effect after rebuilding the index.";
+"Rebuild Index Now" = "Rebuild Index Now";
 "Enable content indexing" = "Enable content indexing";
 "Content Indexed Folders" = "Content Indexed Folders";
 "Content Excluded Folders" = "Content Excluded Folders";

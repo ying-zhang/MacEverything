@@ -23,11 +23,18 @@ struct GeneralSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     exclusionsSection
-                    contentSection
                 }
                 .padding()
             }
             .tabItem { Text(L10n.tr("Exclusions")) }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    contentSection
+                }
+                .padding()
+            }
+            .tabItem { Text(L10n.tr("Content")) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -69,12 +76,18 @@ struct GeneralSettingsView: View {
                 Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
             }
 
-            Picker(L10n.tr("Refresh Mode"), selection: $settings.refreshMode) {
-                ForEach(RefreshMode.allCases) { mode in
-                    Text(mode.title).tag(mode)
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.tr("Refresh Mode"))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Picker(L10n.tr("Refresh Mode"), selection: $settings.refreshMode) {
+                    ForEach(RefreshMode.allCases) { mode in
+                        Text(mode.title).tag(mode)
+                    }
                 }
+                .pickerStyle(.radioGroup)
+                .labelsHidden()
             }
-            .pickerStyle(.segmented)
 
             HStack {
                 Button(L10n.tr("Reset Index Defaults")) {
@@ -102,6 +115,15 @@ struct GeneralSettingsView: View {
                 newItem: $newExcludedPattern,
                 placeholder: L10n.tr("Add pattern...")
             )
+            HStack {
+                Text(L10n.tr("Exclusion changes take effect after rebuilding the index."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(L10n.tr("Rebuild Index Now")) {
+                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                }
+            }
         }
     }
 
@@ -244,69 +266,6 @@ private struct SettingsSection<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-    }
-}
-
-private struct PathListEditor: View {
-    let title: String
-    @Binding var paths: [String]
-    @Binding var newPath: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.subheadline)
-                .foregroundColor(.secondary)
-            List {
-                ForEach(paths, id: \.self) { path in
-                    HStack {
-                        Text((path as NSString).abbreviatingWithTildeInPath)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            paths.removeAll { $0 == path }
-                        } label: {
-                            Image(systemName: "minus.circle")
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-            }
-            .frame(height: 96)
-
-            HStack {
-                TextField(L10n.tr("Add folder path..."), text: $newPath)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit(addTypedPath)
-                Button {
-                    chooseFolder()
-                } label: {
-                    Image(systemName: "folder.badge.plus")
-                }
-                Button(L10n.tr("Add")) {
-                    addTypedPath()
-                }
-                .disabled(newPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-        }
-    }
-
-    private func addTypedPath() {
-        let path = newPath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !path.isEmpty else { return }
-        paths = normalizedPaths(paths + [path])
-        newPath = ""
-    }
-
-    private func chooseFolder() {
-        let panel = NSOpenPanel()
-        panel.canChooseFiles = false
-        panel.canChooseDirectories = true
-        panel.allowsMultipleSelection = true
-        if panel.runModal() == .OK {
-            paths = normalizedPaths(paths + panel.urls.map(\.path))
-        }
     }
 }
 

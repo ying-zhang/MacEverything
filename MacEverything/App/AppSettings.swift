@@ -301,9 +301,10 @@ final class AppSettings: ObservableObject {
     private static func defaultIndexRoots() -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser
         let names = ["Desktop", "Downloads", "Documents", "Pictures", "Movies", "Music"]
-        return names
+        let userFolders = names
             .map { home.appendingPathComponent($0).path }
             .filter { FileManager.default.fileExists(atPath: $0) }
+        return normalizedExistingPaths(["/Applications", "/System/Applications"] + userFolders)
     }
 
     private static func defaultExcludedPaths() -> [String] {
