@@ -33,8 +33,8 @@
 "Search" = "Search";
 "Regex" = "Regex";
 "Case Sensitive" = "Case Sensitive";
-"Whole Word" = "Whole Word";
-"Match Filename" = "Match Filename";
+"Whole Word" = "Match Whole Word";
+"Match Filename" = "Filename Only";
 "Search Syntax Help" = "Search Syntax Help";
 "Content Settings" = "Content Settings";
 "Shortcut Settings" = "Shortcut Settings";
@@ -63,6 +63,11 @@
 "Realtime" = "Realtime";
 "Manual" = "Manual";
 "Reset Index Defaults" = "Reset Index Defaults";
+"Reset Index Defaults..." = "Reset Index Defaults...";
+"Reset Index Defaults?" = "Reset Index Defaults?";
+"Resetting index defaults will replace indexed folders, exclusions, and related index options." = "Resetting index defaults will replace indexed folders, exclusions, and related index options.";
+"Reset" = "Reset";
+"Cancel" = "Cancel";
 "Changes require rebuilding the index." = "Changes require rebuilding the index.";
 "Exclusions" = "Exclusions";
 "Excluded Folders" = "Excluded Folders";
@@ -80,8 +85,8 @@
 "Search as you type" = "Search as you type";
 "Default Regex" = "Default Regex";
 "Default Case Sensitive" = "Default Case Sensitive";
-"Default Whole Word" = "Default Whole Word";
-"Default Match Filename" = "Default Match Filename";
+"Default Whole Word" = "Default Match Whole Word";
+"Default Match Filename" = "Default Filename Only";
 "Maximum Results: %d" = "Maximum Results: %d";
 "Default Sort" = "Default Sort";
 "Relevance" = "Relevance";

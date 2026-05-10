@@ -12,6 +12,7 @@
 struct ScanConfig {
     std::vector<std::string> excludedPaths;
     std::vector<std::string> excludedPatterns;
+    std::vector<std::string> systemAllowedPaths;
     bool includeHidden = false;
     bool includeSystem = false;
     bool includeAppBundleContents = false;

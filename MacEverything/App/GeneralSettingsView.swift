@@ -9,6 +9,7 @@ struct GeneralSettingsView: View {
     @State private var newExcludedPattern = ""
     @State private var newContentPath = ""
     @State private var newContentExcludedPath = ""
+    @State private var showingResetIndexDefaultsConfirmation = false
 
     var body: some View {
         TabView {
@@ -57,6 +58,14 @@ struct GeneralSettingsView: View {
             .tabItem { Text(L10n.tr("General")) }
         }
         .frame(width: 720, height: 620)
+        .alert(L10n.tr("Reset Index Defaults?"), isPresented: $showingResetIndexDefaultsConfirmation) {
+            Button(L10n.tr("Reset"), role: .destructive) {
+                settings.resetIndexDefaults()
+            }
+            Button(L10n.tr("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.tr("Resetting index defaults will replace indexed folders, exclusions, and related index options."))
+        }
     }
 
     private var indexingSection: some View {
@@ -90,13 +99,24 @@ struct GeneralSettingsView: View {
             }
 
             HStack {
-                Button(L10n.tr("Reset Index Defaults")) {
-                    settings.resetIndexDefaults()
-                }
-                Spacer()
                 Text(L10n.tr("Changes require rebuilding the index."))
                     .font(.caption)
                     .foregroundColor(.secondary)
+                Spacer()
+                Button(L10n.tr("Rebuild Index Now")) {
+                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button(role: .destructive) {
+                    showingResetIndexDefaultsConfirmation = true
+                } label: {
+                    Text(L10n.tr("Reset Index Defaults..."))
+                }
             }
         }
     }

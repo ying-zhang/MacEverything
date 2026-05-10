@@ -33,8 +33,8 @@
 "Search" = "搜索";
 "Regex" = "正则表达式";
 "Case Sensitive" = "区分大小写";
-"Whole Word" = "全词匹配";
-"Match Filename" = "匹配文件名";
+"Whole Word" = "仅匹配完整词";
+"Match Filename" = "仅匹配文件名";
 "Search Syntax Help" = "搜索语法帮助";
 "Content Settings" = "内容设置";
 "Shortcut Settings" = "快捷键设置";
@@ -63,6 +63,11 @@
 "Realtime" = "实时";
 "Manual" = "手动";
 "Reset Index Defaults" = "恢复索引默认值";
+"Reset Index Defaults..." = "恢复索引默认值...";
+"Reset Index Defaults?" = "恢复索引默认值？";
+"Resetting index defaults will replace indexed folders, exclusions, and related index options." = "恢复默认值会替换索引文件夹、排除项和相关索引选项。";
+"Reset" = "恢复";
+"Cancel" = "取消";
 "Changes require rebuilding the index." = "更改后需要重建索引。";
 "Exclusions" = "排除项";
 "Excluded Folders" = "排除文件夹";
@@ -80,8 +85,8 @@
 "Search as you type" = "输入时搜索";
 "Default Regex" = "默认正则";
 "Default Case Sensitive" = "默认区分大小写";
-"Default Whole Word" = "默认全词匹配";
-"Default Match Filename" = "默认只匹配文件名";
+"Default Whole Word" = "默认仅匹配完整词";
+"Default Match Filename" = "默认仅匹配文件名";
 "Maximum Results: %d" = "最大结果数：%d";
 "Default Sort" = "默认排序";
 "Relevance" = "相关性";
