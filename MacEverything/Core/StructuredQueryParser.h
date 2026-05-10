@@ -90,7 +90,6 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
         }
     }
 
-    const bool leftAnchored = !q.empty() && q.front() == '/';
     bool rightAnchored = false;
 
     // Determine mode from trailing characters
@@ -129,20 +128,12 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
     parts.pop_back();
 
     if (parts.empty()) {
-        if (rightAnchored) {
-            result.mode = QueryMode::SEGMENTS;
-        }
-        if (leftAnchored && rightAnchored) {
-            result.nameKind = PathSegmentKind::EXACT;
-        } else if (leftAnchored) {
-            result.nameKind = PathSegmentKind::PREFIX;
-        } else if (rightAnchored) {
-            result.nameKind = PathSegmentKind::SUFFIX;
-        }
+        if (rightAnchored) result.mode = QueryMode::SEGMENTS;
+        result.nameKind = PathSegmentKind::SUBSTRING;
     } else if (rightAnchored) {
         result.nameKind = PathSegmentKind::EXACT;
     } else {
-        result.nameKind = PathSegmentKind::PREFIX;
+        result.nameKind = PathSegmentKind::SUBSTRING;
     }
 
     // Remaining parts are path constraints
@@ -157,13 +148,7 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
         PathSegment seg;
         seg.text = parts[i];
         seg.adjacentToNext = true;
-        if (i == 0 && leftAnchored) {
-            seg.kind = PathSegmentKind::EXACT;
-        } else if (i == 0) {
-            seg.kind = PathSegmentKind::SUFFIX;
-        } else {
-            seg.kind = PathSegmentKind::EXACT;
-        }
+        seg.kind = PathSegmentKind::SUBSTRING;
         result.pathSegments.push_back(std::move(seg));
     }
 

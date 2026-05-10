@@ -270,5 +270,24 @@ static void runQuerySimplificationTests() {
         check(foundTarget, "66.20 'ying pdf' matches path term + filename term");
     }
 
+    // ── 66.21 Unicode fallback still runs when primary fills maxResults ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord primary; primary.name = "Caf\xC3\xA9" "-primary.txt"; primary.path = "/tmp"; primary.type = 1;
+        FileRecord alternate; alternate.name = "Cafe\xCC\x81" ".txt"; alternate.path = "/tmp"; alternate.type = 1;
+        records.push_back(std::move(primary));
+        records.push_back(std::move(alternate));
+        engine.loadRecords(std::move(records));
+
+        auto results = engine.query("Caf\xC3\xA9", 1, false);
+        check(results.size() == 1, "66.21 limited query returns one result");
+        if (!results.empty()) {
+            auto rec = engine.getRecord(results[0]);
+            check(rec.name == "Cafe\xCC\x81" ".txt",
+                  "66.21 NFC query can rank alternate result into limited window");
+        }
+    }
+
     std::cout << "  Part 67 summary: " << localPassed << " passed, " << localFailed << " failed\n";
 }

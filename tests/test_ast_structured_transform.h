@@ -32,7 +32,7 @@ static void runASTStructuredTransformTests() {
         check(result->children[1]->text == "test", "64.1 child1 text=test");
         check(result->children[1]->matchPath == false, "64.1 child1 matchPath=false");
         check(result->children[1]->useNameKind, "64.1 child1 uses nameKind");
-        check(result->children[1]->nameKind == PathSegmentKind::PREFIX, "64.1 child1 prefix name");
+        check(result->children[1]->nameKind == PathSegmentKind::SUBSTRING, "64.1 child1 substring name");
     }
 
     // 64.2 No path segments: TERM("test") → unchanged
@@ -165,7 +165,7 @@ static void runASTStructuredTransformTests() {
         if (result->type == QueryNodeType::TERM) {
             check(result->text == "test" || result->text == "/test", "64.8 text is test or /test");
             check(result->useNameKind, "64.8 single anchored segment keeps name kind");
-            check(result->nameKind == PathSegmentKind::PREFIX, "64.8 /test is prefix");
+            check(result->nameKind == PathSegmentKind::SUBSTRING, "64.8 /test is substring");
         } else {
             // May be AND with a filter if parseQuery produces a segment
             check(result->type == QueryNodeType::AND || result->type == QueryNodeType::FILTER,

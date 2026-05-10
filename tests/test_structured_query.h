@@ -24,10 +24,10 @@ static void runStructuredQueryTests() {
         auto pq = parseQuery("/abc/def");
         CHECK(pq.mode == QueryMode::SEGMENTS);
         CHECK(pq.namePattern == "def");
-        CHECK(pq.nameKind == PathSegmentKind::PREFIX);
+        CHECK(pq.nameKind == PathSegmentKind::SUBSTRING);
         CHECK(pq.pathSegments.size() == 1);
         CHECK(pq.pathSegments[0].text == "abc");
-        CHECK(pq.pathSegments[0].kind == PathSegmentKind::EXACT);
+        CHECK(pq.pathSegments[0].kind == PathSegmentKind::SUBSTRING);
         CHECK(pq.pathSegments[0].adjacentToNext == true);
     }
 
@@ -69,18 +69,18 @@ static void runStructuredQueryTests() {
         auto pq = parseQuery("/usr");
         CHECK(pq.mode == QueryMode::SEGMENTS);
         CHECK(pq.namePattern == "usr");
-        CHECK(pq.nameKind == PathSegmentKind::PREFIX);
+        CHECK(pq.nameKind == PathSegmentKind::SUBSTRING);
         CHECK(pq.pathSegments.empty());
 
         auto pqExact = parseQuery("/usr/");
         CHECK(pqExact.mode == QueryMode::SEGMENTS);
         CHECK(pqExact.namePattern == "usr");
-        CHECK(pqExact.nameKind == PathSegmentKind::EXACT);
+        CHECK(pqExact.nameKind == PathSegmentKind::SUBSTRING);
 
         auto pqSuffix = parseQuery("usr/");
         CHECK(pqSuffix.mode == QueryMode::SEGMENTS);
         CHECK(pqSuffix.namePattern == "usr");
-        CHECK(pqSuffix.nameKind == PathSegmentKind::SUFFIX);
+        CHECK(pqSuffix.nameKind == PathSegmentKind::SUBSTRING);
 
         // Without leading slash, same result
         auto pq2 = parseQuery("usr");

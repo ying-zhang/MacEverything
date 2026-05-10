@@ -597,6 +597,15 @@ static void sortUnique(std::vector<uint32_t>& values) {
     values.erase(std::unique(values.begin(), values.end()), values.end());
 }
 
+static bool appendUntilThreshold(std::vector<uint32_t>& dest,
+                                 const std::vector<uint32_t>& src,
+                                 size_t threshold) {
+    if (src.empty()) return true;
+    if (dest.size() + src.size() > threshold) return false;
+    dest.insert(dest.end(), src.begin(), src.end());
+    return true;
+}
+
 static void unionSortedInto(std::vector<uint32_t>& dest,
                             const std::vector<uint32_t>& src) {
     if (src.empty()) return;
@@ -690,17 +699,20 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         !nameTrigramIndex_.empty() && !pathTrigramIndex_.empty()) {
         beforeTrigram = std::chrono::steady_clock::now();
 
+        const size_t candidateThreshold = totalSize / 10;
         bool anyCovered = false;
+        bool stageTooMany = false;
         if (!nameTrigramIndex_.empty()) {
             bool nameAllFound = false;
             auto nameOnlyCands = intersectPostingLists(nameTrigramIndex_, trigramKey, nameAllFound);
             if (nameAllFound) {
                 anyCovered = true;
                 unionSortedInto(nameCands, nameOnlyCands);
+                stageTooMany = nameCands.size() > candidateThreshold;
             }
         }
 
-        if (!pathTrigramIndex_.empty()) {
+        if (!stageTooMany && !pathTrigramIndex_.empty()) {
             bool pathAllFound = false;
             auto pathIdxCands = intersectPostingLists(pathTrigramIndex_, trigramKey, pathAllFound);
             if (pathAllFound) {
@@ -709,16 +721,23 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 for (uint32_t pi : pathIdxCands) {
                     if (pi >= pathIdxToRecords_.size()) continue;
                     const auto& recIds = pathIdxToRecords_[pi];
-                    expandedPathCands.insert(expandedPathCands.end(), recIds.begin(), recIds.end());
+                    if (!appendUntilThreshold(expandedPathCands, recIds, candidateThreshold)) {
+                        expandedPathCands.clear();
+                        stageTooMany = true;
+                        break;
+                    }
                 }
-                sortUnique(expandedPathCands);
-                unionSortedInto(nameCands, expandedPathCands);
+                if (!stageTooMany && !expandedPathCands.empty()) {
+                    sortUnique(expandedPathCands);
+                    unionSortedInto(nameCands, expandedPathCands);
+                    stageTooMany = nameCands.size() > candidateThreshold;
+                }
             }
         }
 
         stage1AllFound = anyCovered;
         stage1RawCandCount = nameCands.size();
-        nameOk = stage1AllFound && nameCands.size() <= totalSize / 10;
+        nameOk = stage1AllFound && !stageTooMany && nameCands.size() <= candidateThreshold;
         if (!nameOk) nameCands.clear();
         afterTrigram = std::chrono::steady_clock::now();
     }
