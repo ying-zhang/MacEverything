@@ -21,6 +21,14 @@ struct ContentFileItem: Identifiable {
     let fileType: UInt8
 }
 
+nonisolated private func fileItem(from result: MEFileResult) -> FileItem {
+    FileItem(
+        id: "\(result.path)/\(result.name)", index: 0,
+        name: result.name, path: result.path,
+        type: result.type, size: result.size, modTime: result.modTime
+    )
+}
+
 @MainActor
 class SearchViewModel: ObservableObject {
     @Published var searchText: String = ""
@@ -64,7 +72,7 @@ class SearchViewModel: ObservableObject {
     private var cachedItems: [FileItem] = []
     private var loadedCount: Int = 0
     private var searchGeneration: UInt64 = 0
-    private static let guiSessionId: UInt64 = 1
+    nonisolated private static let guiSessionId: UInt64 = 1
 
     private static let pageSize: Int = 100
     private static let indexChangeThrottleNs: UInt64 = 5_000_000_000 // 5 seconds
@@ -352,16 +360,17 @@ class SearchViewModel: ObservableObject {
             var items: [FileItem] = []
             items.reserveCapacity(results.count)
             for r in results {
-                items.append(Self.fileItem(from: r))
+                items.append(fileItem(from: r))
             }
+            let finalItems = items
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
                 self.cachedResults = results
-                self.sourceItems = items
-                self.cachedItems = items
+                self.sourceItems = finalItems
+                self.cachedItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
-                self.totalMatches = items.count
+                self.totalMatches = finalItems.count
                 self.queryTimeMs = elapsed
             }
         }
@@ -387,11 +396,12 @@ class SearchViewModel: ObservableObject {
                     fileType: r.fileType
                 ))
             }
+            let finalItems = items
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
-                self.contentResults = items
-                self.totalMatches = items.count
+                self.contentResults = finalItems
+                self.totalMatches = finalItems.count
                 self.queryTimeMs = elapsed
             }
         }
@@ -406,17 +416,15 @@ class SearchViewModel: ObservableObject {
         let pageSize = Self.pageSize
         let gen = searchGeneration
 
-        Task.detached { [weak self] in
-            await MainActor.run { [weak self] in
-                guard let self, self.searchGeneration == gen else {
-                    self?.isLoadingMore = false
-                    return
-                }
-                let nextEnd = min(currentLoaded + pageSize, self.cachedItems.count)
-                self.displayItems.append(contentsOf: self.cachedItems[currentLoaded..<nextEnd])
-                self.loadedCount = nextEnd
-                self.isLoadingMore = false
+        Task { @MainActor [weak self] in
+            guard let self, self.searchGeneration == gen else {
+                self?.isLoadingMore = false
+                return
             }
+            let nextEnd = min(currentLoaded + pageSize, self.cachedItems.count)
+            self.displayItems.append(contentsOf: self.cachedItems[currentLoaded..<nextEnd])
+            self.loadedCount = nextEnd
+            self.isLoadingMore = false
         }
     }
 
@@ -431,15 +439,16 @@ class SearchViewModel: ObservableObject {
             items.reserveCapacity(results.count)
             for r in results {
                 guard !Task.isCancelled else { return }
-                items.append(Self.fileItem(from: r))
+                items.append(fileItem(from: r))
             }
+            let finalItems = items
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
                 self.cachedResults = results
-                self.sourceItems = items
-                self.cachedItems = items
+                self.sourceItems = finalItems
+                self.cachedItems = finalItems
                 self.applySortedResults(pageSize: Self.pageSize)
-                self.totalMatches = items.count
+                self.totalMatches = finalItems.count
                 self.showingRecent = true
                 self.queryTimeMs = 0
             }
@@ -478,14 +487,6 @@ class SearchViewModel: ObservableObject {
         if let selectedItemID, !displayItems.contains(where: { $0.id == selectedItemID }) {
             self.selectedItemID = nil
         }
-    }
-
-    private static func fileItem(from result: MEFileResult) -> FileItem {
-        FileItem(
-            id: "\(result.path)/\(result.name)", index: 0,
-            name: result.name, path: result.path,
-            type: result.type, size: result.size, modTime: result.modTime
-        )
     }
 
     private func sorted(_ items: [FileItem]) -> [FileItem] {

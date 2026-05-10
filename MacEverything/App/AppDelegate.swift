@@ -159,6 +159,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @MainActor
     @objc private func toggleHideDockIcon() {
         AppSettings.shared.hideDockIcon.toggle()
     }
@@ -167,6 +168,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.terminate(nil)
     }
 
+    @MainActor
     private func applyDockVisibility() {
         let policy: NSApplication.ActivationPolicy = AppSettings.shared.hideDockIcon ? .accessory : .regular
         if NSApp.activationPolicy() != policy {
