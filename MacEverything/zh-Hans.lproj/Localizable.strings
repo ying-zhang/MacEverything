@@ -1,5 +1,7 @@
 "Search files... (infile: for content search)" = "搜索文件...（使用 infile: 搜索文件内容）";
 "Search files..." = "搜索文件...";
+"Search files... (Chinese initials supported, infile: for content)" = "搜索文件...（支持拼音首字母，infile: 搜内容）";
+"Search files... (Chinese initials supported)" = "搜索文件...（支持拼音首字母）";
 "Scanning... %d items scanned" = "正在扫描... 已扫描 %d 项";
 "Syncing..." = "正在同步...";
 "Live" = "实时";

@@ -1,5 +1,7 @@
 "Search files... (infile: for content search)" = "Search files... (infile: for content search)";
 "Search files..." = "Search files...";
+"Search files... (Chinese initials supported, infile: for content)" = "Search files... (Chinese initials supported, infile: for content)";
+"Search files... (Chinese initials supported)" = "Search files... (Chinese initials supported)";
 "Scanning... %d items scanned" = "Scanning... %d items scanned";
 "Syncing..." = "Syncing...";
 "Live" = "Live";
