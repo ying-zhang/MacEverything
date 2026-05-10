@@ -8,8 +8,55 @@
 #include <atomic>
 #include <cstring>
 #include <thread>
+#include <tuple>
 #include <unordered_set>
 #include <dispatch/dispatch.h>
+
+namespace {
+
+bool containsNonAscii(const std::string& s) {
+    for (unsigned char c : s) {
+        if (c >= 128) return true;
+    }
+    return false;
+}
+
+std::string alternateUnicodeNormalization(const std::string& s) {
+    if (!containsNonAscii(s)) return {};
+
+    const auto nfc = me::normalizeNFC(s);
+    if (nfc != s) return nfc;
+
+    const auto nfd = me::normalizeNFD(s);
+    if (nfd != s) return nfd;
+
+    return {};
+}
+
+void mergeQueryResults(std::vector<uint32_t>& primary,
+                       const std::vector<uint32_t>& secondary,
+                       uint32_t maxResults) {
+    if (secondary.empty()) return;
+
+    std::unordered_set<uint32_t> seen;
+    seen.reserve(primary.size() + secondary.size());
+    for (uint32_t idx : primary) seen.insert(idx);
+
+    for (uint32_t idx : secondary) {
+        if (seen.insert(idx).second) {
+            primary.push_back(idx);
+            if (maxResults > 0 && primary.size() >= maxResults) break;
+        }
+    }
+}
+
+uint32_t normalizationQueryLimit(uint32_t maxResults) {
+    if (maxResults == 0) return 0;
+    constexpr uint32_t kMinNormalizationMergeLimit = 1000;
+    return std::max(maxResults, kMinNormalizationMergeLimit);
+}
+
+} // namespace
 
 // ---------------------------------------------------------------------------
 // Match priority
@@ -129,7 +176,6 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
         const auto& childRecords = pathIdxToRecords_[childPathIdx];
         for (uint32_t childIdx : childRecords) {
             if (types_[childIdx] == 0) continue; // skip tombstones
-            const char* nd = namePool_.data(childIdx);
             uint16_t nl = namePool_.length(childIdx);
             uint8_t priority = 2; // children are all "contains" priority
             uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
@@ -248,8 +294,63 @@ std::vector<uint32_t> SearchEngine::query(const std::string& keyword, uint32_t m
         return result;
     }
 
-    // All non-DIR_LIST queries go through the unified Advanced path
-    return queryAdvanced(pq.original, maxResults, useTrigram, timing, myGen, genAtom.get());
+    // All non-DIR_LIST queries go through the unified Advanced path.
+    auto alternate = alternateUnicodeNormalization(pq.original);
+    uint32_t internalMaxResults = alternate.empty()
+        ? maxResults
+        : normalizationQueryLimit(maxResults);
+
+    auto result = queryAdvanced(pq.original, internalMaxResults, useTrigram, timing, myGen, genAtom.get());
+    if (genAtom->load(std::memory_order_relaxed) != myGen) return {};
+
+    // macOS often stores filenames as decomposed Unicode while users type NFC.
+    // Retry the alternate normalization on demand without adding a second index.
+    if (!alternate.empty()) {
+        QueryTimingInfo altTiming;
+        auto altResult = queryAdvanced(alternate, internalMaxResults, useTrigram,
+                                       altTiming, myGen, genAtom.get());
+        if (genAtom->load(std::memory_order_relaxed) != myGen) return {};
+        mergeQueryResults(result, altResult, internalMaxResults);
+        if (!altResult.empty()) {
+            timing.totalMs += altTiming.totalMs;
+            timing.resultCount = result.size();
+            timing.searchPath += "+unicode-normalization";
+        }
+
+        if (maxResults > 0 && result.size() > maxResults) {
+            const auto alternateLower = me::toLower(alternate);
+            std::shared_lock lock(mutex_);
+            auto rank = [&](uint32_t idx) {
+                if (idx >= types_.size() || types_[idx] == 0) {
+                    return std::tuple<uint8_t, uint32_t, uint32_t>{255, UINT32_MAX, idx};
+                }
+                const char* nd = namePool_.data(idx);
+                uint16_t nl = namePool_.length(idx);
+                uint8_t priority = 3;
+                if (!pq.lower.empty() && me::simdContains(nd, nl, pq.lower.data(), pq.lower.size())) {
+                    priority = std::min(priority, namePriority(nd, nl, pq.lower.data(), pq.lower.size()));
+                }
+                if (!alternateLower.empty() &&
+                    me::simdContains(nd, nl, alternateLower.data(), alternateLower.size())) {
+                    priority = std::min(priority, namePriority(nd, nl, alternateLower.data(), alternateLower.size()));
+                }
+                uint32_t pathLen = UINT32_MAX;
+                if (idx < pathIndices_.size()) {
+                    uint32_t pi = pathIndices_[idx];
+                    if (pi < pathPool_.entryCount()) {
+                        pathLen = static_cast<uint32_t>(pathPool_.length(pi) + 1 + nl);
+                    }
+                }
+                return std::tuple<uint8_t, uint32_t, uint32_t>{priority, pathLen, idx};
+            };
+            std::sort(result.begin(), result.end(),
+                      [&](uint32_t a, uint32_t b) { return rank(a) < rank(b); });
+            result.resize(maxResults);
+            timing.resultCount = result.size();
+        }
+    }
+
+    return result;
 }
 
 // ---------------------------------------------------------------------------

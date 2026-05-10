@@ -443,6 +443,14 @@ private:
     /// Priority: 0=exact, 1=starts-with, 2=contains, 3=path-only match.
     struct Match { uint32_t idx; uint8_t priority; uint32_t pathLen; };
 
+    static bool segmentTextMatches(std::string_view candidate,
+                                   std::string_view needle,
+                                   PathSegmentKind kind);
+    static bool namePatternMatches(const ParsedQuery& pq,
+                                   const char* nameData,
+                                   uint16_t nameLen,
+                                   uint8_t recType);
+
     /// Node-centric structured query: name trigram → name verify → path constraint verify.
     /// Handles SEGMENTS and DIR_EXACT modes.
     void queryStructured(const ParsedQuery& pq,

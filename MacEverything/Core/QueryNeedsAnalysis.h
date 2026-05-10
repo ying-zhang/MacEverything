@@ -43,7 +43,6 @@ inline QueryNeeds analyzeQueryNeeds(const QueryNode& node) {
             needs.needsPath = true;
         } else if (f == "__pathseg") {
             needs.needsPath = true;
-            needs.needsName = true; // pathSegmentsMatch uses full path including name
         }
         break;
     }

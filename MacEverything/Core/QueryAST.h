@@ -34,6 +34,8 @@ struct QueryNode {
     bool caseSensitive = false;
     bool matchPath = false;  // path: modifier
     bool nameOnly = false;   // match name only (set by transformSlashTerms)
+    bool useNameKind = false; // apply anchored slash-query name semantics
+    PathSegmentKind nameKind = PathSegmentKind::SUBSTRING;
     std::optional<CompiledGlob> compiledGlob;  // pre-compiled glob for zero-alloc matching
 
     // --- AND / OR / NOT: children ---
@@ -116,6 +118,8 @@ struct QueryNode {
                 }
                 if (caseSensitive) os << " case";
                 if (matchPath) os << " path";
+                if (nameOnly) os << " nameOnly";
+                if (useNameKind) os << " nameKind=" << static_cast<int>(nameKind);
                 break;
             case QueryNodeType::AND:
                 os << pad << "AND(\n";

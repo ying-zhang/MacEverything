@@ -3,10 +3,18 @@
 #include <vector>
 #include "StringUtils.h"
 
+enum class PathSegmentKind {
+    SUBSTRING,
+    PREFIX,
+    SUFFIX,
+    EXACT
+};
+
 /// A single path constraint segment (e.g. "usr" in /usr/local/bin).
 struct PathSegment {
     std::string text;          // lowercased segment text
     bool adjacentToNext;       // true = next segment must be in the immediately following dir component
+    PathSegmentKind kind = PathSegmentKind::SUBSTRING;
 };
 
 /// Query modes for structured (slash-containing) queries.
@@ -22,6 +30,7 @@ struct ParsedQuery {
     QueryMode mode = QueryMode::PLAIN;
     std::vector<PathSegment> pathSegments; // path constraints (may be empty)
     std::string namePattern;               // node name to search (lowercased)
+    PathSegmentKind nameKind = PathSegmentKind::SUBSTRING;
 };
 
 /// Parse a raw query string into a structured query.
@@ -81,12 +90,15 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
         }
     }
 
+    bool rightAnchored = false;
+
     // Determine mode from trailing characters
     if (q.size() >= 2 && q.back() == '*' && q[q.size() - 2] == '/') {
         result.mode = QueryMode::DIR_LIST;
         q = q.substr(0, q.size() - 2); // strip trailing /*
     } else if (q.back() == '/') {
         result.mode = QueryMode::DIR_EXACT;
+        rightAnchored = true;
         q = q.substr(0, q.size() - 1); // strip trailing /
     } else {
         result.mode = QueryMode::SEGMENTS;
@@ -115,6 +127,15 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
     result.namePattern = parts.back();
     parts.pop_back();
 
+    if (parts.empty()) {
+        if (rightAnchored) result.mode = QueryMode::SEGMENTS;
+        result.nameKind = PathSegmentKind::SUBSTRING;
+    } else if (rightAnchored) {
+        result.nameKind = PathSegmentKind::EXACT;
+    } else {
+        result.nameKind = PathSegmentKind::SUBSTRING;
+    }
+
     // Remaining parts are path constraints
     for (size_t i = 0; i < parts.size(); i++) {
         if (parts[i] == "*") {
@@ -127,6 +148,7 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
         PathSegment seg;
         seg.text = parts[i];
         seg.adjacentToNext = true;
+        seg.kind = PathSegmentKind::SUBSTRING;
         result.pathSegments.push_back(std::move(seg));
     }
 

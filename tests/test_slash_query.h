@@ -140,6 +140,27 @@ static void runSlashQueryTests() {
         check(res.size() == 1, "AbsPath: '/etc/hosts' matches hosts in /etc");
     }
 
+    // -- Test 7b: Single-segment slash queries keep Everything-style contains --
+    std::cout << "\n  --- Test 7b: Single-segment slash contains ---\n";
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        records.push_back({"report-final.txt", "/docs", 1, 100, 1000});
+        records.push_back({"draft-report", "/docs", 1, 200, 2000});
+        records.push_back({"report", "/docs", 1, 300, 3000});
+        records.push_back({"myreport", "/docs", 1, 400, 4000});
+        engine.loadRecords(std::move(records));
+
+        auto res = engine.query("/report");
+        check(res.size() == 4, "Slash contains: '/report' matches names containing report");
+
+        res = engine.query("report/");
+        check(res.size() == 4, "Slash contains: 'report/' matches names containing report");
+
+        res = engine.query("/report/");
+        check(res.size() == 4, "Slash contains: '/report/' matches names containing report");
+    }
+
     // -- Test 9: Non-adjacent match with * --
     std::cout << "\n  --- Test 9: Non-adjacent wildcard ---\n";
     {

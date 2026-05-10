@@ -229,5 +229,65 @@ static void runQuerySimplificationTests() {
         check(!globMatchImpl("test??.h", "test1.h"), "66.18 globMatchImpl test?.h no match (too short)");
     }
 
+    // ── 66.19 Unicode NFC/NFD query fallback ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord r1; r1.name = "Cafe\xCC\x81" ".txt"; r1.path = "/tmp"; r1.type = 1;
+        FileRecord r2; r2.name = "plain.txt"; r2.path = "/tmp"; r2.type = 1;
+        records.push_back(std::move(r1));
+        records.push_back(std::move(r2));
+        engine.loadRecords(std::move(records));
+
+        auto results = engine.query("Caf\xC3\xA9", 100, false);
+        check(results.size() == 1, "66.19 NFC query matches NFD filename");
+    }
+
+    // ── 66.20 Plain terms can be split across path and filename ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord target; target.name = "xx.pdf"; target.path = "/Users/ying/xx"; target.type = 1;
+        FileRecord distractor; distractor.name = "ying-note.txt"; distractor.path = "/tmp"; distractor.type = 1;
+        records.push_back(std::move(target));
+        records.push_back(std::move(distractor));
+        for (int i = 0; i < 20; i++) {
+            FileRecord filler;
+            filler.name = "filler_" + std::to_string(i) + ".txt";
+            filler.path = "/tmp/filler";
+            filler.type = 1;
+            records.push_back(std::move(filler));
+        }
+        engine.loadRecords(std::move(records));
+
+        QueryTimingInfo timing;
+        auto results = engine.query("ying pdf", 100, true, timing);
+        bool foundTarget = false;
+        for (uint32_t idx : results) {
+            auto rec = engine.getRecord(idx);
+            if (rec.name == "xx.pdf" && rec.path == "/Users/ying/xx") foundTarget = true;
+        }
+        check(foundTarget, "66.20 'ying pdf' matches path term + filename term");
+    }
+
+    // ── 66.21 Unicode fallback still runs when primary fills maxResults ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord primary; primary.name = "Caf\xC3\xA9" "-primary.txt"; primary.path = "/tmp"; primary.type = 1;
+        FileRecord alternate; alternate.name = "Cafe\xCC\x81" ".txt"; alternate.path = "/tmp"; alternate.type = 1;
+        records.push_back(std::move(primary));
+        records.push_back(std::move(alternate));
+        engine.loadRecords(std::move(records));
+
+        auto results = engine.query("Caf\xC3\xA9", 1, false);
+        check(results.size() == 1, "66.21 limited query returns one result");
+        if (!results.empty()) {
+            auto rec = engine.getRecord(results[0]);
+            check(rec.name == "Cafe\xCC\x81" ".txt",
+                  "66.21 NFC query can rank alternate result into limited window");
+        }
+    }
+
     std::cout << "  Part 67 summary: " << localPassed << " passed, " << localFailed << " failed\n";
 }

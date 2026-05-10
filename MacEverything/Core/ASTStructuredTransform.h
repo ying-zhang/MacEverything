@@ -54,12 +54,13 @@ inline std::unique_ptr<QueryNode> transformSlashTerms(std::unique_ptr<QueryNode>
 
     // 2. Name term (the last component)
     if (!pq.namePattern.empty()) {
-        // DIR_EXACT uses WHOLEFILENAME for exact name matching
-        auto nameMode = (pq.mode == QueryMode::DIR_EXACT)
-                        ? MatchMode::WHOLEFILENAME : MatchMode::SUBSTRING;
-        auto nameTerm = QueryNode::makeTerm(pq.namePattern, pq.namePattern, nameMode);
+        auto nameTerm = QueryNode::makeTerm(pq.namePattern, pq.namePattern, MatchMode::SUBSTRING);
         nameTerm->caseSensitive = node->caseSensitive;
         nameTerm->nameOnly = true; // match only name, not full path
+        nameTerm->useNameKind = true;
+        nameTerm->nameKind = (pq.mode == QueryMode::DIR_EXACT)
+            ? PathSegmentKind::EXACT
+            : pq.nameKind;
 
         // For DIR_EXACT, also require the record to be a directory
         if (pq.mode == QueryMode::DIR_EXACT) {
