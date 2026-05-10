@@ -61,6 +61,19 @@ NS_ASSUME_NONNULL_BEGIN
                      walPath:(NSString *)walPath
                   completion:(void (^)(uint32_t totalRecords, BOOL didFullScan))completion;
 
+- (void)updateConfigurationWithScanRoots:(NSArray<NSString *> *)scanRoots
+                           excludedPaths:(NSArray<NSString *> *)excludedPaths
+                         excludedPatterns:(NSArray<NSString *> *)excludedPatterns
+                             contentRoots:(NSArray<NSString *> *)contentRoots
+                      contentExcludedPaths:(NSArray<NSString *> *)contentExcludedPaths
+                              includeHidden:(BOOL)includeHidden
+                              includeSystem:(BOOL)includeSystem
+                    includeAppBundleContents:(BOOL)includeAppBundleContents
+                         realtimeMonitoring:(BOOL)realtimeMonitoring
+                    contentIndexingEnabled:(BOOL)contentIndexingEnabled
+                 automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
+                                  httpPort:(uint16_t)httpPort;
+
 /// Compact the index: write new base snapshot, clear WAL.
 - (void)compactIndex;
 

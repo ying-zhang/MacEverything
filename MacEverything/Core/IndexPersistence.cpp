@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstring>
 #include <cmath>
+#include <cstdio>
 
 IndexPersistence::IndexPersistence(std::shared_ptr<SearchEngine> engine,
                                    const std::string& basePath,
@@ -28,6 +29,10 @@ IndexPersistence::~IndexPersistence() {
 }
 
 uint64_t IndexPersistence::load() {
+    return load("");
+}
+
+uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
     uint64_t lastEventId = 0;
 
     // 1. Try v6 flat SoA format first (fast path)
@@ -36,9 +41,19 @@ uint64_t IndexPersistence::load() {
         IndexMetadata meta;
         loaded = flatWriter_->load(*engine_, &meta);
         if (loaded) {
-            lastEventId = meta.lastEventId;
-            LOG_INFO("IndexPersistence", "Loaded v6 flat index, lastEventId=" << lastEventId
-                      << ", liveRecords=" << engine_->liveRecordCount());
+            auto it = meta.extra.find("config_signature");
+            std::string actualSignature = it == meta.extra.end() ? "" : it->second;
+            if (!expectedConfigSignature.empty() && actualSignature != expectedConfigSignature) {
+                LOG_WARN("IndexPersistence", "Ignoring v6 index because config changed");
+                engine_->loadRecords({});
+                std::remove(v6Path_.c_str());
+                std::remove(walPath_.c_str());
+                loaded = false;
+            } else {
+                lastEventId = meta.lastEventId;
+                LOG_INFO("IndexPersistence", "Loaded v6 flat index, lastEventId=" << lastEventId
+                          << ", liveRecords=" << engine_->liveRecordCount());
+            }
         } else {
             LOG_ERROR("IndexPersistence", "v6 flat index corrupt, trying paged format");
         }
@@ -49,14 +64,21 @@ uint64_t IndexPersistence::load() {
         IndexMetadata meta;
         loaded = pagedWriter_->load(*engine_, &meta);
         if (loaded) {
-            lastEventId = meta.lastEventId;
-            LOG_INFO("IndexPersistence", "Loaded paged index, lastEventId=" << lastEventId
-                      << ", liveRecords=" << engine_->liveRecordCount());
-            // Auto-migrate to v6 flat format
-            IndexMetadata migrateMeta;
-            migrateMeta.lastEventId = lastEventId;
-            if (flatWriter_->fullRewrite(*engine_, migrateMeta)) {
-                LOG_INFO("IndexPersistence", "Migrated paged index to v6 flat format");
+            if (!expectedConfigSignature.empty()) {
+                LOG_WARN("IndexPersistence", "Ignoring paged index because config signature is unavailable");
+                engine_->loadRecords({});
+                std::remove(walPath_.c_str());
+                loaded = false;
+            } else {
+                lastEventId = meta.lastEventId;
+                LOG_INFO("IndexPersistence", "Loaded paged index, lastEventId=" << lastEventId
+                          << ", liveRecords=" << engine_->liveRecordCount());
+                // Auto-migrate to v6 flat format
+                IndexMetadata migrateMeta;
+                migrateMeta.lastEventId = lastEventId;
+                if (flatWriter_->fullRewrite(*engine_, migrateMeta)) {
+                    LOG_INFO("IndexPersistence", "Migrated paged index to v6 flat format");
+                }
             }
         } else {
             LOG_ERROR("IndexPersistence", "Paged index corrupt, trying legacy format");
@@ -67,13 +89,20 @@ uint64_t IndexPersistence::load() {
     if (!loaded) {
         loaded = engine_->loadFromFile(basePath_, &lastEventId);
         if (loaded) {
-            LOG_INFO("IndexPersistence", "Loaded legacy index, lastEventId=" << lastEventId
-                      << ", liveRecords=" << engine_->liveRecordCount());
-            // Auto-migrate to v6 flat format
-            IndexMetadata migrateMeta;
-            migrateMeta.lastEventId = lastEventId;
-            if (flatWriter_->fullRewrite(*engine_, migrateMeta)) {
-                LOG_INFO("IndexPersistence", "Migrated legacy index to v6 flat format");
+            if (!expectedConfigSignature.empty()) {
+                LOG_WARN("IndexPersistence", "Ignoring legacy index because config signature is unavailable");
+                engine_->loadRecords({});
+                std::remove(walPath_.c_str());
+                loaded = false;
+            } else {
+                LOG_INFO("IndexPersistence", "Loaded legacy index, lastEventId=" << lastEventId
+                          << ", liveRecords=" << engine_->liveRecordCount());
+                // Auto-migrate to v6 flat format
+                IndexMetadata migrateMeta;
+                migrateMeta.lastEventId = lastEventId;
+                if (flatWriter_->fullRewrite(*engine_, migrateMeta)) {
+                    LOG_INFO("IndexPersistence", "Migrated legacy index to v6 flat format");
+                }
             }
         } else {
             LOG_INFO("IndexPersistence", "No base index found at " << basePath_);

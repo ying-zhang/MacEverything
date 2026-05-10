@@ -29,6 +29,7 @@ public:
     /// Tries paged format first, falls back to v3 format, auto-migrates.
     /// Returns the lastEventId from the base file (0 if no file or v1 format).
     uint64_t load();
+    uint64_t load(const std::string& expectedConfigSignature);
 
     /// Start logging mutations to WAL.
     void attachWAL();

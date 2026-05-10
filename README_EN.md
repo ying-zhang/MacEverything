@@ -57,11 +57,10 @@ Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and r
 
 | Query | Description |
 |-------|-------------|
-| `readme` | Files containing "readme" in the name or path |
+| `readme` | Files containing "readme" in the name |
 | `*.swift` | All Swift source files |
 | `ext:py size:>1mb` | Python files larger than 1MB |
 | `dm:today` | Files modified today |
-| `ying pdf` | Match path/name fragments together, such as `/Users/ying/xx/xx.pdf` |
 | `config path:/usr` | Files containing "config" under `/usr` |
 | `"exact phrase"` | Exact phrase matching |
 | `foo OR bar` | Boolean OR operation |
@@ -70,12 +69,6 @@ Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and r
 | `type:folder node_modules` | Search directories only |
 | `~/Documents/*.pdf` | Tilde expansion + glob |
 | `infile:TODO ext:cpp` | Search "TODO" inside C++ files |
-
-#### Filename and Path Fragment Matching
-
-Default search targets both filenames and full paths: multiple plain terms separated by spaces are combined with AND, and each term may match anywhere in the filename or path. For example, `ying pdf` can match `/Users/ying/xx/xx.pdf`, preserving the Everything-style experience where casual fragments still find files.
-
-Queries containing `/` enable structured path matching while keeping substring semantics. For example, `src/main` means the filename contains `main` and the parent path contains `src`; `/project/*/target` can match non-adjacent path segments; `/local/bin/*` lists direct children of a directory. For non-ASCII queries, MacEverything tries common macOS Unicode NFC/NFD normalization variants at query time, without growing the persistent index.
 
 <details>
 <summary><b>Full filter list</b></summary>
@@ -225,7 +218,7 @@ The same C++20 core engine powers three deployment modes:
 | Component | Key Design |
 |-----------|-----------|
 | **DirectoryScanner** | Multi-threaded work-stealing + `getattrlistbulk` single-syscall bulk attribute reads, 4–32 threads adaptive |
-| **SearchEngine** | Trigram inverted index (name + path dual indexes) + multi-term path/name candidate merging + competitive optimal candidate selection + SoA columnar filtering |
+| **SearchEngine** | Trigram inverted index (name + path dual indexes) + competitive optimal candidate selection + SoA columnar filtering |
 | **ContentIndex** | Trigram full-text inverted index, FNV-1a hash incremental updates, only re-indexes changed files |
 | **SIMDSearch** | ARM NEON 128-bit first-last byte vectorized matching + 2x loop unrolling, 11.5 GB/s single-thread |
 | **IndexPersistence** | WAL + CRC32 + paged dirty-page flushing + atomic rename, COW non-blocking compaction (lock held < 100ms) |
@@ -269,14 +262,12 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 |------------|--------|
 | `getattrlistbulk` | Single syscall for bulk file attributes — avoids per-file `stat` |
 | Trigram inverted index | Sub-linear search: 33x–308x faster than linear scan |
-| Filename/path dual indexes | Plain terms search both filenames and full paths, reusing the existing Trigram index and PathTable without content-index-scale disk growth |
 | SoA columnar layout | Cache-friendly memory access, SIMD batch-checks 16 records for pure filter queries |
 | `__builtin_prefetch` | Prefetch distance 8, hides random memory access latency during candidate verification |
 | ARM NEON SIMD | 128-bit vectorized string matching, 2x loop unrolling, approaches memory bandwidth ceiling |
 | GCD parallel scan | Multi-core linear scan when trigram can't accelerate |
 | StringPool contiguous memory | Filenames packed in a single `char` buffer, SIMD-friendly |
 | PathTable interning | Directory paths stored as `uint32` index — saves ~550MB at million-file scale |
-| Unicode query normalization | Tries NFC/NFD variants for non-ASCII queries at query time, matching macOS filename representations without maintaining a second index |
 | Generation counter | Checked every 1024 iterations, zero-overhead cancellation of stale queries during fast typing |
 | APFS Firmlink dedup | inode + devid detection, correctly handles macOS Data/System volume merge loops |
 | Regex Trigram pre-filter | Extracts literals from regex to generate trigram candidates, ~7s → <100ms |

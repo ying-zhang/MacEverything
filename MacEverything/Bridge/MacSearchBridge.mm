@@ -4,6 +4,16 @@
 #include "Logger.h"
 #include "HighlightHintExtractor.h"
 
+static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array) {
+    std::vector<std::string> result;
+    result.reserve(array.count);
+    for (NSString *item in array) {
+        if (item.length == 0) continue;
+        result.emplace_back([item UTF8String]);
+    }
+    return result;
+}
+
 @implementation MEFileResult
 
 - (instancetype)initWithName:(NSString *)name
@@ -114,6 +124,37 @@
         [self _installAdminCallbacks];
     }
     return self;
+}
+
+- (void)updateConfigurationWithScanRoots:(NSArray<NSString *> *)scanRoots
+                           excludedPaths:(NSArray<NSString *> *)excludedPaths
+                        excludedPatterns:(NSArray<NSString *> *)excludedPatterns
+                            contentRoots:(NSArray<NSString *> *)contentRoots
+                     contentExcludedPaths:(NSArray<NSString *> *)contentExcludedPaths
+                           includeHidden:(BOOL)includeHidden
+                           includeSystem:(BOOL)includeSystem
+                 includeAppBundleContents:(BOOL)includeAppBundleContents
+                       realtimeMonitoring:(BOOL)realtimeMonitoring
+                   contentIndexingEnabled:(BOOL)contentIndexingEnabled
+              automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
+                                 httpPort:(uint16_t)httpPort {
+    ServiceConfig config;
+    config.scanRoots = NSStringArrayToVector(scanRoots);
+    config.scanRoot = config.scanRoots.empty() ? "/" : config.scanRoots.front();
+    config.excludedPaths = NSStringArrayToVector(excludedPaths);
+    config.excludedPatterns = NSStringArrayToVector(excludedPatterns);
+    config.contentRoots = NSStringArrayToVector(contentRoots);
+    config.contentExcludedPaths = NSStringArrayToVector(contentExcludedPaths);
+    config.cachePath = PathUtils::getDefaultCachePath();
+    config.logPath = PathUtils::getDefaultLogPath();
+    config.httpPort = httpPort;
+    config.includeHidden = includeHidden;
+    config.includeSystem = includeSystem;
+    config.includeAppBundleContents = includeAppBundleContents;
+    config.realtimeMonitoring = realtimeMonitoring;
+    config.contentIndexingEnabled = contentIndexingEnabled;
+    config.automaticMaintenanceEnabled = automaticMaintenanceEnabled;
+    _serviceEngine->updateConfig(config);
 }
 
 // ═══════════════════════════════════════════════════════

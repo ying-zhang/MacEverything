@@ -41,8 +41,8 @@ struct MacEverythingApp: App {
                 }
                 .keyboardShortcut(",", modifiers: [.command])
 
-                Button(L10n.tr("Content Settings...")) {
-                    ContentSettingsWindowController.shared.showWindow()
+                Button(L10n.tr("Settings...")) {
+                    GeneralSettingsWindowController.shared.showWindow()
                 }
 
                 Divider()
@@ -64,8 +64,8 @@ extension Notification.Name {
     static let rebuildIndex = Notification.Name("rebuildIndex")
 }
 
-class ContentSettingsWindowController {
-    static let shared = ContentSettingsWindowController()
+class GeneralSettingsWindowController {
+    static let shared = GeneralSettingsWindowController()
     private var window: NSWindow?
 
     func showWindow() {
@@ -74,11 +74,12 @@ class ContentSettingsWindowController {
             return
         }
 
-        let settingsView = ContentSettingsView()
+        let settingsView = GeneralSettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
         let win = NSWindow(contentViewController: hostingController)
-        win.title = L10n.tr("Content Settings")
-        win.styleMask = [.titled, .closable]
+        win.title = L10n.tr("Settings")
+        win.styleMask = [.titled, .closable, .resizable]
+        win.minSize = NSSize(width: 620, height: 520)
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win

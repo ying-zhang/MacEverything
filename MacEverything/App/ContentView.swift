@@ -27,6 +27,9 @@ struct ContentView: View {
                             return true
                         }
                         return false
+                    },
+                    onSubmit: {
+                        viewModel.submitSearch()
                     }
                 )
                 .frame(height: 36)
@@ -223,8 +226,19 @@ struct ContentView: View {
                             .padding(.horizontal, 12)
                             .padding(.vertical, 4)
                         }
+                        if !viewModel.displayItems.isEmpty {
+                            ResultHeaderView(viewModel: viewModel)
+                                .padding(.horizontal, 8)
+                        }
                         ForEach(viewModel.displayItems) { item in
-                            ResultRow(item: item, hints: viewModel.highlightHints)
+                            ResultRow(
+                                item: item,
+                                hints: viewModel.highlightHints,
+                                isSelected: viewModel.selectedItemID == item.id,
+                                onSelect: {
+                                    viewModel.select(item)
+                                }
+                            )
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
                                 .id(item.id)
@@ -277,5 +291,57 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
             scrollViewID += 1
         }
+    }
+}
+
+private struct ResultHeaderView: View {
+    @ObservedObject var viewModel: SearchViewModel
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        HStack(spacing: 10) {
+            columnButton(L10n.tr("Name"), field: .name, width: ResultColumnLayout.nameWidth)
+
+            if settings.showPath {
+                columnButton(L10n.tr("Path"), field: .path)
+            }
+
+            if settings.showSize {
+                columnButton(L10n.tr("Size"), field: .size, width: ResultColumnLayout.sizeWidth, alignment: .trailing)
+            }
+
+            if settings.showModifiedDate {
+                columnButton(L10n.tr("Modified Date"), field: .modified, width: ResultColumnLayout.modifiedWidth)
+            }
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 5)
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder
+    private func columnButton(
+        _ title: String,
+        field: SortField,
+        width: CGFloat? = nil,
+        alignment: Alignment = .leading
+    ) -> some View {
+        Button {
+            viewModel.sortBy(field)
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .lineLimit(1)
+                if settings.sortField == field {
+                    Image(systemName: settings.sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                }
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .frame(width: width, alignment: alignment)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
+        }
+        .buttonStyle(.plain)
     }
 }

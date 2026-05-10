@@ -163,6 +163,7 @@ struct HighlightedSearchField: NSViewRepresentable {
     var ghostSuggestion: String?
     var isFocused: FocusState<Bool>.Binding
     var onTab: (() -> Bool)?
+    var onSubmit: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -200,6 +201,7 @@ struct HighlightedSearchField: NSViewRepresentable {
 
         // Tab key handling
         textView.onTabKey = context.coordinator.handleTab
+        textView.onSubmit = context.coordinator.handleSubmit
 
         // Placeholder
         textView.placeholderString = placeholder
@@ -267,6 +269,10 @@ struct HighlightedSearchField: NSViewRepresentable {
             return parent.onTab?() ?? false
         }
 
+        func handleSubmit() {
+            parent.onSubmit?()
+        }
+
         func applyHighlighting(_ textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
             let fullRange = NSRange(location: 0, length: textStorage.length)
@@ -311,6 +317,7 @@ struct HighlightedSearchField: NSViewRepresentable {
 
 class HighlightedNSTextView: NSTextView {
     var onTabKey: (() -> Bool)?
+    var onSubmit: (() -> Void)?
     var placeholderString: String = ""
     var ghostSuggestion: String? {
         didSet { needsDisplay = true }
@@ -322,6 +329,10 @@ class HighlightedNSTextView: NSTextView {
             if let handler = onTabKey, handler() {
                 return // Tab was consumed by ghost suggestion
             }
+        }
+        if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
+            onSubmit?()
+            return
         }
         super.keyDown(with: event)
     }

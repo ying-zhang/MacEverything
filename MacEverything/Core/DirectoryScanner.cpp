@@ -9,11 +9,18 @@
 #include <cerrno>
 #include <memory>
 #include <sys/stat.h>
+#include <fnmatch.h>
+#include <algorithm>
 
 static constexpr size_t ATTR_BUF_SIZE = 1 * 1024 * 1024; // 1 MB per-thread buffer
 
 void DirectoryScanner::scan(const std::string& rootPath) {
+    scan(std::vector<std::string>{rootPath}, {});
+}
+
+void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const ScanConfig& config) {
     // Reset state so scanner can be reused across multiple scans
+    config_ = config;
     done_.store(false, std::memory_order_relaxed);
     cancelled_.store(false, std::memory_order_relaxed);
     activeTasks_.store(0, std::memory_order_relaxed);
@@ -32,20 +39,14 @@ void DirectoryScanner::scan(const std::string& rootPath) {
     stats_.otherCount.store(0, std::memory_order_relaxed);
     stats_.errorCount.store(0, std::memory_order_relaxed);
 
-    // Determine root device ID to skip cross-mount directories (autofs, devfs, etc.)
-    struct stat rootStat;
-    if (stat(rootPath.c_str(), &rootStat) == 0) {
-        rootDevId_ = rootStat.st_dev;
-    } else {
-        rootDevId_ = 0; // disable cross-mount filtering if stat fails
-    }
+    rootDevId_ = 0;
 
     unsigned numThreads = std::thread::hardware_concurrency();
     if (numThreads < 4) numThreads = 4;
     if (numThreads > 32) numThreads = 32;
 
-    LOG_INFO("Scanner", "Scanning from: " << rootPath
-        << " (using " << numThreads << " threads, rootDev=" << rootDevId_ << ")");
+    LOG_INFO("Scanner", "Scanning from " << rootPaths.size() << " root(s)"
+        << " (using " << numThreads << " threads)");
 
     threadResults_.resize(numThreads);
     for (auto& v : threadResults_) {
@@ -54,7 +55,13 @@ void DirectoryScanner::scan(const std::string& rootPath) {
 
     {
         std::lock_guard<std::mutex> lock(queueMutex_);
-        workQueue_.push(rootPath);
+        for (const auto& rootPath : rootPaths) {
+            struct stat rootStat;
+            if (stat(rootPath.c_str(), &rootStat) != 0) continue;
+            if (!S_ISDIR(rootStat.st_mode)) continue;
+            if (!tryVisitDirectory(rootStat.st_dev, rootStat.st_ino)) continue;
+            workQueue_.push(rootPath);
+        }
     }
 
     std::vector<std::thread> threads;
@@ -62,6 +69,8 @@ void DirectoryScanner::scan(const std::string& rootPath) {
     for (unsigned i = 0; i < numThreads; i++) {
         threads.emplace_back(&DirectoryScanner::workerThread, this, static_cast<int>(i));
     }
+
+    queueCV_.notify_all();
 
     for (auto& t : threads) {
         t.join();
@@ -256,6 +265,10 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
                 continue;
             }
 
+            std::string childPath = dirPath;
+            if (childPath.back() != '/') childPath += '/';
+            childPath += name;
+
             // Process entry
             if (objtype == VDIR) {
                 // Skip cross-mount directories (autofs, devfs, NFS, etc.)
@@ -265,11 +278,12 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
                     continue;
                 }
 
-                if (tryVisitDirectory(devid, fileid)) {
-                    std::string childPath = dirPath;
-                    if (childPath.back() != '/') childPath += '/';
-                    childPath += name;
+                if (shouldExclude(childPath, name, true)) {
+                    entry = nextEntry;
+                    continue;
+                }
 
+                if (tryVisitDirectory(devid, fileid)) {
                     // Detect .app bundles — record as type 5, skip recursion
                     size_t nameLen = strlen(name);
                     bool isAppBundle = (nameLen > 4 &&
@@ -278,7 +292,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
                         tolower(name[nameLen-2]) == 'p' &&
                         tolower(name[nameLen-1]) == 'p');
 
-                    if (!isAppBundle) {
+                    if (!isAppBundle || config_.includeAppBundleContents) {
                         pendingDirs.push_back(std::move(childPath));
                     }
 
@@ -288,12 +302,24 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
                         0, modtime.tv_sec, fileid, static_cast<int32_t>(devid)});
                 }
             } else if (objtype == VREG) {
+                if (shouldExclude(childPath, name, false)) {
+                    entry = nextEntry;
+                    continue;
+                }
                 stats_.fileCount.fetch_add(1, std::memory_order_relaxed);
                 threadResults_[threadIndex].push_back({name, dirPath, 1, static_cast<uint64_t>(datalength), modtime.tv_sec, fileid, static_cast<int32_t>(devid)});
             } else if (objtype == VLNK) {
+                if (shouldExclude(childPath, name, false)) {
+                    entry = nextEntry;
+                    continue;
+                }
                 stats_.symlinkCount.fetch_add(1, std::memory_order_relaxed);
                 threadResults_[threadIndex].push_back({name, dirPath, 3, 0, modtime.tv_sec, fileid, static_cast<int32_t>(devid)});
             } else {
+                if (shouldExclude(childPath, name, false)) {
+                    entry = nextEntry;
+                    continue;
+                }
                 stats_.otherCount.fetch_add(1, std::memory_order_relaxed);
                 threadResults_[threadIndex].push_back({name, dirPath, 4, 0, modtime.tv_sec, fileid, static_cast<int32_t>(devid)});
             }
@@ -320,4 +346,45 @@ bool DirectoryScanner::tryVisitDirectory(dev_t dev, uint64_t ino) {
     InodeKey key{dev, ino};
     std::lock_guard<std::mutex> lock(dedupMutex_);
     return visitedDirs_.insert(key).second;
+}
+
+bool DirectoryScanner::shouldExclude(const std::string& fullPath,
+                                     const std::string& name,
+                                     bool isDirectory) const {
+    if (!config_.includeHidden && !name.empty() && name[0] == '.') {
+        return true;
+    }
+
+    if (!config_.includeSystem) {
+        if (fullPath.rfind("/System/", 0) == 0 ||
+            fullPath.rfind("/private/var/", 0) == 0 ||
+            fullPath.find("/Library/Caches/") != std::string::npos ||
+            fullPath.find("/.Spotlight-V100/") != std::string::npos ||
+            fullPath.find("/.fseventsd/") != std::string::npos ||
+            fullPath.find("/.Trashes/") != std::string::npos) {
+            return true;
+        }
+    }
+
+    for (const auto& excluded : config_.excludedPaths) {
+        if (excluded.empty()) continue;
+        if (fullPath == excluded) return true;
+        if (fullPath.size() > excluded.size() &&
+            fullPath.compare(0, excluded.size(), excluded) == 0 &&
+            fullPath[excluded.size()] == '/') {
+            return true;
+        }
+    }
+
+    for (const auto& pattern : config_.excludedPatterns) {
+        if (pattern.empty()) continue;
+        if (fnmatch(pattern.c_str(), name.c_str(), FNM_CASEFOLD) == 0) {
+            return true;
+        }
+        if (isDirectory && pattern == name) {
+            return true;
+        }
+    }
+
+    return false;
 }

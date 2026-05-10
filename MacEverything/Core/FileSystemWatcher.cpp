@@ -7,20 +7,31 @@ FileSystemWatcher::~FileSystemWatcher() {
 }
 
 void FileSystemWatcher::start(const std::string& rootPath, Callback callback) {
+    start(std::vector<std::string>{rootPath}, std::move(callback));
+}
+
+void FileSystemWatcher::start(const std::vector<std::string>& rootPaths, Callback callback) {
     if (stream_) return;
     callback_ = std::move(callback);
     onReplayDone_ = nullptr;
-    startInternal(rootPath, kFSEventStreamEventIdSinceNow);
+    startInternal(rootPaths, kFSEventStreamEventIdSinceNow);
 }
 
 void FileSystemWatcher::start(const std::string& rootPath,
                                FSEventStreamEventId sinceEventId,
                                Callback callback,
                                ReplayDoneCallback onReplayDone) {
+    start(std::vector<std::string>{rootPath}, sinceEventId, std::move(callback), std::move(onReplayDone));
+}
+
+void FileSystemWatcher::start(const std::vector<std::string>& rootPaths,
+                               FSEventStreamEventId sinceEventId,
+                               Callback callback,
+                               ReplayDoneCallback onReplayDone) {
     if (stream_) return;
     callback_ = std::move(callback);
     onReplayDone_ = std::move(onReplayDone);
-    startInternal(rootPath, sinceEventId);
+    startInternal(rootPaths, sinceEventId);
 }
 
 void FileSystemWatcher::setExclusionPaths(std::vector<std::string> paths) {
@@ -35,16 +46,23 @@ void FileSystemWatcher::setEarlyAbortSemaphore(void* sem) {
     earlyAbortSem_ = sem;
 }
 
-void FileSystemWatcher::startInternal(const std::string& rootPath,
+void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
                                        FSEventStreamEventId sinceEventId) {
     journalTruncated_.store(false, std::memory_order_relaxed);
     totalEventsReceived_.store(0, std::memory_order_relaxed);
 
-    CFStringRef path = CFStringCreateWithCString(kCFAllocatorDefault,
-                                                  rootPath.c_str(),
-                                                  kCFStringEncodingUTF8);
-    CFArrayRef pathsToWatch = CFArrayCreate(kCFAllocatorDefault,
-                                             (const void**)&path, 1, &kCFTypeArrayCallBacks);
+    CFMutableArrayRef pathsToWatch = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
+    for (const auto& rootPath : rootPaths) {
+        CFStringRef path = CFStringCreateWithCString(kCFAllocatorDefault,
+                                                      rootPath.c_str(),
+                                                      kCFStringEncodingUTF8);
+        CFArrayAppendValue(pathsToWatch, path);
+        CFRelease(path);
+    }
+    if (CFArrayGetCount(pathsToWatch) == 0) {
+        CFRelease(pathsToWatch);
+        return;
+    }
 
     FSEventStreamContext context = {};
     context.info = this;
@@ -63,8 +81,6 @@ void FileSystemWatcher::startInternal(const std::string& rootPath,
     );
 
     CFRelease(pathsToWatch);
-    CFRelease(path);
-
     if (!stream_) return;
 
     if (!exclusionPaths_.empty()) {
@@ -81,7 +97,8 @@ void FileSystemWatcher::startInternal(const std::string& rootPath,
     queue_ = dispatch_queue_create("com.maceverything.fswatcher", DISPATCH_QUEUE_SERIAL);
     FSEventStreamSetDispatchQueue(stream_, queue_);
     FSEventStreamStart(stream_);
-    LOG_INFO("FSWatcher", "[" << label_ << "] Started watching: " << rootPath);
+    LOG_INFO("FSWatcher", "[" << label_ << "] Started watching "
+             << rootPaths.size() << " root(s)");
 }
 
 void FileSystemWatcher::stop() {

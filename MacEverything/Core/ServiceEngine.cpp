@@ -1,11 +1,49 @@
 #include "ServiceEngine.h"
-#include "DirectoryScanner.h"
 #include "PathUtils.h"
 #include "Logger.h"
 #include <sys/stat.h>
 #include <filesystem>
+#include <fnmatch.h>
+#include <sstream>
 
 namespace fs = std::filesystem;
+
+namespace {
+
+bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
+    if (parent.empty()) return false;
+    if (child == parent) return true;
+    if (parent == "/") return !child.empty() && child[0] == '/';
+    return child.size() > parent.size() &&
+           child.compare(0, parent.size(), parent) == 0 &&
+           child[parent.size()] == '/';
+}
+
+std::vector<std::string> exclusionsForRoots(const std::vector<std::string>& roots,
+                                            const std::vector<std::string>& excludedPaths) {
+    std::vector<std::string> filtered;
+    filtered.reserve(excludedPaths.size());
+
+    for (const auto& excluded : excludedPaths) {
+        if (excluded.empty()) continue;
+
+        bool overriddenByExplicitRoot = false;
+        for (const auto& root : roots) {
+            if (pathContainsOrEquals(excluded, root)) {
+                overriddenByExplicitRoot = true;
+                break;
+            }
+        }
+
+        if (!overriddenByExplicitRoot) {
+            filtered.push_back(excluded);
+        }
+    }
+
+    return filtered;
+}
+
+} // namespace
 
 // ═══════════════════════════════════════════════════════
 //  Construction / Destruction
@@ -24,6 +62,18 @@ ServiceEngine::ServiceEngine(const ServiceConfig& config)
 
 ServiceEngine::~ServiceEngine() {
     shutdown();
+}
+
+void ServiceEngine::updateConfig(const ServiceConfig& config) {
+    bool restartHttp = config_.httpPort != config.httpPort;
+    config_ = config;
+
+    if (restartHttp) {
+        stopHttpServer();
+        if (config_.httpPort > 0) {
+            startHttpServer(config_.httpPort);
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -86,10 +136,17 @@ uint32_t ServiceEngine::liveRecordCount() {
 IndexMetadata ServiceEngine::buildMetadata() {
     IndexMetadata meta;
     meta.lastEventId = watcher_ ? watcher_->getLastEventId() : 0;
-    meta.extra[IndexMetadata::kScanRoot] = config_.scanRoot;
+    auto roots = effectiveScanRoots();
+    std::string joinedRoots;
+    for (size_t i = 0; i < roots.size(); i++) {
+        if (i > 0) joinedRoots += ";";
+        joinedRoots += roots[i];
+    }
+    meta.extra[IndexMetadata::kScanRoot] = joinedRoots.empty() ? config_.scanRoot : joinedRoots;
     meta.extra[IndexMetadata::kAppVersion] = kAppVersion;
     meta.extra[IndexMetadata::kRecordFormat] = "v6_flat";
     meta.extra[IndexMetadata::kOSVersion] = PathUtils::getOSVersionString();
+    meta.extra["config_signature"] = configSignature();
     return meta;
 }
 
@@ -101,7 +158,8 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
     isScanning_.store(true, std::memory_order_relaxed);
     stopMonitoring();
 
-    LOG_INFO("ServiceEngine", "startFullScan from: " << config_.scanRoot);
+    auto roots = effectiveScanRoots();
+    LOG_INFO("ServiceEngine", "startFullScan from " << roots.size() << " root(s)");
 
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         auto scanStart = std::chrono::steady_clock::now();
@@ -124,7 +182,7 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
         });
         dispatch_resume(timer);
 
-        scanner->scan(config_.scanRoot);
+        scanner->scan(roots, this->scanConfig());
         dispatch_source_cancel(timer);
 
         auto results = scanner->takeResults();
@@ -141,13 +199,17 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
 
         if (completion) completion(count, true);
 
-        this->startMonitoring();
+        if (this->config_.realtimeMonitoring) {
+            this->startMonitoring();
+        }
 
         // Content indexing in background
         dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
             if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-            this->setupContentPersistence();
-            this->startContentIndexing();
+            if (this->config_.contentIndexingEnabled) {
+                this->setupContentPersistence();
+                this->startContentIndexing();
+            }
         });
     });
 }
@@ -172,7 +234,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
         }
     }
 
-    LOG_INFO("ServiceEngine", "startIncremental from: " << config_.scanRoot);
+    LOG_INFO("ServiceEngine", "startIncremental from " << effectiveScanRoots().size() << " root(s)");
 
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         auto incrementalStart = std::chrono::steady_clock::now();
@@ -187,7 +249,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
         auto persistence = std::make_unique<IndexPersistence>(
             engine, cacheStr, walStr, pagesStr, ptableStr, v6Str);
 
-        uint64_t lastEventId = persistence->load();
+        uint64_t lastEventId = persistence->load(this->configSignature());
         auto indexLoadDone = std::chrono::steady_clock::now();
         uint32_t loadedCount = engine->liveRecordCount();
 
@@ -249,7 +311,9 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
             this->setPersistence(newPersistence);
             newPersistence->attachWAL();
             newPersistence->setContentIndex(this->safeContentIndex());
-            newPersistence->startAutoCompaction(300.0, this->watcher_);
+            if (this->config_.automaticMaintenanceEnabled) {
+                newPersistence->startAutoCompaction(300.0, this->watcher_);
+            }
 
             auto meta = this->buildMetadata();
             newPersistence->flush(meta, /*force=*/true);
@@ -285,8 +349,9 @@ void ServiceEngine::backgroundSyncEngine(
 
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
+        auto roots = effectiveScanRoots();
         watcherPtr->start(
-            config_.scanRoot,
+            roots,
             lastEventId,
             [this, engine](std::vector<FileSystemWatcher::Event> events) {
                 this->applyFSEvents(events, engine);
@@ -314,14 +379,20 @@ void ServiceEngine::backgroundSyncEngine(
                      << "total " << totalTime << "s");
 
             this->isSyncing_.store(false, std::memory_order_relaxed);
-            this->startMonitoring();
-            sharedPersistence->startAutoCompaction(300.0, this->watcher_);
+            if (this->config_.realtimeMonitoring) {
+                this->startMonitoring();
+            }
+            if (this->config_.automaticMaintenanceEnabled) {
+                sharedPersistence->startAutoCompaction(300.0, this->watcher_);
+            }
 
-            dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-                this->setupContentPersistence();
-                this->startContentIndexing();
-            });
+            if (this->config_.contentIndexingEnabled) {
+                dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+                    this->setupContentPersistence();
+                    this->startContentIndexing();
+                });
+            }
             if (this->onIndexChanged) this->onIndexChanged();
             return;
         }
@@ -348,7 +419,7 @@ void ServiceEngine::backgroundSyncEngine(
         });
         dispatch_resume(timer);
 
-        scanner->scan(config_.scanRoot);
+        scanner->scan(this->effectiveScanRoots(), this->scanConfig());
         dispatch_source_cancel(timer);
 
         auto freshRecords = scanner->takeResults();
@@ -381,17 +452,23 @@ void ServiceEngine::backgroundSyncEngine(
         newPersistence->attachWAL();
         newPersistence->setContentIndex(this->safeContentIndex());
 
-        this->startMonitoring();
-        newPersistence->startAutoCompaction(300.0, this->watcher_);
+        if (this->config_.realtimeMonitoring) {
+            this->startMonitoring();
+        }
+        if (this->config_.automaticMaintenanceEnabled) {
+            newPersistence->startAutoCompaction(300.0, this->watcher_);
+        }
 
         auto meta = this->buildMetadata();
         newPersistence->flush(meta, /*force=*/true);
 
-        dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-            this->setupContentPersistence();
-            this->startContentIndexing();
-        });
+        if (this->config_.contentIndexingEnabled) {
+            dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+                this->setupContentPersistence();
+                this->startContentIndexing();
+            });
+        }
         if (this->onIndexChanged) this->onIndexChanged();
     });
 }
@@ -410,6 +487,85 @@ void ServiceEngine::compactIndex() {
         persistence->setContentIndexPersistence(safeContentPersistence());
         persistence->compact(eventId);
     }
+}
+
+std::vector<std::string> ServiceEngine::effectiveScanRoots() const {
+    if (!config_.scanRoots.empty()) return config_.scanRoots;
+    return {config_.scanRoot};
+}
+
+ScanConfig ServiceEngine::scanConfig() const {
+    ScanConfig config;
+    config.excludedPaths = exclusionsForRoots(effectiveScanRoots(), config_.excludedPaths);
+    config.excludedPatterns = config_.excludedPatterns;
+    config.includeHidden = config_.includeHidden;
+    config.includeSystem = config_.includeSystem;
+    config.includeAppBundleContents = config_.includeAppBundleContents;
+    return config;
+}
+
+bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forContent) const {
+    const auto& roots = forContent && !config_.contentRoots.empty()
+        ? config_.contentRoots
+        : effectiveScanRoots();
+    bool insideRoot = roots.empty();
+    for (const auto& root : roots) {
+        if (pathContainsOrEquals(root, path)) {
+            insideRoot = true;
+            break;
+        }
+    }
+    if (!insideRoot) return false;
+
+    std::vector<std::string> excluded = exclusionsForRoots(roots, config_.excludedPaths);
+    if (forContent) {
+        auto contentExcluded = exclusionsForRoots(roots, config_.contentExcludedPaths);
+        excluded.insert(excluded.end(), contentExcluded.begin(), contentExcluded.end());
+    }
+    for (const auto& ex : excluded) {
+        if (ex.empty()) continue;
+        if (pathContainsOrEquals(ex, path)) {
+            return false;
+        }
+    }
+
+    size_t slash = path.rfind('/');
+    std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+    if (!config_.includeHidden && !name.empty() && name[0] == '.') return false;
+    if (!config_.includeSystem &&
+        (path.rfind("/System/", 0) == 0 ||
+         path.rfind("/private/var/", 0) == 0 ||
+         path.find("/Library/Caches/") != std::string::npos)) {
+        return false;
+    }
+
+    for (const auto& pattern : config_.excludedPatterns) {
+        if (!pattern.empty() && fnmatch(pattern.c_str(), name.c_str(), FNM_CASEFOLD) == 0) {
+            return false;
+        }
+    }
+    return true;
+}
+
+std::string ServiceEngine::configSignature() const {
+    auto appendList = [](std::ostringstream& out, const std::vector<std::string>& values) {
+        out << values.size() << ":";
+        for (const auto& value : values) {
+            out << value.size() << "=" << value << ";";
+        }
+    };
+
+    std::ostringstream out;
+    out << "v2|roots=";
+    appendList(out, effectiveScanRoots());
+    out << "|excludedPaths=";
+    appendList(out, config_.excludedPaths);
+    out << "|excludedPatterns=";
+    appendList(out, config_.excludedPatterns);
+    out << "|hidden=" << (config_.includeHidden ? 1 : 0);
+    out << "|system=" << (config_.includeSystem ? 1 : 0);
+    out << "|bundles=" << (config_.includeAppBundleContents ? 1 : 0);
+    return out.str();
 }
 
 // ═══════════════════════════════════════════════════════

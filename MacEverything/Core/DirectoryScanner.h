@@ -9,6 +9,14 @@
 #include <atomic>
 #include <string>
 
+struct ScanConfig {
+    std::vector<std::string> excludedPaths;
+    std::vector<std::string> excludedPatterns;
+    bool includeHidden = false;
+    bool includeSystem = false;
+    bool includeAppBundleContents = false;
+};
+
 struct InodeKey {
     dev_t dev;
     uint64_t ino;
@@ -36,6 +44,7 @@ public:
     };
 
     void scan(const std::string& rootPath);
+    void scan(const std::vector<std::string>& rootPaths, const ScanConfig& config = {});
     void cancel() { cancelled_.store(true, std::memory_order_relaxed); }
     bool isCancelled() const { return cancelled_.load(std::memory_order_relaxed); }
     const Stats& getStats() const { return stats_; }
@@ -54,6 +63,7 @@ private:
     std::unordered_set<InodeKey, InodeKeyHash> visitedDirs_;
     std::mutex dedupMutex_;
     dev_t rootDevId_{0};  // device ID of root path — skip cross-mount directories
+    ScanConfig config_;
 
     std::vector<std::vector<FileRecord>> threadResults_;
     Stats stats_;
@@ -61,4 +71,5 @@ private:
     void workerThread(int threadIndex);
     void scanDirectory(const std::string& dirPath, char* buffer, int threadIndex);
     bool tryVisitDirectory(dev_t dev, uint64_t ino);
+    bool shouldExclude(const std::string& fullPath, const std::string& name, bool isDirectory) const;
 };
