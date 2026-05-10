@@ -39,7 +39,7 @@
 		A1000033 /* SearchEngineV6.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000047; };
 		A1000034 /* FlatIndexWriter.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000049; };
 		A1000035 /* L10n.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000050; };
-		A1000036 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A9000001; };
+		A1000036 /* Localizable.strings in Resources */ = {isa = PBXBuildFile; fileRef = A9000101; };
 		A100001A /* StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000028; };
 		A100001B /* Logger.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A200002A; };
 		A100001C /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200002B; };
@@ -195,7 +195,7 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXVariantGroup section */
-		A9000001 /* Localizable.strings */ = {
+		A9000101 /* Localizable.strings */ = {
 			isa = PBXVariantGroup;
 			children = (
 				A2000051 /* en */,
@@ -274,7 +274,7 @@
 				A4000005 /* Core */,
 				C4000001 /* CLI */,
 				A2000021 /* Assets.xcassets */,
-				A9000001 /* Localizable.strings */,
+				A9000101 /* Localizable.strings */,
 				A2000010 /* MacEverything-Bridging-Header.h */,
 				A2000011 /* Info.plist */,
 				A2000012 /* MacEverything.entitlements */,
