@@ -123,6 +123,7 @@ private:
     std::vector<std::string> effectiveScanRoots() const;
     ScanConfig scanConfig() const;
     bool isPathAllowedByConfig(const std::string& path, bool forContent) const;
+    std::string configSignature() const;
 
     // ── Config ──
     ServiceConfig config_;

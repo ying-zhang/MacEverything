@@ -4,6 +4,7 @@
 #include <sys/stat.h>
 #include <filesystem>
 #include <fnmatch.h>
+#include <sstream>
 
 namespace fs = std::filesystem;
 
@@ -108,6 +109,7 @@ IndexMetadata ServiceEngine::buildMetadata() {
     meta.extra[IndexMetadata::kAppVersion] = kAppVersion;
     meta.extra[IndexMetadata::kRecordFormat] = "v6_flat";
     meta.extra[IndexMetadata::kOSVersion] = PathUtils::getOSVersionString();
+    meta.extra["config_signature"] = configSignature();
     return meta;
 }
 
@@ -210,7 +212,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
         auto persistence = std::make_unique<IndexPersistence>(
             engine, cacheStr, walStr, pagesStr, ptableStr, v6Str);
 
-        uint64_t lastEventId = persistence->load();
+        uint64_t lastEventId = persistence->load(this->configSignature());
         auto indexLoadDone = std::chrono::steady_clock::now();
         uint32_t loadedCount = engine->liveRecordCount();
 
@@ -509,6 +511,27 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
         }
     }
     return true;
+}
+
+std::string ServiceEngine::configSignature() const {
+    auto appendList = [](std::ostringstream& out, const std::vector<std::string>& values) {
+        out << values.size() << ":";
+        for (const auto& value : values) {
+            out << value.size() << "=" << value << ";";
+        }
+    };
+
+    std::ostringstream out;
+    out << "v2|roots=";
+    appendList(out, effectiveScanRoots());
+    out << "|excludedPaths=";
+    appendList(out, config_.excludedPaths);
+    out << "|excludedPatterns=";
+    appendList(out, config_.excludedPatterns);
+    out << "|hidden=" << (config_.includeHidden ? 1 : 0);
+    out << "|system=" << (config_.includeSystem ? 1 : 0);
+    out << "|bundles=" << (config_.includeAppBundleContents ? 1 : 0);
+    return out.str();
 }
 
 // ═══════════════════════════════════════════════════════

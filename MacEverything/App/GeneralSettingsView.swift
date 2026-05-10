@@ -15,12 +15,19 @@ struct GeneralSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     indexingSection
+                }
+                .padding()
+            }
+            .tabItem { Text(L10n.tr("Indexes")) }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                     exclusionsSection
                     contentSection
                 }
                 .padding()
             }
-            .tabItem { Text(L10n.tr("Indexes")) }
+            .tabItem { Text(L10n.tr("Exclusions")) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -42,20 +49,25 @@ struct GeneralSettingsView: View {
             }
             .tabItem { Text(L10n.tr("General")) }
         }
-        .frame(width: 660, height: 620)
+        .frame(width: 720, height: 620)
     }
 
     private var indexingSection: some View {
         SettingsSection(title: L10n.tr("Indexing Scope")) {
-            PathListEditor(
+            CompactPathListEditor(
                 title: L10n.tr("Indexed Folders"),
                 paths: $settings.indexRoots,
-                newPath: $newIndexPath
+                newPath: $newIndexPath,
+                visibleRows: 8
             )
 
-            Toggle(L10n.tr("Index hidden files and folders"), isOn: $settings.indexHiddenFiles)
-            Toggle(L10n.tr("Index system files"), isOn: $settings.indexSystemFiles)
-            Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
+            Divider()
+
+            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], alignment: .leading, spacing: 8) {
+                Toggle(L10n.tr("Index hidden files and folders"), isOn: $settings.indexHiddenFiles)
+                Toggle(L10n.tr("Index system files"), isOn: $settings.indexSystemFiles)
+                Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
+            }
 
             Picker(L10n.tr("Refresh Mode"), selection: $settings.refreshMode) {
                 ForEach(RefreshMode.allCases) { mode in
@@ -78,10 +90,11 @@ struct GeneralSettingsView: View {
 
     private var exclusionsSection: some View {
         SettingsSection(title: L10n.tr("Exclusions")) {
-            PathListEditor(
+            CompactPathListEditor(
                 title: L10n.tr("Excluded Folders"),
                 paths: $settings.excludedPaths,
-                newPath: $newExcludedPath
+                newPath: $newExcludedPath,
+                visibleRows: 8
             )
             StringListEditor(
                 title: L10n.tr("Excluded Name Patterns"),
@@ -104,17 +117,19 @@ struct GeneralSettingsView: View {
             }
             .disabled(!settings.contentIndexingEnabled)
 
-            PathListEditor(
+            CompactPathListEditor(
                 title: L10n.tr("Content Indexed Folders"),
                 paths: $settings.contentIndexRoots,
-                newPath: $newContentPath
+                newPath: $newContentPath,
+                visibleRows: 5
             )
             .disabled(!settings.contentIndexingEnabled)
 
-            PathListEditor(
+            CompactPathListEditor(
                 title: L10n.tr("Content Excluded Folders"),
                 paths: $settings.contentExcludedPaths,
-                newPath: $newContentExcludedPath
+                newPath: $newContentExcludedPath,
+                visibleRows: 5
             )
             .disabled(!settings.contentIndexingEnabled)
         }
@@ -274,6 +289,76 @@ private struct PathListEditor: View {
                 }
                 .disabled(newPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
+        }
+    }
+
+    private func addTypedPath() {
+        let path = newPath.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !path.isEmpty else { return }
+        paths = normalizedPaths(paths + [path])
+        newPath = ""
+    }
+
+    private func chooseFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = true
+        if panel.runModal() == .OK {
+            paths = normalizedPaths(paths + panel.urls.map(\.path))
+        }
+    }
+}
+
+private struct CompactPathListEditor: View {
+    let title: String
+    @Binding var paths: [String]
+    @Binding var newPath: String
+    let visibleRows: Int
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button {
+                    chooseFolder()
+                } label: {
+                    Image(systemName: "folder.badge.plus")
+                }
+                Button {
+                    addTypedPath()
+                } label: {
+                    Image(systemName: "plus.circle")
+                }
+                .disabled(newPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
+            HStack {
+                TextField(L10n.tr("Add folder path..."), text: $newPath)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(addTypedPath)
+            }
+
+            List {
+                ForEach(paths, id: \.self) { path in
+                    HStack {
+                        Text((path as NSString).abbreviatingWithTildeInPath)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            paths.removeAll { $0 == path }
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: CGFloat(max(3, visibleRows)) * 24)
         }
     }
 

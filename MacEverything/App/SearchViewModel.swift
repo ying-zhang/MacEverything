@@ -95,6 +95,18 @@ class SearchViewModel: ObservableObject {
         return (cacheDir as NSString).appendingPathComponent("index.ptable")
     }
 
+    static var v6Path: String {
+        return (cacheDir as NSString).appendingPathComponent("index.v6")
+    }
+
+    static var contentIndexPath: String {
+        return (cacheDir as NSString).appendingPathComponent("content_index.bin")
+    }
+
+    static var contentWalPath: String {
+        return (cacheDir as NSString).appendingPathComponent("content_index.wal")
+    }
+
     init() {
         optionsSink = searchOptions.objectWillChange.sink { [weak self] _ in
             Task { @MainActor [weak self] in
@@ -219,6 +231,9 @@ class SearchViewModel: ObservableObject {
         try? FileManager.default.removeItem(atPath: Self.walPath)
         try? FileManager.default.removeItem(atPath: Self.pagesPath)
         try? FileManager.default.removeItem(atPath: Self.ptablePath)
+        try? FileManager.default.removeItem(atPath: Self.v6Path)
+        try? FileManager.default.removeItem(atPath: Self.contentIndexPath)
+        try? FileManager.default.removeItem(atPath: Self.contentWalPath)
 
         applyRuntimeConfiguration()
         startIncremental()
