@@ -59,9 +59,7 @@ app:
 # === Package ===
 dmg: app
 	-hdiutil detach /Volumes/MacEverything 2>/dev/null
-	hdiutil create -volname MacEverything \
-		-srcfolder build/Release/MacEverything.app \
-		-ov -format UDZO MacEverything.dmg
+	scripts/create-dmg.sh build/Release/MacEverything.app MacEverything.dmg MacEverything
 
 # === Cleanup ===
 clean:

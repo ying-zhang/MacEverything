@@ -58,9 +58,7 @@ jobs:
 
       - name: Create DMG
         run: |
-          hdiutil create -volname MacEverything \
-            -srcfolder build/Release/MacEverything.app \
-            -ov -format UDZO MacEverything.dmg
+          scripts/create-dmg.sh build/Release/MacEverything.app MacEverything.dmg MacEverything
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

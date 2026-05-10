@@ -94,6 +94,7 @@ struct AppSettingsSnapshot {
     var resultDensity: ResultDensity
     var httpServerEnabled: Bool
     var httpPort: Int
+    var hideDockIcon: Bool
     var automaticMaintenanceEnabled: Bool
 }
 
@@ -131,6 +132,7 @@ final class AppSettings: ObservableObject {
         static let resultDensity = "settings.resultDensity"
         static let httpServerEnabled = "settings.httpServerEnabled"
         static let httpPort = "settings.httpPort"
+        static let hideDockIcon = "settings.hideDockIcon"
         static let automaticMaintenanceEnabled = "settings.automaticMaintenanceEnabled"
     }
 
@@ -188,6 +190,7 @@ final class AppSettings: ObservableObject {
         }
     }
     @Published var automaticMaintenanceEnabled: Bool { didSet { save(automaticMaintenanceEnabled, Key.automaticMaintenanceEnabled) } }
+    @Published var hideDockIcon: Bool { didSet { save(hideDockIcon, Key.hideDockIcon) } }
 
     private let defaults = UserDefaults.standard
 
@@ -226,6 +229,7 @@ final class AppSettings: ObservableObject {
         httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? true
         httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
         automaticMaintenanceEnabled = defaults.object(forKey: Key.automaticMaintenanceEnabled) as? Bool ?? true
+        hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
     }
 
     var snapshot: AppSettingsSnapshot {
@@ -259,6 +263,7 @@ final class AppSettings: ObservableObject {
             resultDensity: resultDensity,
             httpServerEnabled: httpServerEnabled,
             httpPort: clamped(httpPort, 1024, 65535),
+            hideDockIcon: hideDockIcon,
             automaticMaintenanceEnabled: automaticMaintenanceEnabled
         )
     }

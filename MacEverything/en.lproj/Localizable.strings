@@ -27,6 +27,8 @@
 "Search Syntax Help..." = "Search Syntax Help...";
 "MCP Integration" = "MCP Integration";
 "Launch at Login" = "Launch at Login";
+"Hide Dock Icon" = "Hide Dock Icon";
+"When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything." = "When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything.";
 "Quit MacEverything" = "Quit MacEverything";
 "Search" = "Search";
 "Regex" = "Regex";
@@ -104,6 +106,9 @@
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "Enable HTTP API";
 "Port: %d" = "Port: %d";
+"HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API listens on local loopback only: http://127.0.0.1:%d";
+"Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
+"Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status";
 "Maintenance" = "Maintenance";
 "Automatic index maintenance" = "Automatic index maintenance";
 "Add folder path..." = "Add folder path...";

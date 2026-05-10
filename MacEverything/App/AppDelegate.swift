@@ -1,15 +1,24 @@
 import Cocoa
 import ServiceManagement
+import Combine
 
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var hotkeyManager: HotkeyManager?
     private var statusItem: NSStatusItem?
     private var launchAtLoginItem: NSMenuItem?
+    private var hideDockItem: NSMenuItem?
     private var mcpMenuItems: [MCPClient: NSMenuItem] = [:]
     private(set) var mainSearchWindow: NSWindow?
+    private var settingsSink: AnyCancellable?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MacSearchBridge.initializeLogger()
+        applyDockVisibility()
+        settingsSink = AppSettings.shared.$hideDockIcon
+            .removeDuplicates()
+            .sink { [weak self] _ in
+                self?.applyDockVisibility()
+            }
 
         let shouldMinimize = Self.shouldStartMinimized()
 
@@ -77,6 +86,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let loginItem = NSMenuItem(title: L10n.tr("Launch at Login"), action: #selector(toggleLaunchAtLogin), keyEquivalent: "")
         launchAtLoginItem = loginItem
         menu.addItem(loginItem)
+        let hideDockMenuItem = NSMenuItem(title: L10n.tr("Hide Dock Icon"), action: #selector(toggleHideDockIcon), keyEquivalent: "")
+        hideDockItem = hideDockMenuItem
+        menu.addItem(hideDockMenuItem)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.tr("Quit MacEverything"), action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
@@ -90,6 +102,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.title = isVisible ? L10n.tr("Hide MacEverything") : L10n.tr("Show MacEverything")
         }
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
+        hideDockItem?.state = AppSettings.shared.hideDockIcon ? .on : .off
         for (client, item) in mcpMenuItems {
             item.state = MCPConfigManager.isEnabled(for: client) ? .on : .off
         }
@@ -146,8 +159,19 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         }
     }
 
+    @objc private func toggleHideDockIcon() {
+        AppSettings.shared.hideDockIcon.toggle()
+    }
+
     @objc private func quitApp() {
         NSApp.terminate(nil)
+    }
+
+    private func applyDockVisibility() {
+        let policy: NSApplication.ActivationPolicy = AppSettings.shared.hideDockIcon ? .accessory : .regular
+        if NSApp.activationPolicy() != policy {
+            NSApp.setActivationPolicy(policy)
+        }
     }
 
     // MARK: - Launch Mode Detection

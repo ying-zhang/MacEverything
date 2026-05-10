@@ -232,6 +232,10 @@ struct GeneralSettingsView: View {
                     }
                 }
             ))
+            Toggle(L10n.tr("Hide Dock Icon"), isOn: $settings.hideDockIcon)
+            Text(L10n.tr("When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything."))
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 
@@ -241,6 +245,15 @@ struct GeneralSettingsView: View {
             Stepper(value: $settings.httpPort, in: 1024...65535, step: 1) {
                 Text(L10n.tr("Port: %d", settings.httpPort))
             }
+            .disabled(!settings.httpServerEnabled)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.tr("HTTP API listens on local loopback only: http://127.0.0.1:%d", settings.httpPort))
+                Text(L10n.tr("Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"", settings.httpPort))
+                Text(L10n.tr("Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status"))
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .textSelection(.enabled)
             .disabled(!settings.httpServerEnabled)
         }
     }

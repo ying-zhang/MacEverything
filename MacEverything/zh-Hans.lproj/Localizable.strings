@@ -27,6 +27,8 @@
 "Search Syntax Help..." = "搜索语法帮助...";
 "MCP Integration" = "MCP 集成";
 "Launch at Login" = "登录时启动";
+"Hide Dock Icon" = "不在 Dock 显示";
+"When hidden from Dock, use the menu bar icon or global shortcut to show MacEverything." = "隐藏 Dock 图标后，可通过菜单栏图标或全局快捷键显示 MacEverything。";
 "Quit MacEverything" = "退出 MacEverything";
 "Search" = "搜索";
 "Regex" = "正则表达式";
@@ -104,6 +106,9 @@
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "启用 HTTP API";
 "Port: %d" = "端口：%d";
+"HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API 仅监听本机回环地址：http://127.0.0.1:%d";
+"Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "示例：curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
+"Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "常用端点：/api/search、/api/search/content、/api/recent、/api/status";
 "Maintenance" = "维护";
 "Automatic index maintenance" = "自动索引维护";
 "Add folder path..." = "添加文件夹路径...";
