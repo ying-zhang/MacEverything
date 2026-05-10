@@ -11,6 +11,8 @@ namespace fs = std::filesystem;
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::setupContentPersistence() {
+    if (!config_.contentIndexingEnabled) return;
+
     auto contentIndex = safeContentIndex();
     auto engine = safeEngine();
     if (!contentIndex || !engine) return;
@@ -49,7 +51,9 @@ void ServiceEngine::setupContentPersistence() {
     }
 
     newContentPersistence->attachWAL();
-    newContentPersistence->startAutoCompaction(300.0);
+    if (config_.automaticMaintenanceEnabled) {
+        newContentPersistence->startAutoCompaction(300.0);
+    }
 
     // Wire content persistence into IndexPersistence so fullCompact() can
     // flush content index after remapping file indices.
@@ -64,6 +68,8 @@ void ServiceEngine::setupContentPersistence() {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startContentIndexing() {
+    if (!config_.contentIndexingEnabled) return;
+
     auto engine = safeEngine();
     auto contentIndex = safeContentIndex();
     if (!engine || !contentIndex) return;
@@ -93,7 +99,9 @@ void ServiceEngine::startContentIndexing() {
                 fileEntries->reserve(indexedIndices.size());
                 engine->forEachRecordWithPath(indexedIndices, [&](uint32_t idx, const FileRecord& r, const std::string& path) {
                     if (r.type != 1) return;
-                    fileEntries->push_back({idx, SearchEngine::makeFullPath(path, r.name), r.modTime});
+                    auto fullPath = SearchEngine::makeFullPath(path, r.name);
+                    if (!this->isPathAllowedByConfig(fullPath, true)) return;
+                    fileEntries->push_back({idx, std::move(fullPath), r.modTime});
                 });
                 LOG_INFO("ServiceEngine", "Content indexing: incremental mode, "
                          << fileEntries->size() << " previously-indexed files to check");
@@ -107,7 +115,9 @@ void ServiceEngine::startContentIndexing() {
                 fileEntries->reserve(total);
                 engine->forEachRecordWithPath(allIndices, [&](uint32_t idx, const FileRecord& r, const std::string& path) {
                     if (r.type != 1) return;
-                    fileEntries->push_back({idx, SearchEngine::makeFullPath(path, r.name), r.modTime});
+                    auto fullPath = SearchEngine::makeFullPath(path, r.name);
+                    if (!this->isPathAllowedByConfig(fullPath, true)) return;
+                    fileEntries->push_back({idx, std::move(fullPath), r.modTime});
                 });
                 LOG_INFO("ServiceEngine", "Content indexing: full scan mode, "
                          << fileEntries->size() << " regular files to index");
@@ -172,6 +182,8 @@ void ServiceEngine::startContentIndexing() {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::rebuildContentIndex() {
+    if (!config_.contentIndexingEnabled) return;
+
     auto engine = safeEngine();
     auto contentIndex = safeContentIndex();
     if (!engine || !contentIndex) return;
@@ -219,6 +231,9 @@ void ServiceEngine::updateContentForPath(
     const std::string& fullPath, bool removed,
     std::shared_ptr<SearchEngine> engine)
 {
+    if (!config_.contentIndexingEnabled) return;
+    if (!removed && !isPathAllowedByConfig(fullPath, true)) return;
+
     auto contentIndex = safeContentIndex();
     if (!engine || !contentIndex) return;
 

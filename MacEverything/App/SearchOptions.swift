@@ -5,16 +5,17 @@ import Combine
 class SearchOptions: ObservableObject {
     static let shared = SearchOptions()
 
-    @Published var isRegex: Bool = false {
+    @Published var isRegex: Bool = AppSettings.shared.snapshot.defaultRegex {
         didSet {
             if isRegex {
                 isWholeWord = false
                 isMatchFilename = false
+                RegexHelpWindowController.shared.showFirstUseIfNeeded()
             }
         }
     }
-    @Published var isCaseSensitive: Bool = false
-    @Published var isWholeWord: Bool = false {
+    @Published var isCaseSensitive: Bool = AppSettings.shared.snapshot.defaultCaseSensitive
+    @Published var isWholeWord: Bool = AppSettings.shared.snapshot.defaultWholeWord {
         didSet {
             if isWholeWord {
                 isRegex = false
@@ -22,7 +23,7 @@ class SearchOptions: ObservableObject {
             }
         }
     }
-    @Published var isMatchFilename: Bool = false {
+    @Published var isMatchFilename: Bool = AppSettings.shared.snapshot.defaultMatchFilename {
         didSet {
             if isMatchFilename {
                 isRegex = false

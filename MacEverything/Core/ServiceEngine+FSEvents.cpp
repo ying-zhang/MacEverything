@@ -23,7 +23,8 @@ void ServiceEngine::applyFSEvents(
         const std::string& path = event.path;
         FSEventStreamEventFlags flags = event.flags;
 
-        if (isInsideAppBundle(path)) continue;
+        if (!isPathAllowedByConfig(path, false)) continue;
+        if (!config_.includeAppBundleContents && isInsideAppBundle(path)) continue;
 
         bool itemRemoved = (flags & kFSEventStreamEventFlagItemRemoved) != 0;
         bool itemRenamed = (flags & kFSEventStreamEventFlagItemRenamed) != 0;
@@ -32,7 +33,9 @@ void ServiceEngine::applyFSEvents(
         bool exists = (lstat(path.c_str(), &st) == 0);
 
         if (itemRemoved || (itemRenamed && !exists)) {
-            contentUpdates.push_back({path, true});
+            if (config_.contentIndexingEnabled) {
+                contentUpdates.push_back({path, true});
+            }
             ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
         } else if (exists) {
             std::string dirPath, fileName;
@@ -62,7 +65,7 @@ void ServiceEngine::applyFSEvents(
 
             ops.push_back({SearchEngine::MutationOp::UPDATE, path, std::move(record)});
 
-            if (type == 1) {
+            if (type == 1 && config_.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
                 contentUpdates.push_back({path, false});
             }
         }
@@ -84,19 +87,23 @@ void ServiceEngine::applyFSEvents(
 void ServiceEngine::startMonitoring() {
     if (isMonitoring_.load(std::memory_order_relaxed)) return;
 
-    std::string root = config_.scanRoot;
+    auto roots = effectiveScanRoots();
 
     // Exclude app's own cache directory from FSEvents
+    std::vector<std::string> exclusions = config_.excludedPaths;
     std::string cacheExclusion = config_.cachePath;
     if (cacheExclusion.empty()) {
         const char* home = std::getenv("HOME");
         if (home) cacheExclusion = std::string(home) + "/Library/Caches/com.maceverything.app";
     }
     if (!cacheExclusion.empty()) {
-        watcher_->setExclusionPaths({cacheExclusion});
+        exclusions.push_back(cacheExclusion);
+    }
+    if (!exclusions.empty()) {
+        watcher_->setExclusionPaths(exclusions);
     }
 
-    watcher_->start(root, [this](std::vector<FileSystemWatcher::Event> events) {
+    watcher_->start(roots, [this](std::vector<FileSystemWatcher::Event> events) {
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
 
         auto engine = safeEngine();
@@ -112,7 +119,8 @@ void ServiceEngine::startMonitoring() {
             const std::string& path = event.path;
             FSEventStreamEventFlags flags = event.flags;
 
-            if (isInsideAppBundle(path)) continue;
+            if (!isPathAllowedByConfig(path, false)) continue;
+            if (!config_.includeAppBundleContents && isInsideAppBundle(path)) continue;
 
             if (flags & kFSEventStreamEventFlagMustScanSubDirs) {
                 rescanDirs.push_back(path);
@@ -126,7 +134,9 @@ void ServiceEngine::startMonitoring() {
             bool exists = (lstat(path.c_str(), &st) == 0);
 
             if (itemRemoved || (itemRenamed && !exists)) {
-                contentUpdates.push_back({path, true});
+                if (config_.contentIndexingEnabled) {
+                    contentUpdates.push_back({path, true});
+                }
                 ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
                 changed = true;
             } else if (exists) {
@@ -159,7 +169,9 @@ void ServiceEngine::startMonitoring() {
                 changed = true;
 
                 if (type == 1) {
-                    contentUpdates.push_back({path, false});
+                    if (config_.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
+                        contentUpdates.push_back({path, false});
+                    }
                 }
             }
         }
@@ -312,7 +324,7 @@ void ServiceEngine::rescanSubtree(const std::string& dir) {
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
 
         auto scanner = std::make_shared<DirectoryScanner>();
-        scanner->scan(dir);
+        scanner->scan(std::vector<std::string>{dir}, this->scanConfig());
         auto freshRecords = scanner->takeResults();
 
         if (shuttingDown_.load(std::memory_order_relaxed)) return;

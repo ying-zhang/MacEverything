@@ -108,12 +108,16 @@ enum QueryHighlightTokenizer {
                         // Re-collect the argument: for filters, < > are allowed in the arg
                         let argStartInInput = wordStart + nameLen
                         var argEnd = argStartInInput
-                        while argEnd < len {
-                            let ch = chars[argEnd]
-                            if ch == 0x20 || ch == 0x09 || ch == 0x7C || ch == 0x21 || ch == 0x22 {
-                                break
+                        if name == "regex" {
+                            argEnd = len
+                        } else {
+                            while argEnd < len {
+                                let ch = chars[argEnd]
+                                if ch == 0x20 || ch == 0x09 || ch == 0x7C || ch == 0x21 || ch == 0x22 {
+                                    break
+                                }
+                                argEnd += 1
                             }
-                            argEnd += 1
                         }
                         if argEnd > argStartInInput {
                             tokens.append(QueryToken(
@@ -163,6 +167,7 @@ struct HighlightedSearchField: NSViewRepresentable {
     var ghostSuggestion: String?
     var isFocused: FocusState<Bool>.Binding
     var onTab: (() -> Bool)?
+    var onSubmit: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -200,6 +205,7 @@ struct HighlightedSearchField: NSViewRepresentable {
 
         // Tab key handling
         textView.onTabKey = context.coordinator.handleTab
+        textView.onSubmit = context.coordinator.handleSubmit
 
         // Placeholder
         textView.placeholderString = placeholder
@@ -226,6 +232,11 @@ struct HighlightedSearchField: NSViewRepresentable {
         // Update ghost suggestion
         if textView.ghostSuggestion != ghostSuggestion {
             textView.ghostSuggestion = ghostSuggestion
+        }
+
+        if textView.placeholderString != placeholder {
+            textView.placeholderString = placeholder
+            textView.needsDisplay = true
         }
 
         // Handle focus
@@ -265,6 +276,10 @@ struct HighlightedSearchField: NSViewRepresentable {
 
         func handleTab() -> Bool {
             return parent.onTab?() ?? false
+        }
+
+        func handleSubmit() {
+            parent.onSubmit?()
         }
 
         func applyHighlighting(_ textView: NSTextView) {
@@ -311,6 +326,7 @@ struct HighlightedSearchField: NSViewRepresentable {
 
 class HighlightedNSTextView: NSTextView {
     var onTabKey: (() -> Bool)?
+    var onSubmit: (() -> Void)?
     var placeholderString: String = ""
     var ghostSuggestion: String? {
         didSet { needsDisplay = true }
@@ -322,6 +338,10 @@ class HighlightedNSTextView: NSTextView {
             if let handler = onTabKey, handler() {
                 return // Tab was consumed by ghost suggestion
             }
+        }
+        if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
+            onSubmit?()
+            return
         }
         super.keyDown(with: event)
     }

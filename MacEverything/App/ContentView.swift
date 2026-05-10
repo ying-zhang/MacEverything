@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
     @ObservedObject private var searchOptions = SearchOptions.shared
+    @ObservedObject private var settings = AppSettings.shared
     @State private var scrollViewID = 0
     @FocusState private var isSearchFieldFocused: Bool
 
@@ -18,7 +19,9 @@ struct ContentView: View {
                     .foregroundColor(.blue)
                 HighlightedSearchField(
                     text: $viewModel.searchText,
-                    placeholder: L10n.tr("Search files... (infile: for content search)"),
+                    placeholder: settings.contentIndexingEnabled
+                        ? L10n.tr("Search files... (infile: for content search)")
+                        : L10n.tr("Search files..."),
                     ghostSuggestion: viewModel.ghostSuggestion,
                     isFocused: $isSearchFieldFocused,
                     onTab: {
@@ -27,6 +30,9 @@ struct ContentView: View {
                             return true
                         }
                         return false
+                    },
+                    onSubmit: {
+                        viewModel.submitSearch()
                     }
                 )
                 .frame(height: 36)
@@ -201,30 +207,43 @@ struct ContentView: View {
                     Spacer()
                 }
             } else {
+                if viewModel.showingRecent && !viewModel.displayItems.isEmpty {
+                    HStack {
+                        HStack(spacing: 4) {
+                            Image(systemName: "clock")
+                            Text(L10n.tr("Recent Files"))
+                                .font(.callout)
+                                .fontWeight(.medium)
+                        }
+                        .foregroundColor(.white)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(Color.orange)
+                        )
+                        Spacer()
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 4)
+                }
+
+                if !viewModel.displayItems.isEmpty {
+                    ResultHeaderView(viewModel: viewModel)
+                        .padding(.horizontal, 8)
+                }
+
                 ScrollView {
                     LazyVStack(spacing: 0) {
-                        if viewModel.showingRecent && !viewModel.displayItems.isEmpty {
-                            HStack {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "clock")
-                                    Text(L10n.tr("Recent Files"))
-                                        .font(.callout)
-                                        .fontWeight(.medium)
-                                }
-                                .foregroundColor(.white)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 3)
-                                .background(
-                                    RoundedRectangle(cornerRadius: 5)
-                                        .fill(Color.orange)
-                                )
-                                Spacer()
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 4)
-                        }
                         ForEach(viewModel.displayItems) { item in
-                            ResultRow(item: item, hints: viewModel.highlightHints)
+                            ResultRow(
+                                item: item,
+                                hints: viewModel.highlightHints,
+                                isSelected: viewModel.selectedItemID == item.id,
+                                onSelect: {
+                                    viewModel.select(item)
+                                }
+                            )
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
                                 .id(item.id)
@@ -277,5 +296,79 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
             scrollViewID += 1
         }
+    }
+}
+
+private struct ResultHeaderView: View {
+    @ObservedObject var viewModel: SearchViewModel
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        HStack(spacing: 0) {
+            columnButton(L10n.tr("Name"), field: .name, width: ResultColumnLayout.nameWidth)
+
+            if settings.showPath {
+                columnSeparator
+                columnButton(L10n.tr("Path"), field: .path)
+            }
+
+            if settings.showSize {
+                columnSeparator
+                columnButton(L10n.tr("Size"), field: .size, width: ResultColumnLayout.sizeWidth, alignment: .trailing)
+            }
+
+            if settings.showModifiedDate {
+                columnSeparator
+                columnButton(L10n.tr("Modified Date"), field: .modified, width: ResultColumnLayout.modifiedWidth)
+            }
+        }
+        .padding(.horizontal, 6)
+        .frame(height: 22)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .overlay(alignment: .bottom) {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.6))
+                .frame(height: 1)
+        }
+    }
+
+    private var columnSeparator: some View {
+        ZStack {
+            Rectangle()
+                .fill(Color(nsColor: .separatorColor).opacity(0.55))
+                .frame(width: 1)
+                .padding(.vertical, 3)
+        }
+        .frame(width: 10)
+    }
+
+    @ViewBuilder
+    private func columnButton(
+        _ title: String,
+        field: SortField,
+        width: CGFloat? = nil,
+        alignment: Alignment = .leading
+    ) -> some View {
+        Button {
+            viewModel.sortBy(field)
+        } label: {
+            HStack(spacing: 4) {
+                Text(title)
+                    .lineLimit(1)
+                if settings.sortField == field {
+                    Image(systemName: settings.sortAscending ? "chevron.up" : "chevron.down")
+                        .font(.caption2)
+                }
+            }
+            .font(.caption)
+            .foregroundColor(.secondary)
+            .padding(.horizontal, 5)
+            .frame(width: width, alignment: alignment)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: alignment)
+            .frame(height: 22, alignment: alignment)
+            .background(settings.sortField == field ? Color.accentColor.opacity(0.10) : Color.clear)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

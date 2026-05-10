@@ -58,37 +58,55 @@ final class FileIconCache {
 struct ResultRow: View {
     let item: FileItem
     let hints: [HighlightHint]
+    let isSelected: Bool
+    let onSelect: () -> Void
+    @ObservedObject private var settings = AppSettings.shared
     @State private var isHovered = false
 
     var body: some View {
-        HStack(spacing: 8) {
-            fileIcon(for: item)
-                .resizable()
-                .aspectRatio(contentMode: .fit)
-                .frame(width: 24, height: 24)
+        let dense = settings.resultDensity == .compact
+        let highlighted = highlightCrossMatches(
+            path: item.path, name: item.name, hints: hints,
+            nameFont: .subheadline, nameColor: .primary,
+            pathFont: .subheadline, pathColor: .secondary)
 
-            VStack(alignment: .leading, spacing: 2) {
-                let highlighted = highlightCrossMatches(
-                    path: item.path, name: item.name, hints: hints,
-                    nameFont: .title3, nameColor: .primary,
-                    pathFont: .subheadline, pathColor: .secondary)
+        HStack(spacing: 10) {
+            HStack(spacing: 8) {
+                fileIcon(for: item)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
                 highlighted.nameText.lineLimit(1)
-                highlighted.pathText.lineLimit(1)
+            }
+            .frame(width: ResultColumnLayout.nameWidth, alignment: .leading)
+
+            if settings.showPath {
+                highlighted.pathText
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
             }
 
-            Spacer()
-
-            if item.type == 1 && item.size > 0 {
-                Text(formatSize(item.size))
+            if settings.showSize {
+                Text(item.type == 1 && item.size > 0 ? formatSize(item.size) : "")
                     .font(.subheadline)
                     .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .frame(width: ResultColumnLayout.sizeWidth, alignment: .trailing)
+            }
+
+            if settings.showModifiedDate {
+                Text(formatDate(item.modTime))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .frame(width: ResultColumnLayout.modifiedWidth, alignment: .leading)
             }
         }
-        .padding(.vertical, 4)
+        .padding(.vertical, dense ? 2 : 5)
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
-                .fill(isHovered ? Color.accentColor.opacity(0.12) : Color.clear)
+                .fill(rowBackground)
         )
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -105,6 +123,7 @@ struct ResultRow: View {
             return NSItemProvider(object: NSURL(fileURLWithPath: fullPath))
         }
         .onTapGesture(count: 2) {
+            onSelect()
             if NSEvent.modifierFlags.contains(.command) {
                 revealInFinder(item)
             } else {
@@ -112,6 +131,7 @@ struct ResultRow: View {
             }
         }
         .onTapGesture(count: 1) {
+            onSelect()
             if NSEvent.modifierFlags.contains(.command) {
                 revealInFinder(item)
             }
@@ -121,6 +141,13 @@ struct ResultRow: View {
 
     private func fileIcon(for item: FileItem) -> Image {
         Image(nsImage: FileIconCache.shared.icon(for: item))
+    }
+
+    private var rowBackground: Color {
+        if isSelected {
+            return Color.accentColor.opacity(0.24)
+        }
+        return isHovered ? Color.accentColor.opacity(0.12) : Color.clear
     }
 
     private func formatSize(_ bytes: UInt64) -> String {
@@ -133,6 +160,11 @@ struct ResultRow: View {
         }
         if unitIndex == 0 { return "\(bytes) B" }
         return String(format: "%.1f %@", size, units[unitIndex])
+    }
+
+    private func formatDate(_ modTime: time_t) -> String {
+        let date = Date(timeIntervalSince1970: TimeInterval(modTime))
+        return date.formatted(date: .abbreviated, time: .shortened)
     }
 
     private func openFile(_ item: FileItem) {
@@ -157,4 +189,10 @@ struct ResultRow: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(fullPath, forType: .string)
     }
+}
+
+enum ResultColumnLayout {
+    static let nameWidth: CGFloat = 260
+    static let sizeWidth: CGFloat = 92
+    static let modifiedWidth: CGFloat = 150
 }

@@ -21,6 +21,10 @@ struct MacEverythingApp: App {
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Toggle(L10n.tr("Match Filename"), isOn: $searchOptions.isMatchFilename)
                     .keyboardShortcut("f", modifiers: [.command, .shift])
+                Divider()
+                Button(L10n.tr("Regular Expression Help...")) {
+                    RegexHelpWindowController.shared.showWindow()
+                }
             }
 
             CommandGroup(replacing: .help) {
@@ -41,8 +45,8 @@ struct MacEverythingApp: App {
                 }
                 .keyboardShortcut(",", modifiers: [.command])
 
-                Button(L10n.tr("Content Settings...")) {
-                    ContentSettingsWindowController.shared.showWindow()
+                Button(L10n.tr("Settings...")) {
+                    GeneralSettingsWindowController.shared.showWindow()
                 }
 
                 Divider()
@@ -64,8 +68,8 @@ extension Notification.Name {
     static let rebuildIndex = Notification.Name("rebuildIndex")
 }
 
-class ContentSettingsWindowController {
-    static let shared = ContentSettingsWindowController()
+class GeneralSettingsWindowController {
+    static let shared = GeneralSettingsWindowController()
     private var window: NSWindow?
 
     func showWindow() {
@@ -74,11 +78,12 @@ class ContentSettingsWindowController {
             return
         }
 
-        let settingsView = ContentSettingsView()
+        let settingsView = GeneralSettingsView()
         let hostingController = NSHostingController(rootView: settingsView)
         let win = NSWindow(contentViewController: hostingController)
-        win.title = L10n.tr("Content Settings")
-        win.styleMask = [.titled, .closable]
+        win.title = L10n.tr("Settings")
+        win.styleMask = [.titled, .closable, .resizable]
+        win.minSize = NSSize(width: 620, height: 520)
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
@@ -123,6 +128,37 @@ class SearchSyntaxHelpWindowController {
         win.styleMask = [.titled, .closable, .resizable]
         win.setContentSize(NSSize(width: 580, height: 720))
         win.minSize = NSSize(width: 450, height: 400)
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        window = win
+    }
+}
+
+@MainActor
+class RegexHelpWindowController {
+    static let shared = RegexHelpWindowController()
+    private static let firstUseKey = "help.regex.firstUseShown"
+    private var window: NSWindow?
+
+    func showFirstUseIfNeeded() {
+        guard !UserDefaults.standard.bool(forKey: Self.firstUseKey) else { return }
+        UserDefaults.standard.set(true, forKey: Self.firstUseKey)
+        showWindow()
+    }
+
+    func showWindow() {
+        if let existing = window, existing.isVisible {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let helpView = RegexHelpView()
+        let hostingController = NSHostingController(rootView: helpView)
+        let win = NSWindow(contentViewController: hostingController)
+        win.title = L10n.tr("Regular Expression Help")
+        win.styleMask = [.titled, .closable, .resizable]
+        win.setContentSize(NSSize(width: 620, height: 640))
+        win.minSize = NSSize(width: 480, height: 360)
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
