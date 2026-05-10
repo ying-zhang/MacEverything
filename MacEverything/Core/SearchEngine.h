@@ -372,6 +372,7 @@ public:
 private:
     StringPool origNamePool_;              // contiguous original-case filenames (for v6 persistence)
     StringPool namePool_;                  // contiguous lowercase filenames
+    StringPool pinyinInitialsPool_;        // per-record Chinese pinyin initials search keys
     std::vector<uint32_t> pathIndices_;    // per-record index into pathPool_
     StringPool pathPool_;                  // contiguous directory paths (deduplicated)
     StringPool lowerPathPool_;             // parallel to pathPool_, stores pre-lowered paths
@@ -390,6 +391,7 @@ private:
 
     // Trigram inverted index for fast filename search
     std::unordered_map<Trigram, std::vector<uint32_t>> nameTrigramIndex_; // trigram -> record indices
+    std::unordered_map<Trigram, std::vector<uint32_t>> pinyinInitialsTrigramIndex_; // trigram -> record indices
 
     // Path trigram index: two-level lookup for fast path-only matching
     std::unordered_map<Trigram, std::vector<uint32_t>> pathTrigramIndex_; // trigram -> sorted pathIdx
@@ -414,6 +416,10 @@ private:
 
     /// Build trigram index from namePool_ (called inside loadRecords/compactRecords under lock)
     void buildTrigramIndex();
+    void buildPinyinInitialsPoolFromOrigNames();
+    void buildPinyinInitialsIndex();
+    void addPinyinInitialsForRecord(uint32_t idx);
+    void removePinyinInitialsForRecord(uint32_t idx);
     /// Add trigrams for a single record to the index
     void addTrigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     /// Remove trigrams for a single record from the index
@@ -557,6 +563,8 @@ private:
     static std::unordered_map<Trigram, std::vector<uint32_t>>
         buildTrigramIndexFromData(const std::vector<uint8_t>& types,
                                   const StringPool& namePool);
+
+    static StringPool buildPinyinInitialsPoolFromData(const StringPool& origNamePool);
 
     /// Build extension index from standalone data (no member access, used by COW compaction)
     static std::unordered_map<std::string, std::vector<uint32_t>>

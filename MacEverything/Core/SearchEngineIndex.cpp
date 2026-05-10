@@ -134,6 +134,63 @@ void SearchEngine::buildTrigramIndex() {
     nameTrigramIndex_ = buildTrigramIndexFromData(types_, namePool_);
 }
 
+StringPool SearchEngine::buildPinyinInitialsPoolFromData(const StringPool& origNamePool) {
+    StringPool pool;
+    pool.reserve(origNamePool.rawSize(), origNamePool.entryCount());
+    for (uint32_t i = 0; i < origNamePool.entryCount(); i++) {
+        std::string key;
+        if (origNamePool.isLive(i)) {
+            key = me::mandarinInitialsKey(origNamePool.str(i));
+        }
+        pool.append(key);
+    }
+    return pool;
+}
+
+void SearchEngine::buildPinyinInitialsPoolFromOrigNames() {
+    pinyinInitialsPool_ = buildPinyinInitialsPoolFromData(origNamePool_);
+}
+
+void SearchEngine::buildPinyinInitialsIndex() {
+    pinyinInitialsTrigramIndex_ = buildTrigramIndexFromData(types_, pinyinInitialsPool_);
+}
+
+void SearchEngine::addPinyinInitialsForRecord(uint32_t idx) {
+    if (idx >= pinyinInitialsPool_.entryCount()) return;
+    auto len = pinyinInitialsPool_.length(idx);
+    if (len == 0) return;
+    auto trigrams = ContentIndex::extractTrigrams(std::string(pinyinInitialsPool_.data(idx), len));
+    std::sort(trigrams.begin(), trigrams.end());
+    trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
+
+    for (Trigram t : trigrams) {
+        auto& list = pinyinInitialsTrigramIndex_[t];
+        auto pos = std::lower_bound(list.begin(), list.end(), idx);
+        list.insert(pos, idx);
+    }
+}
+
+void SearchEngine::removePinyinInitialsForRecord(uint32_t idx) {
+    if (idx >= pinyinInitialsPool_.entryCount() || !pinyinInitialsPool_.isLive(idx)) return;
+    auto trigrams = ContentIndex::extractTrigrams(
+        std::string(pinyinInitialsPool_.data(idx), pinyinInitialsPool_.length(idx)));
+    std::sort(trigrams.begin(), trigrams.end());
+    trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
+    for (Trigram t : trigrams) {
+        auto it = pinyinInitialsTrigramIndex_.find(t);
+        if (it != pinyinInitialsTrigramIndex_.end()) {
+            auto& list = it->second;
+            auto pos = std::lower_bound(list.begin(), list.end(), idx);
+            if (pos != list.end() && *pos == idx) {
+                list.erase(pos);
+            }
+            if (list.empty()) {
+                pinyinInitialsTrigramIndex_.erase(it);
+            }
+        }
+    }
+}
+
 void SearchEngine::addTrigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
     auto trigrams = ContentIndex::extractTrigrams(std::string(data, len));
     // P-2 fix: sort+unique instead of unordered_set

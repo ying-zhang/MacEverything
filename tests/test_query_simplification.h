@@ -289,5 +289,53 @@ static void runQuerySimplificationTests() {
         }
     }
 
+    // ── 66.22 Chinese system app aliases expand to English bundle names ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord terminal; terminal.name = "Terminal.app"; terminal.path = "/System/Applications/Utilities"; terminal.type = 2;
+        FileRecord notes; notes.name = "Notes.app"; notes.path = "/System/Applications"; notes.type = 2;
+        records.push_back(std::move(terminal));
+        records.push_back(std::move(notes));
+        engine.loadRecords(std::move(records));
+
+        auto results = engine.query("终端", 100, true);
+        bool foundTerminal = false;
+        for (uint32_t idx : results) {
+            auto rec = engine.getRecord(idx);
+            if (rec.name == "Terminal.app") foundTerminal = true;
+        }
+        check(foundTerminal, "66.22 '终端' finds Terminal.app");
+    }
+
+    // ── 66.23 Chinese pinyin initials search ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord target; target.name = "重要文件.txt"; target.path = "/tmp"; target.type = 1;
+        FileRecord mixed; mixed.name = "重要File.txt"; mixed.path = "/tmp"; mixed.type = 1;
+        FileRecord distractor; distractor.name = "普通文件.txt"; distractor.path = "/tmp"; distractor.type = 1;
+        records.push_back(std::move(target));
+        records.push_back(std::move(mixed));
+        records.push_back(std::move(distractor));
+        engine.loadRecords(std::move(records));
+
+        auto results = engine.query("zywj", 100, true);
+        bool foundTarget = false;
+        for (uint32_t idx : results) {
+            auto rec = engine.getRecord(idx);
+            if (rec.name == "重要文件.txt") foundTarget = true;
+        }
+        check(foundTarget, "66.23 'zywj' finds 重要文件.txt");
+
+        auto mixedResults = engine.query("zyfile", 100, true);
+        bool foundMixed = false;
+        for (uint32_t idx : mixedResults) {
+            auto rec = engine.getRecord(idx);
+            if (rec.name == "重要File.txt") foundMixed = true;
+        }
+        check(foundMixed, "66.23 mixed Chinese/English initials find 重要File.txt");
+    }
+
     std::cout << "  Part 67 summary: " << localPassed << " passed, " << localFailed << " failed\n";
 }

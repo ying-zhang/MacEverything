@@ -25,6 +25,7 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     // Install SoA columns directly (zero-copy from v6 file)
     origNamePool_ = std::move(origNamePool);
     namePool_ = std::move(namePool);
+    buildPinyinInitialsPoolFromOrigNames();
     pathIndices_ = std::move(pathIndices);
     pathPool_ = std::move(pathPool);
     lowerPathPool_ = std::move(lowerPathPool);
@@ -123,6 +124,7 @@ void SearchEngine::completePhase2() {
     std::vector<uint8_t> snapTypes;
     std::vector<int64_t> snapModTimes;
     StringPool snapNamePool;
+    StringPool snapPinyinInitialsPool;
     StringPool snapLowerPathPool;
     std::vector<uint32_t> snapPathIndices;
     uint32_t snapPathPoolSize;
@@ -132,6 +134,7 @@ void SearchEngine::completePhase2() {
         snapTypes = types_;
         snapModTimes = modTimes_;
         snapNamePool = namePool_;
+        snapPinyinInitialsPool = pinyinInitialsPool_;
         snapLowerPathPool = lowerPathPool_;
         snapPathIndices = pathIndices_;
         snapPathPoolSize = pathPool_.entryCount();
@@ -140,6 +143,7 @@ void SearchEngine::completePhase2() {
 
     // Build all indices without holding any lock (~3s)
     auto trigramIndex = buildTrigramIndexFromData(snapTypes, snapNamePool);
+    auto pinyinInitialsTrigramIndex = buildTrigramIndexFromData(snapTypes, snapPinyinInitialsPool);
     auto pathTrigramIndex = buildPathTrigramIndexFromData(snapLowerPathPool);
     auto pathIdxToRecords = buildPathIdxToRecordsFromData(snapTypes, snapPathIndices, snapPathPoolSize);
     auto recentCache = buildRecentCacheFromData(snapTypes, snapModTimes, kRecentCacheSize);
@@ -152,6 +156,7 @@ void SearchEngine::completePhase2() {
         std::unique_lock lock(mutex_);
 
         nameTrigramIndex_ = std::move(trigramIndex);
+        pinyinInitialsTrigramIndex_ = std::move(pinyinInitialsTrigramIndex);
         pathTrigramIndex_ = std::move(pathTrigramIndex);
         pathIdxToRecords_ = std::move(pathIdxToRecords);
         recentCache_ = std::move(recentCache);
@@ -164,6 +169,7 @@ void SearchEngine::completePhase2() {
             if (types_[i] == 0) continue;
             // Add trigrams for this record
             addTrigramsForRecord(i, namePool_.data(i), namePool_.length(i));
+            addPinyinInitialsForRecord(i);
             addPathTrigramsForRecord(i);
             addExtensionForRecord(i);
             addToRecentCache(i, static_cast<time_t>(modTimes_[i]));
@@ -178,6 +184,7 @@ void SearchEngine::completePhase2() {
                 // The trigram entry points at index i which is now tombstoned.
                 // Query-time type==0 check will filter it, but we can clean up explicitly.
                 removeTrigramsForRecord(i);  // Safe: namePool_[i] is tombstoned, this is a no-op
+                removePinyinInitialsForRecord(i);
             }
         }
 
