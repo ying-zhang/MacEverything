@@ -49,6 +49,7 @@ Press **`Option+Space`** to summon the search window anytime (hotkey is customiz
 - **Ghost text autocomplete** — semi-transparent suggestions appear as you type, drawn from search history (sorted by frequency) or system keywords (e.g., typing `ex` suggests `ext:`). Press **Tab** to accept
 - **Search bar syntax highlighting** — real-time color coding: filter names in purple, arguments in blue, quoted strings in orange, operators in red
 - **Search option badges** — colorful badges next to the search bar for one-click toggling of Regex / Case Sensitive / Whole Word / Match Filename
+- **Chinese and English UI** — the app UI, menus, settings windows, and search syntax help support Simplified Chinese and English, automatically following the preferred macOS language
 
 ### Everything-Style Query Syntax
 
@@ -148,7 +149,7 @@ curl "http://localhost:19860/api/status"                          # Index status
 
 #### Download DMG (Recommended)
 
-1. Download `MacEverything.dmg` from [Releases](../../releases)
+1. Download `MacEverything.dmg` from [Releases](../../releases) (built by GitHub Actions)
 2. Drag `MacEverything.app` to Applications
 3. Launch and grant **Full Disk Access** when prompted
 4. Wait for initial scan (~14 seconds)
@@ -173,7 +174,7 @@ hdiutil create -volname MacEverything \
   -ov -format UDZO MacEverything.dmg
 ```
 
-Release builds automatically embed Homebrew's `libre2` and its dependencies into `.app/Contents/Frameworks` so the distributed app can launch on Macs without Homebrew/RE2 installed.
+Release builds and GitHub Actions artifacts automatically embed Homebrew's `libre2` and its dependencies into `.app/Contents/Frameworks` so the distributed app can launch on Macs without Homebrew/RE2 installed.
 
 #### CLI Daemon
 
