@@ -243,5 +243,32 @@ static void runQuerySimplificationTests() {
         check(results.size() == 1, "66.19 NFC query matches NFD filename");
     }
 
+    // ── 66.20 Plain terms can be split across path and filename ──
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        FileRecord target; target.name = "xx.pdf"; target.path = "/Users/ying/xx"; target.type = 1;
+        FileRecord distractor; distractor.name = "ying-note.txt"; distractor.path = "/tmp"; distractor.type = 1;
+        records.push_back(std::move(target));
+        records.push_back(std::move(distractor));
+        for (int i = 0; i < 20; i++) {
+            FileRecord filler;
+            filler.name = "filler_" + std::to_string(i) + ".txt";
+            filler.path = "/tmp/filler";
+            filler.type = 1;
+            records.push_back(std::move(filler));
+        }
+        engine.loadRecords(std::move(records));
+
+        QueryTimingInfo timing;
+        auto results = engine.query("ying pdf", 100, true, timing);
+        bool foundTarget = false;
+        for (uint32_t idx : results) {
+            auto rec = engine.getRecord(idx);
+            if (rec.name == "xx.pdf" && rec.path == "/Users/ying/xx") foundTarget = true;
+        }
+        check(foundTarget, "66.20 'ying pdf' matches path term + filename term");
+    }
+
     std::cout << "  Part 67 summary: " << localPassed << " passed, " << localFailed << " failed\n";
 }

@@ -592,6 +592,27 @@ static std::vector<std::string> extractExtFilterValues(const QueryNode& node) {
     return {};
 }
 
+static void sortUnique(std::vector<uint32_t>& values) {
+    std::sort(values.begin(), values.end());
+    values.erase(std::unique(values.begin(), values.end()), values.end());
+}
+
+static void unionSortedInto(std::vector<uint32_t>& dest,
+                            const std::vector<uint32_t>& src) {
+    if (src.empty()) return;
+    if (dest.empty()) {
+        dest = src;
+        return;
+    }
+
+    std::vector<uint32_t> merged;
+    merged.reserve(dest.size() + src.size());
+    std::set_union(dest.begin(), dest.end(),
+                   src.begin(), src.end(),
+                   std::back_inserter(merged));
+    dest = std::move(merged);
+}
+
 } // anonymous namespace
 
 // Expose extractRegexLiterals for unit testing
@@ -657,14 +678,45 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     std::vector<uint32_t> candidates;
     bool useTrigramIndex = false;
 
-    // Stage 1: Name trigram — stash result, don't commit yet
+    // Stage 1: Plain TERM trigram over both filename and path.
+    // A normal TERM is evaluated against filename first, then full path, so a
+    // pre-filter that only uses nameTrigramIndex_ can drop valid path matches
+    // such as "ying pdf" for /Users/ying/xx/xx.pdf.
     std::vector<uint32_t> nameCands;
     bool nameOk = false;
     bool stage1AllFound = false;
     size_t stage1RawCandCount = 0;
-    if (useTrigram && !trigramKey.empty() && trigramKey.size() >= 3 && !nameTrigramIndex_.empty()) {
+    if (useTrigram && !trigramKey.empty() && trigramKey.size() >= 3 &&
+        !nameTrigramIndex_.empty() && !pathTrigramIndex_.empty()) {
         beforeTrigram = std::chrono::steady_clock::now();
-        nameCands = intersectPostingLists(nameTrigramIndex_, trigramKey, stage1AllFound);
+
+        bool anyCovered = false;
+        if (!nameTrigramIndex_.empty()) {
+            bool nameAllFound = false;
+            auto nameOnlyCands = intersectPostingLists(nameTrigramIndex_, trigramKey, nameAllFound);
+            if (nameAllFound) {
+                anyCovered = true;
+                unionSortedInto(nameCands, nameOnlyCands);
+            }
+        }
+
+        if (!pathTrigramIndex_.empty()) {
+            bool pathAllFound = false;
+            auto pathIdxCands = intersectPostingLists(pathTrigramIndex_, trigramKey, pathAllFound);
+            if (pathAllFound) {
+                anyCovered = true;
+                std::vector<uint32_t> expandedPathCands;
+                for (uint32_t pi : pathIdxCands) {
+                    if (pi >= pathIdxToRecords_.size()) continue;
+                    const auto& recIds = pathIdxToRecords_[pi];
+                    expandedPathCands.insert(expandedPathCands.end(), recIds.begin(), recIds.end());
+                }
+                sortUnique(expandedPathCands);
+                unionSortedInto(nameCands, expandedPathCands);
+            }
+        }
+
+        stage1AllFound = anyCovered;
         stage1RawCandCount = nameCands.size();
         nameOk = stage1AllFound && nameCands.size() <= totalSize / 10;
         if (!nameOk) nameCands.clear();
