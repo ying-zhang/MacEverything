@@ -29,6 +29,27 @@ nonisolated private func fileItem(from result: MEFileResult) -> FileItem {
     )
 }
 
+nonisolated private func isAllowedContentSearchPath(
+    _ path: String,
+    roots: [String],
+    excludedPaths: [String]
+) -> Bool {
+    let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
+    let insideRoot = roots.isEmpty || roots.contains { root in
+        let standardizedRoot = URL(fileURLWithPath: root).standardizedFileURL.path
+        return standardizedPath == standardizedRoot || standardizedPath.hasPrefix(standardizedRoot + "/")
+    }
+    guard insideRoot else { return false }
+
+    for excluded in excludedPaths {
+        let standardizedExcluded = URL(fileURLWithPath: excluded).standardizedFileURL.path
+        if standardizedPath == standardizedExcluded || standardizedPath.hasPrefix(standardizedExcluded + "/") {
+            return false
+        }
+    }
+    return true
+}
+
 @MainActor
 class SearchViewModel: ObservableObject {
     @Published var searchText: String = ""
@@ -47,6 +68,7 @@ class SearchViewModel: ObservableObject {
     @Published var isContentIndexing: Bool = false
     @Published var contentIndexProgress: (indexed: UInt32, total: UInt32)?
     @Published var contentIndexedCount: UInt32 = 0
+    @Published var contentIndexStorageBytes: UInt64 = 0
     @Published var isSyncing: Bool = false
     @Published var ghostSuggestion: String? = nil
     @Published var selectedItemID: String? = nil
@@ -165,6 +187,7 @@ class SearchViewModel: ObservableObject {
                 self.isContentIndexing = false
                 self.contentIndexProgress = nil
                 self.contentIndexedCount = totalIndexed
+                self.refreshContentIndexInfo()
                 // Auto-refresh content search results after indexing completes
                 if self.isContentSearch && !self.contentKeyword.isEmpty {
                     self.performContentSearch(self.contentKeyword)
@@ -182,6 +205,7 @@ class SearchViewModel: ObservableObject {
         isContentIndexing = false
         contentIndexProgress = nil
         applyRuntimeConfiguration()
+        refreshContentIndexInfo()
 
         bridge.startIncremental(from: "/",
                                 cachePath: Self.cachePath,
@@ -193,6 +217,7 @@ class SearchViewModel: ObservableObject {
                 self.scanComplete = true
                 self.isMonitoring = self.bridge.isMonitoring
                 self.isSyncing = self.bridge.isSyncing
+                self.refreshContentIndexInfo()
 
                 if !self.searchText.isEmpty {
                     self.performSearch(self.searchText)
@@ -208,6 +233,7 @@ class SearchViewModel: ObservableObject {
 
     private func applyRuntimeConfiguration() {
         let snapshot = settings.snapshot
+        bridge.setContentMaxFileSize(UInt64(snapshot.contentMaxFileSizeMB * 1024 * 1024))
         bridge.updateConfiguration(
             withScanRoots: snapshot.indexRoots,
             excludedPaths: snapshot.excludedPaths,
@@ -253,6 +279,39 @@ class SearchViewModel: ObservableObject {
 
         applyRuntimeConfiguration()
         startIncremental()
+    }
+
+    func rebuildContentIndex() {
+        applyRuntimeConfiguration()
+        isContentIndexing = settings.snapshot.contentIndexingEnabled
+        contentIndexProgress = nil
+        DispatchQueue.global(qos: .utility).async { [bridge] in
+            bridge.rebuildContentIndex()
+        }
+    }
+
+    func clearContentIndex() {
+        contentResults = []
+        totalMatches = 0
+        queryTimeMs = 0
+        isContentIndexing = false
+        contentIndexProgress = nil
+        DispatchQueue.global(qos: .utility).async { [bridge] in
+            bridge.clearContentIndex()
+        }
+    }
+
+    func refreshContentIndexInfo() {
+        let fileManager = FileManager.default
+        let paths = [Self.contentIndexPath, Self.contentWalPath]
+        var total: UInt64 = 0
+        for path in paths {
+            guard let attrs = try? fileManager.attributesOfItem(atPath: path),
+                  let size = attrs[.size] as? NSNumber else { continue }
+            total += size.uint64Value
+        }
+        contentIndexedCount = bridge.contentIndexedFileCount()
+        contentIndexStorageBytes = total
     }
 
     func onSearchTextChanged() {
@@ -379,6 +438,7 @@ class SearchViewModel: ObservableObject {
     private func performContentSearch(_ keyword: String) {
         let bridge = self.bridge
         let gen = searchGeneration
+        let snapshot = settings.snapshot
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
             let results = bridge.queryContent(keyword, maxResults: 200)
@@ -387,6 +447,11 @@ class SearchViewModel: ObservableObject {
             var items: [ContentFileItem] = []
             items.reserveCapacity(results.count)
             for r in results {
+                guard isAllowedContentSearchPath(
+                    r.filePath,
+                    roots: snapshot.contentSearchRoots,
+                    excludedPaths: snapshot.contentSearchExcludedPaths
+                ) else { continue }
                 items.append(ContentFileItem(
                     id: "\(r.filePath):\(r.matchOffset)",
                     fileName: r.fileName,
@@ -563,7 +628,7 @@ class SearchViewModel: ObservableObject {
         totalRecords = bridge.liveRecordCount()
         isMonitoring = bridge.isMonitoring
         isSyncing = bridge.isSyncing
-        contentIndexedCount = bridge.contentIndexedFileCount()
+        refreshContentIndexInfo()
 
         // Skip expensive search/query when app is not focused.
         // Results will refresh on focus regain via onWindowFocusChanged.

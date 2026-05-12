@@ -66,6 +66,7 @@ public:
     // ── Public operations ──
     void rescanSubtree(const std::string& dir);
     void rebuildContentIndex();
+    void clearContentIndex();
     void compactIndex();
 
     // ── Thread-safe accessors ──

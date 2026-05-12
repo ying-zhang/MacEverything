@@ -125,4 +125,8 @@
     _serviceEngine->rebuildContentIndex();
 }
 
+- (void)clearContentIndex {
+    _serviceEngine->clearContentIndex();
+}
+
 @end

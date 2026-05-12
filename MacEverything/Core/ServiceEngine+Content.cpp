@@ -223,6 +223,55 @@ void ServiceEngine::rebuildContentIndex() {
     startContentIndexing();
 }
 
+void ServiceEngine::clearContentIndex() {
+    auto contentIndex = safeContentIndex();
+    if (!contentIndex) return;
+
+    contentIndexGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    if (isContentIndexing_.load(std::memory_order_relaxed)) {
+        cancelContentIndexing_.store(true, std::memory_order_relaxed);
+        dispatch_semaphore_wait(contentIndexingSemaphore_,
+                                dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+    }
+
+    std::vector<std::string> exts = contentIndex->getExtensions();
+    uint64_t maxSize = contentIndex->getMaxFileSize();
+
+    {
+        auto oldCP = safeContentPersistence();
+        if (oldCP) {
+            oldCP->stopAutoCompactionAndWait();
+        }
+        setContentPersistence(nullptr);
+    }
+
+    std::string cacheDir = config_.cachePath;
+    std::error_code ec;
+    fs::remove(cacheDir + "/content_index.bin", ec);
+    ec.clear();
+    fs::remove(cacheDir + "/content_index.wal", ec);
+
+    auto newIndex = std::make_shared<ContentIndex>();
+    newIndex->setExtensions(exts);
+    newIndex->setMaxFileSize(maxSize);
+
+    {
+        std::unique_lock lock(contentMutex_);
+        contentIndex_ = newIndex;
+    }
+
+    if (config_.contentIndexingEnabled) {
+        setupContentPersistence();
+    }
+
+    isContentIndexing_.store(false, std::memory_order_relaxed);
+    cancelContentIndexing_.store(false, std::memory_order_relaxed);
+
+    if (onContentIndexComplete) {
+        onContentIndexComplete(0);
+    }
+}
+
 // ═══════════════════════════════════════════════════════
 //  Per-file content update (called from FSEvents path)
 // ═══════════════════════════════════════════════════════
