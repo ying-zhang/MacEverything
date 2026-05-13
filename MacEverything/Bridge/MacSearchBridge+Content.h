@@ -26,6 +26,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Rebuild content index with current settings (clears old index, re-indexes all files).
 - (void)rebuildContentIndex;
 
+/// Clear the persisted content index and reset in-memory content index state.
+- (void)clearContentIndex;
+
 @end
 
 NS_ASSUME_NONNULL_END

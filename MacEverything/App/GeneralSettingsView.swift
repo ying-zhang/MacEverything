@@ -7,9 +7,16 @@ struct GeneralSettingsView: View {
     @State private var newIndexPath = ""
     @State private var newExcludedPath = ""
     @State private var newExcludedPattern = ""
-    @State private var newContentPath = ""
-    @State private var newContentExcludedPath = ""
+    @State private var newContentSearchPath = ""
+    @State private var newContentSearchExcludedPath = ""
+    @State private var newContentSyncPath = ""
+    @State private var newContentSyncExcludedPath = ""
     @State private var showingResetIndexDefaultsConfirmation = false
+    @State private var showingClearContentIndexConfirmation = false
+    @State private var contentIndexBaseBytes: UInt64 = 0
+    @State private var contentIndexWalBytes: UInt64 = 0
+    @State private var contentIndexStorageBytes: UInt64 = 0
+    @State private var contentIndexedCount: UInt32 = 0
 
     var body: some View {
         TabView {
@@ -65,6 +72,18 @@ struct GeneralSettingsView: View {
             Button(L10n.tr("Cancel"), role: .cancel) {}
         } message: {
             Text(L10n.tr("Resetting index defaults will replace indexed folders, exclusions, and related index options."))
+        }
+        .alert(L10n.tr("Clear Content Index?"), isPresented: $showingClearContentIndexConfirmation) {
+            Button(L10n.tr("Clear"), role: .destructive) {
+                NotificationCenter.default.post(name: .clearContentIndex, object: nil)
+                scheduleContentIndexInfoRefresh()
+            }
+            Button(L10n.tr("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.tr("This removes the persisted content index files and clears current content search data."))
+        }
+        .onAppear {
+            refreshContentIndexInfo()
         }
     }
 
@@ -160,20 +179,137 @@ struct GeneralSettingsView: View {
             .disabled(!settings.contentIndexingEnabled)
 
             CompactPathListEditor(
-                title: L10n.tr("Content Indexed Folders"),
+                title: L10n.tr("Content Search Folders"),
+                paths: $settings.contentSearchRoots,
+                newPath: $newContentSearchPath,
+                visibleRows: 5
+            )
+            .disabled(!settings.contentIndexingEnabled || settings.contentSearchUsesIndexRoots)
+
+            HStack {
+                Toggle(L10n.tr("Use main indexed folders"), isOn: $settings.contentSearchUsesIndexRoots)
+                Spacer()
+                Button(L10n.tr("Import Main Indexed Folders")) {
+                    settings.contentSearchRoots = settings.indexRoots
+                    settings.contentSearchUsesIndexRoots = false
+                }
+                .disabled(!settings.contentIndexingEnabled)
+            }
+
+            CompactPathListEditor(
+                title: L10n.tr("Content Search Excluded Folders"),
+                paths: $settings.contentSearchExcludedPaths,
+                newPath: $newContentSearchExcludedPath,
+                visibleRows: 5
+            )
+            .disabled(!settings.contentIndexingEnabled || settings.contentSearchUsesIndexExclusions)
+
+            HStack {
+                Toggle(L10n.tr("Use main excluded folders"), isOn: $settings.contentSearchUsesIndexExclusions)
+                Spacer()
+                Button(L10n.tr("Import Main Excluded Folders")) {
+                    settings.contentSearchExcludedPaths = settings.excludedPaths
+                    settings.contentSearchUsesIndexExclusions = false
+                }
+                .disabled(!settings.contentIndexingEnabled)
+            }
+
+            Text(L10n.tr("Content search folders filter content-search results. Import copies the main index folders so you can edit them separately."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            CompactPathListEditor(
+                title: L10n.tr("Content Index Sync Folders"),
                 paths: $settings.contentIndexRoots,
-                newPath: $newContentPath,
+                newPath: $newContentSyncPath,
                 visibleRows: 5
             )
             .disabled(!settings.contentIndexingEnabled)
 
             CompactPathListEditor(
-                title: L10n.tr("Content Excluded Folders"),
+                title: L10n.tr("Content Index Sync Excluded Folders"),
                 paths: $settings.contentExcludedPaths,
-                newPath: $newContentExcludedPath,
+                newPath: $newContentSyncExcludedPath,
                 visibleRows: 5
             )
             .disabled(!settings.contentIndexingEnabled)
+
+            Text(L10n.tr("Changes to synced folders only affect background content indexing after you rebuild the content index."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.tr("Content Index Files"))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                LabeledValueRow(title: L10n.tr("Index File Path"), value: SearchViewModel.contentIndexPath)
+                LabeledValueRow(title: L10n.tr("Index File Size"), value: formattedBytes(contentIndexBaseBytes))
+                LabeledValueRow(title: L10n.tr("WAL File Path"), value: SearchViewModel.contentWalPath)
+                LabeledValueRow(title: L10n.tr("WAL File Size"), value: formattedBytes(contentIndexWalBytes))
+                LabeledValueRow(title: L10n.tr("Total Disk Usage"), value: formattedBytes(contentIndexStorageBytes))
+                LabeledValueRow(title: L10n.tr("Indexed Files"), value: String(contentIndexedCount))
+            }
+
+            HStack {
+                Button(L10n.tr("Refresh Index Info")) {
+                    refreshContentIndexInfo()
+                }
+
+                Button(L10n.tr("Rebuild Content Index")) {
+                    NotificationCenter.default.post(name: .rebuildContentIndex, object: nil)
+                    scheduleContentIndexInfoRefresh()
+                }
+                .disabled(!settings.contentIndexingEnabled)
+
+                Spacer()
+
+                Button(L10n.tr("Clear Content Index"), role: .destructive) {
+                    showingClearContentIndexConfirmation = true
+                }
+            }
+
+            HStack {
+                Spacer()
+                Button(L10n.tr("Content Settings...")) {
+                    ContentSettingsWindowController.shared.showWindow()
+                }
+            }
+        }
+    }
+
+    private func refreshContentIndexInfo() {
+        let fileManager = FileManager.default
+        let baseBytes = fileSize(atPath: SearchViewModel.contentIndexPath, fileManager: fileManager)
+        let walBytes = fileSize(atPath: SearchViewModel.contentWalPath, fileManager: fileManager)
+        contentIndexedCount = bridge.contentIndexedFileCount()
+        contentIndexBaseBytes = baseBytes
+        contentIndexWalBytes = walBytes
+        contentIndexStorageBytes = baseBytes + walBytes
+    }
+
+    private var bridge: MacSearchBridge {
+        MacSearchBridge.shared()
+    }
+
+    private func fileSize(atPath path: String, fileManager: FileManager) -> UInt64 {
+        guard let attrs = try? fileManager.attributesOfItem(atPath: path),
+              let size = attrs[.size] as? NSNumber else { return 0 }
+        return size.uint64Value
+    }
+
+    private func formattedBytes(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+    }
+
+    private func scheduleContentIndexInfoRefresh() {
+        refreshContentIndexInfo()
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
+            refreshContentIndexInfo()
         }
     }
 
@@ -325,6 +461,23 @@ private struct SettingsSection<Content: View>: View {
             content
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private struct LabeledValueRow: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(title)
+                .foregroundColor(.secondary)
+                .frame(width: 120, alignment: .leading)
+            Text(value)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .font(.callout)
     }
 }
 

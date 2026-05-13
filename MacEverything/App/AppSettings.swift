@@ -82,6 +82,10 @@ struct AppSettingsSnapshot {
     var sortField: SortField
     var sortAscending: Bool
     var contentIndexingEnabled: Bool
+    var contentSearchUsesIndexRoots: Bool
+    var contentSearchUsesIndexExclusions: Bool
+    var contentSearchRoots: [String]
+    var contentSearchExcludedPaths: [String]
     var contentIndexRoots: [String]
     var contentExcludedPaths: [String]
     var contentMaxFileSizeMB: Double
@@ -120,6 +124,10 @@ final class AppSettings: ObservableObject {
         static let sortField = "settings.sortField"
         static let sortAscending = "settings.sortAscending"
         static let contentIndexingEnabled = "settings.contentIndexingEnabled"
+        static let contentSearchUsesIndexRoots = "settings.contentSearchUsesIndexRoots"
+        static let contentSearchUsesIndexExclusions = "settings.contentSearchUsesIndexExclusions"
+        static let contentSearchRoots = "settings.contentSearchRoots"
+        static let contentSearchExcludedPaths = "settings.contentSearchExcludedPaths"
         static let contentIndexRoots = "settings.contentIndexRoots"
         static let contentExcludedPaths = "settings.contentExcludedPaths"
         static let contentMaxFileSizeMB = "settings.contentMaxFileSizeMB"
@@ -160,6 +168,10 @@ final class AppSettings: ObservableObject {
     @Published var sortField: SortField { didSet { save(sortField.rawValue, Key.sortField) } }
     @Published var sortAscending: Bool { didSet { save(sortAscending, Key.sortAscending) } }
     @Published var contentIndexingEnabled: Bool { didSet { save(contentIndexingEnabled, Key.contentIndexingEnabled) } }
+    @Published var contentSearchUsesIndexRoots: Bool { didSet { save(contentSearchUsesIndexRoots, Key.contentSearchUsesIndexRoots) } }
+    @Published var contentSearchUsesIndexExclusions: Bool { didSet { save(contentSearchUsesIndexExclusions, Key.contentSearchUsesIndexExclusions) } }
+    @Published var contentSearchRoots: [String] { didSet { saveArray(contentSearchRoots, Key.contentSearchRoots) } }
+    @Published var contentSearchExcludedPaths: [String] { didSet { saveArray(contentSearchExcludedPaths, Key.contentSearchExcludedPaths) } }
     @Published var contentIndexRoots: [String] { didSet { saveArray(contentIndexRoots, Key.contentIndexRoots) } }
     @Published var contentExcludedPaths: [String] { didSet { saveArray(contentExcludedPaths, Key.contentExcludedPaths) } }
     @Published var contentMaxFileSizeMB: Double {
@@ -217,6 +229,10 @@ final class AppSettings: ObservableObject {
         sortField = SortField(rawValue: defaults.string(forKey: Key.sortField) ?? "") ?? .relevance
         sortAscending = defaults.object(forKey: Key.sortAscending) as? Bool ?? false
         contentIndexingEnabled = defaults.object(forKey: Key.contentIndexingEnabled) as? Bool ?? true
+        contentSearchUsesIndexRoots = defaults.object(forKey: Key.contentSearchUsesIndexRoots) as? Bool ?? true
+        contentSearchUsesIndexExclusions = defaults.object(forKey: Key.contentSearchUsesIndexExclusions) as? Bool ?? true
+        contentSearchRoots = defaults.stringArray(forKey: Key.contentSearchRoots) ?? fallbackRoots
+        contentSearchExcludedPaths = defaults.stringArray(forKey: Key.contentSearchExcludedPaths) ?? excluded
         contentIndexRoots = defaults.stringArray(forKey: Key.contentIndexRoots) ?? fallbackRoots
         contentExcludedPaths = defaults.stringArray(forKey: Key.contentExcludedPaths) ?? excluded
         contentMaxFileSizeMB = defaults.object(forKey: Key.contentMaxFileSizeMB) as? Double ?? 1.0
@@ -254,6 +270,10 @@ final class AppSettings: ObservableObject {
             sortField: sortField,
             sortAscending: sortAscending,
             contentIndexingEnabled: contentIndexingEnabled,
+            contentSearchUsesIndexRoots: contentSearchUsesIndexRoots,
+            contentSearchUsesIndexExclusions: contentSearchUsesIndexExclusions,
+            contentSearchRoots: normalizedExistingPaths(contentSearchUsesIndexRoots ? indexRoots : contentSearchRoots),
+            contentSearchExcludedPaths: normalizedPaths(contentSearchUsesIndexExclusions ? excludedPaths : contentSearchExcludedPaths),
             contentIndexRoots: normalizedExistingPaths(contentIndexRoots),
             contentExcludedPaths: normalizedPaths(contentExcludedPaths),
             contentMaxFileSizeMB: min(max(contentMaxFileSizeMB, 0.1), 100.0),
@@ -278,6 +298,10 @@ final class AppSettings: ObservableObject {
         indexHiddenFiles = false
         indexSystemFiles = false
         indexAppBundleContents = false
+        contentSearchUsesIndexRoots = true
+        contentSearchUsesIndexExclusions = true
+        contentSearchRoots = Self.defaultIndexRoots()
+        contentSearchExcludedPaths = Self.defaultExcludedPaths()
         contentIndexRoots = Self.defaultIndexRoots()
         contentExcludedPaths = Self.defaultExcludedPaths()
     }
