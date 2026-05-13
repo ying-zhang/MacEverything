@@ -314,33 +314,42 @@ private struct ResultHeaderView: View {
     @EnvironmentObject private var columnLayout: ResultColumnLayout
 
     var body: some View {
-        HStack(spacing: 0) {
-            columnButton(L10n.tr("Name"), field: .name, width: columnLayout.nameWidth)
-                .resizableColumn(width: $columnLayout.nameWidth,
-                                 range: ResultColumnLayout.nameWidthRange)
+        GeometryReader { proxy in
+            let widths = columnLayout.resolvedWidths(
+                showPath: settings.showPath,
+                showSize: settings.showSize,
+                showModifiedDate: settings.showModifiedDate,
+                availableWidth: proxy.size.width
+            )
 
-            if settings.showPath {
-                columnSeparator
-                columnButton(L10n.tr("Path"), field: .path, width: columnLayout.pathWidth)
-                    .resizableColumn(width: $columnLayout.pathWidth,
-                                     range: ResultColumnLayout.pathWidthRange)
-            }
+            HStack(spacing: 0) {
+                columnButton(L10n.tr("Name"), field: .name, width: widths.name)
+                    .resizableColumn(width: $columnLayout.nameWidth,
+                                     range: ResultColumnLayout.nameWidthRange)
 
-            if settings.showSize {
-                columnSeparator
-                columnButton(L10n.tr("Size"), field: .size, width: columnLayout.sizeWidth, alignment: .trailing)
-                    .resizableColumn(width: $columnLayout.sizeWidth,
-                                     range: ResultColumnLayout.sizeWidthRange)
-            }
+                if settings.showPath {
+                    columnSeparator
+                    columnButton(L10n.tr("Path"), field: .path, width: widths.path)
+                        .resizableColumn(width: $columnLayout.pathWidth,
+                                         range: ResultColumnLayout.pathWidthRange)
+                }
 
-            if settings.showModifiedDate {
-                columnSeparator
-                columnButton(L10n.tr("Modified Date"), field: .modified, width: columnLayout.modifiedWidth)
-                    .resizableColumn(width: $columnLayout.modifiedWidth,
-                                     range: ResultColumnLayout.modifiedWidthRange)
+                if settings.showSize {
+                    columnSeparator
+                    columnButton(L10n.tr("Size"), field: .size, width: widths.size, alignment: .trailing)
+                        .resizableColumn(width: $columnLayout.sizeWidth,
+                                         range: ResultColumnLayout.sizeWidthRange)
+                }
+
+                if settings.showModifiedDate {
+                    columnSeparator
+                    columnButton(L10n.tr("Modified Date"), field: .modified, width: widths.modified)
+                        .resizableColumn(width: $columnLayout.modifiedWidth,
+                                         range: ResultColumnLayout.modifiedWidthRange)
+                }
             }
+            .padding(.horizontal, 6)
         }
-        .padding(.horizontal, 6)
         .frame(height: 22)
         .background(Color(nsColor: .controlBackgroundColor))
         .overlay(alignment: .bottom) {

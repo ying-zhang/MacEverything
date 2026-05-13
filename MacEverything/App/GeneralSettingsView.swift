@@ -11,6 +11,10 @@ struct GeneralSettingsView: View {
     @State private var newContentSearchExcludedPath = ""
     @State private var showingResetIndexDefaultsConfirmation = false
     @State private var showingClearContentIndexConfirmation = false
+    @State private var mainIndexBaseBytes: UInt64 = 0
+    @State private var mainIndexWalBytes: UInt64 = 0
+    @State private var mainIndexLegacyBytes: UInt64 = 0
+    @State private var mainIndexStorageBytes: UInt64 = 0
     @State private var contentIndexBaseBytes: UInt64 = 0
     @State private var contentIndexWalBytes: UInt64 = 0
     @State private var contentIndexStorageBytes: UInt64 = 0
@@ -48,7 +52,7 @@ struct GeneralSettingsView: View {
                 }
                 .padding()
             }
-            .tabItem { Text(L10n.tr("Index Files")) }
+            .tabItem { Text(L10n.tr("Index File Info")) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -237,7 +241,23 @@ struct GeneralSettingsView: View {
     }
 
     private var indexFilesSection: some View {
-        SettingsSection(title: L10n.tr("Index Files")) {
+        SettingsSection(title: L10n.tr("Index File Info")) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(L10n.tr("Filename and Path Index Files"))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+
+                LabeledValueRow(title: L10n.tr("Index File Path"), value: SearchViewModel.v6Path)
+                LabeledValueRow(title: L10n.tr("Index File Size"), value: formattedBytes(mainIndexBaseBytes))
+                LabeledValueRow(title: L10n.tr("WAL File Path"), value: SearchViewModel.walPath)
+                LabeledValueRow(title: L10n.tr("WAL File Size"), value: formattedBytes(mainIndexWalBytes))
+                LabeledValueRow(title: L10n.tr("Legacy Index Files"), value: formattedBytes(mainIndexLegacyBytes))
+                LabeledValueRow(title: L10n.tr("Total Disk Usage"), value: formattedBytes(mainIndexStorageBytes))
+                LabeledValueRow(title: L10n.tr("Indexed Files"), value: String(bridge.recordCount()))
+            }
+
+            Divider()
+
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.tr("Content Index Files"))
                     .font(.subheadline)
@@ -265,6 +285,14 @@ struct GeneralSettingsView: View {
 
     private func refreshContentIndexInfo() {
         let fileManager = FileManager.default
+        mainIndexBaseBytes = fileSize(atPath: SearchViewModel.v6Path, fileManager: fileManager)
+        mainIndexWalBytes = fileSize(atPath: SearchViewModel.walPath, fileManager: fileManager)
+        mainIndexLegacyBytes =
+            fileSize(atPath: SearchViewModel.cachePath, fileManager: fileManager) +
+            fileSize(atPath: SearchViewModel.pagesPath, fileManager: fileManager) +
+            fileSize(atPath: SearchViewModel.ptablePath, fileManager: fileManager)
+        mainIndexStorageBytes = mainIndexBaseBytes + mainIndexWalBytes + mainIndexLegacyBytes
+
         let baseBytes = fileSize(atPath: SearchViewModel.contentIndexPath, fileManager: fileManager)
         let walBytes = fileSize(atPath: SearchViewModel.contentWalPath, fileManager: fileManager)
         contentIndexedCount = bridge.contentIndexedFileCount()

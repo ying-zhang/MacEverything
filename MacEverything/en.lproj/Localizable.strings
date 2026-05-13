@@ -58,6 +58,7 @@
 "Content" = "Content";
 "Search Text Content" = "Search Text Content";
 "Index Files" = "Index Files";
+"Index File Info" = "Index File Info";
 "Search & Results" = "Search & Results";
 "General" = "General";
 "Indexing Scope" = "Indexing Scope";
@@ -96,6 +97,8 @@
 "Content Index Sync Folders" = "Content Index Sync Folders";
 "Content Index Sync Excluded Folders" = "Content Index Sync Excluded Folders";
 "Changes to synced folders only affect background content indexing after you rebuild the content index." = "Changes to synced folders only affect background content indexing after you rebuild the content index.";
+"Filename and Path Index Files" = "Filename and Path Index Files";
+"Legacy Index Files" = "Legacy Index Files";
 "Content Index Files" = "Content Index Files";
 "Index File Path" = "Index File Path";
 "Index File Size" = "Index File Size";

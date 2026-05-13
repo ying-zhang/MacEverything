@@ -58,6 +58,7 @@
 "Content" = "内容";
 "Search Text Content" = "搜索文本内容";
 "Index Files" = "索引文件";
+"Index File Info" = "索引文件信息";
 "Search & Results" = "搜索与结果";
 "General" = "通用";
 "Indexing Scope" = "索引范围";
@@ -96,6 +97,8 @@
 "Content Index Sync Folders" = "内容索引同步目录";
 "Content Index Sync Excluded Folders" = "内容索引同步排除目录";
 "Changes to synced folders only affect background content indexing after you rebuild the content index." = "同步索引目录的变更需要重建内容索引后才会影响后台内容索引。";
+"Filename and Path Index Files" = "文件名/路径索引文件";
+"Legacy Index Files" = "旧版索引文件";
 "Content Index Files" = "内容索引文件";
 "Index File Path" = "索引文件路径";
 "Index File Size" = "索引文件大小";
