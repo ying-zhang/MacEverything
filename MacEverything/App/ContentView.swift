@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
+    @StateObject private var columnLayout = ResultColumnLayout()
     @ObservedObject private var searchOptions = SearchOptions.shared
     @ObservedObject private var settings = AppSettings.shared
     @State private var scrollViewID = 0
@@ -230,6 +231,7 @@ struct ContentView: View {
 
                 if !viewModel.displayItems.isEmpty {
                     ResultHeaderView(viewModel: viewModel)
+                        .environmentObject(columnLayout)
                         .padding(.horizontal, 8)
                 }
 
@@ -244,6 +246,7 @@ struct ContentView: View {
                                     viewModel.select(item)
                                 }
                             )
+                                .environmentObject(columnLayout)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
                                 .id(item.id)
@@ -308,24 +311,33 @@ struct ContentView: View {
 private struct ResultHeaderView: View {
     @ObservedObject var viewModel: SearchViewModel
     @ObservedObject private var settings = AppSettings.shared
+    @EnvironmentObject private var columnLayout: ResultColumnLayout
 
     var body: some View {
         HStack(spacing: 0) {
-            columnButton(L10n.tr("Name"), field: .name, width: ResultColumnLayout.nameWidth)
+            columnButton(L10n.tr("Name"), field: .name, width: columnLayout.nameWidth)
+                .resizableColumn(width: $columnLayout.nameWidth,
+                                 range: ResultColumnLayout.nameWidthRange)
 
             if settings.showPath {
                 columnSeparator
-                columnButton(L10n.tr("Path"), field: .path)
+                columnButton(L10n.tr("Path"), field: .path, width: columnLayout.pathWidth)
+                    .resizableColumn(width: $columnLayout.pathWidth,
+                                     range: ResultColumnLayout.pathWidthRange)
             }
 
             if settings.showSize {
                 columnSeparator
-                columnButton(L10n.tr("Size"), field: .size, width: ResultColumnLayout.sizeWidth, alignment: .trailing)
+                columnButton(L10n.tr("Size"), field: .size, width: columnLayout.sizeWidth, alignment: .trailing)
+                    .resizableColumn(width: $columnLayout.sizeWidth,
+                                     range: ResultColumnLayout.sizeWidthRange)
             }
 
             if settings.showModifiedDate {
                 columnSeparator
-                columnButton(L10n.tr("Modified Date"), field: .modified, width: ResultColumnLayout.modifiedWidth)
+                columnButton(L10n.tr("Modified Date"), field: .modified, width: columnLayout.modifiedWidth)
+                    .resizableColumn(width: $columnLayout.modifiedWidth,
+                                     range: ResultColumnLayout.modifiedWidthRange)
             }
         }
         .padding(.horizontal, 6)
@@ -376,5 +388,44 @@ private struct ResultHeaderView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct ColumnResizeHandle: ViewModifier {
+    @Binding var width: CGFloat
+    let range: ClosedRange<CGFloat>
+    @State private var dragStartWidth: CGFloat?
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .trailing) {
+            Rectangle()
+                .fill(Color.clear)
+                .frame(width: 8)
+                .contentShape(Rectangle())
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            let start = dragStartWidth ?? width
+                            dragStartWidth = start
+                            width = min(max(start + value.translation.width, range.lowerBound), range.upperBound)
+                        }
+                        .onEnded { _ in
+                            dragStartWidth = nil
+                        }
+                )
+                .onHover { hovering in
+                    if hovering {
+                        NSCursor.resizeLeftRight.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+        }
+    }
+}
+
+private extension View {
+    func resizableColumn(width: Binding<CGFloat>, range: ClosedRange<CGFloat>) -> some View {
+        modifier(ColumnResizeHandle(width: width, range: range))
     }
 }

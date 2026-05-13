@@ -56,6 +56,8 @@
 "Apply" = "Apply";
 "Indexes" = "Indexes";
 "Content" = "Content";
+"Search Text Content" = "Search Text Content";
+"Index Files" = "Index Files";
 "Search & Results" = "Search & Results";
 "General" = "General";
 "Indexing Scope" = "Indexing Scope";
@@ -80,10 +82,14 @@
 "Exclusion changes take effect after rebuilding the index." = "Exclusion changes take effect after rebuilding the index.";
 "Rebuild Index Now" = "Rebuild Index Now";
 "Enable content indexing" = "Enable content indexing";
+"Text Content Index Folders" = "Text Content Index Folders";
+"Text Content Excluded Folders" = "Text Content Excluded Folders";
 "Content Search Folders" = "Content Search Folders";
 "Content Search Excluded Folders" = "Content Search Excluded Folders";
 "Use main indexed folders" = "Use main indexed folders";
 "Use main excluded folders" = "Use main excluded folders";
+"When main folders are enabled, text content indexing follows the main index scope. Turn them off to edit text content folders separately." = "When main folders are enabled, text content indexing follows the main index scope. Turn them off to edit text content folders separately.";
+"Extension filters are managed in Content Settings." = "Extension filters are managed in Content Settings.";
 "Import Main Indexed Folders" = "Import Main Indexed Folders";
 "Import Main Excluded Folders" = "Import Main Excluded Folders";
 "Content search folders filter content-search results. Import copies the main index folders so you can edit them separately." = "Content search folders filter content-search results. Import copies the main index folders so you can edit them separately.";

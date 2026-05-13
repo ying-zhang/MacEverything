@@ -61,6 +61,7 @@ struct ResultRow: View {
     let isSelected: Bool
     let onSelect: () -> Void
     @ObservedObject private var settings = AppSettings.shared
+    @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
 
     var body: some View {
@@ -78,12 +79,12 @@ struct ResultRow: View {
                     .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
                 highlighted.nameText.lineLimit(1)
             }
-            .frame(width: ResultColumnLayout.nameWidth, alignment: .leading)
+            .frame(width: columnLayout.nameWidth, alignment: .leading)
 
             if settings.showPath {
                 highlighted.pathText
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: columnLayout.pathWidth, alignment: .leading)
             }
 
             if settings.showSize {
@@ -91,7 +92,7 @@ struct ResultRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                    .frame(width: ResultColumnLayout.sizeWidth, alignment: .trailing)
+                    .frame(width: columnLayout.sizeWidth, alignment: .trailing)
             }
 
             if settings.showModifiedDate {
@@ -99,7 +100,7 @@ struct ResultRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                    .frame(width: ResultColumnLayout.modifiedWidth, alignment: .leading)
+                    .frame(width: columnLayout.modifiedWidth, alignment: .leading)
             }
         }
         .padding(.vertical, dense ? 2 : 5)
@@ -191,8 +192,14 @@ struct ResultRow: View {
     }
 }
 
-enum ResultColumnLayout {
-    static let nameWidth: CGFloat = 260
-    static let sizeWidth: CGFloat = 92
-    static let modifiedWidth: CGFloat = 150
+final class ResultColumnLayout: ObservableObject {
+    static let nameWidthRange: ClosedRange<CGFloat> = 160...520
+    static let pathWidthRange: ClosedRange<CGFloat> = 180...800
+    static let sizeWidthRange: ClosedRange<CGFloat> = 72...150
+    static let modifiedWidthRange: ClosedRange<CGFloat> = 120...240
+
+    @Published var nameWidth: CGFloat = 260
+    @Published var pathWidth: CGFloat = 260
+    @Published var sizeWidth: CGFloat = 92
+    @Published var modifiedWidth: CGFloat = 150
 }

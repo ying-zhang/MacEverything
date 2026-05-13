@@ -9,8 +9,6 @@ struct GeneralSettingsView: View {
     @State private var newExcludedPattern = ""
     @State private var newContentSearchPath = ""
     @State private var newContentSearchExcludedPath = ""
-    @State private var newContentSyncPath = ""
-    @State private var newContentSyncExcludedPath = ""
     @State private var showingResetIndexDefaultsConfirmation = false
     @State private var showingClearContentIndexConfirmation = false
     @State private var contentIndexBaseBytes: UInt64 = 0
@@ -42,7 +40,15 @@ struct GeneralSettingsView: View {
                 }
                 .padding()
             }
-            .tabItem { Text(L10n.tr("Content")) }
+            .tabItem { Text(L10n.tr("Search Text Content")) }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    indexFilesSection
+                }
+                .padding()
+            }
+            .tabItem { Text(L10n.tr("Index Files")) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -167,7 +173,7 @@ struct GeneralSettingsView: View {
     }
 
     private var contentSection: some View {
-        SettingsSection(title: L10n.tr("Content Indexing")) {
+        SettingsSection(title: L10n.tr("Search Text Content")) {
             Toggle(L10n.tr("Enable content indexing"), isOn: $settings.contentIndexingEnabled)
 
             HStack {
@@ -179,7 +185,7 @@ struct GeneralSettingsView: View {
             .disabled(!settings.contentIndexingEnabled)
 
             CompactPathListEditor(
-                title: L10n.tr("Content Search Folders"),
+                title: L10n.tr("Text Content Index Folders"),
                 paths: $settings.contentSearchRoots,
                 newPath: $newContentSearchPath,
                 visibleRows: 5
@@ -188,16 +194,11 @@ struct GeneralSettingsView: View {
 
             HStack {
                 Toggle(L10n.tr("Use main indexed folders"), isOn: $settings.contentSearchUsesIndexRoots)
-                Spacer()
-                Button(L10n.tr("Import Main Indexed Folders")) {
-                    settings.contentSearchRoots = settings.indexRoots
-                    settings.contentSearchUsesIndexRoots = false
-                }
-                .disabled(!settings.contentIndexingEnabled)
             }
+            .disabled(!settings.contentIndexingEnabled)
 
             CompactPathListEditor(
-                title: L10n.tr("Content Search Excluded Folders"),
+                title: L10n.tr("Text Content Excluded Folders"),
                 paths: $settings.contentSearchExcludedPaths,
                 newPath: $newContentSearchExcludedPath,
                 visibleRows: 5
@@ -206,42 +207,37 @@ struct GeneralSettingsView: View {
 
             HStack {
                 Toggle(L10n.tr("Use main excluded folders"), isOn: $settings.contentSearchUsesIndexExclusions)
-                Spacer()
-                Button(L10n.tr("Import Main Excluded Folders")) {
-                    settings.contentSearchExcludedPaths = settings.excludedPaths
-                    settings.contentSearchUsesIndexExclusions = false
+            }
+            .disabled(!settings.contentIndexingEnabled)
+
+            Text(L10n.tr("When main folders are enabled, text content indexing follows the main index scope. Turn them off to edit text content folders separately."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            HStack {
+                Button(L10n.tr("Rebuild Content Index")) {
+                    NotificationCenter.default.post(name: .rebuildContentIndex, object: nil)
+                    scheduleContentIndexInfoRefresh()
                 }
                 .disabled(!settings.contentIndexingEnabled)
+
+                Spacer()
+
+                Button(L10n.tr("Clear Content Index"), role: .destructive) {
+                    showingClearContentIndexConfirmation = true
+                }
             }
 
-            Text(L10n.tr("Content search folders filter content-search results. Import copies the main index folders so you can edit them separately."))
+            Text(L10n.tr("Extension filters are managed in Content Settings."))
                 .font(.caption)
                 .foregroundColor(.secondary)
+        }
+    }
 
-            Divider()
-
-            CompactPathListEditor(
-                title: L10n.tr("Content Index Sync Folders"),
-                paths: $settings.contentIndexRoots,
-                newPath: $newContentSyncPath,
-                visibleRows: 5
-            )
-            .disabled(!settings.contentIndexingEnabled)
-
-            CompactPathListEditor(
-                title: L10n.tr("Content Index Sync Excluded Folders"),
-                paths: $settings.contentExcludedPaths,
-                newPath: $newContentSyncExcludedPath,
-                visibleRows: 5
-            )
-            .disabled(!settings.contentIndexingEnabled)
-
-            Text(L10n.tr("Changes to synced folders only affect background content indexing after you rebuild the content index."))
-                .font(.caption)
-                .foregroundColor(.secondary)
-
-            Divider()
-
+    private var indexFilesSection: some View {
+        SettingsSection(title: L10n.tr("Index Files")) {
             VStack(alignment: .leading, spacing: 8) {
                 Text(L10n.tr("Content Index Files"))
                     .font(.subheadline)
@@ -259,21 +255,6 @@ struct GeneralSettingsView: View {
                 Button(L10n.tr("Refresh Index Info")) {
                     refreshContentIndexInfo()
                 }
-
-                Button(L10n.tr("Rebuild Content Index")) {
-                    NotificationCenter.default.post(name: .rebuildContentIndex, object: nil)
-                    scheduleContentIndexInfoRefresh()
-                }
-                .disabled(!settings.contentIndexingEnabled)
-
-                Spacer()
-
-                Button(L10n.tr("Clear Content Index"), role: .destructive) {
-                    showingClearContentIndexConfirmation = true
-                }
-            }
-
-            HStack {
                 Spacer()
                 Button(L10n.tr("Content Settings...")) {
                     ContentSettingsWindowController.shared.showWindow()
