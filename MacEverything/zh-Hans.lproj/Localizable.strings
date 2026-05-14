@@ -58,6 +58,7 @@
 "Add" = "添加";
 "Apply" = "应用";
 "Indexes" = "索引";
+"Index Scope" = "索引范围";
 "Content" = "内容";
 "Search Text Content" = "搜索文本内容";
 "Index Files" = "索引文件";
@@ -86,6 +87,7 @@
 "Exclusion changes take effect after rebuilding the index." = "排除项更改会在重建索引后生效。";
 "Rebuild Index Now" = "立即重建索引";
 "Enable content indexing" = "启用内容索引";
+"Enable text content indexing" = "启用文本内容索引";
 "Text Content Index Folders" = "文本内容索引目录";
 "Text Content Excluded Folders" = "文本内容索引排除目录";
 "Content Search Folders" = "内容搜索目录";

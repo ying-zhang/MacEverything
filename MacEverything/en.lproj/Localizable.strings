@@ -58,6 +58,7 @@
 "Add" = "Add";
 "Apply" = "Apply";
 "Indexes" = "Indexes";
+"Index Scope" = "Index Scope";
 "Content" = "Content";
 "Search Text Content" = "Search Text Content";
 "Index Files" = "Index Files";
@@ -86,6 +87,7 @@
 "Exclusion changes take effect after rebuilding the index." = "Exclusion changes take effect after rebuilding the index.";
 "Rebuild Index Now" = "Rebuild Index Now";
 "Enable content indexing" = "Enable content indexing";
+"Enable text content indexing" = "Enable text content indexing";
 "Text Content Index Folders" = "Text Content Index Folders";
 "Text Content Excluded Folders" = "Text Content Excluded Folders";
 "Content Search Folders" = "Content Search Folders";

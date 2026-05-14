@@ -36,10 +36,6 @@ struct MacEverythingApp: App {
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Toggle(L10n.tr("Match Filename"), isOn: $searchOptions.isMatchFilename)
                     .keyboardShortcut("f", modifiers: [.command, .shift])
-                Divider()
-                Button(L10n.tr("Regular Expression Help...")) {
-                    RegexHelpWindowController.shared.showWindow()
-                }
             }
 
             CommandGroup(after: .toolbar) {
@@ -51,6 +47,10 @@ struct MacEverythingApp: App {
                     SearchSyntaxHelpWindowController.shared.showWindow()
                 }
                 .keyboardShortcut("/", modifiers: [.command, .shift])
+
+                Button(L10n.tr("Regular Expression Help")) {
+                    RegexHelpWindowController.shared.showWindow()
+                }
             }
 
             CommandGroup(after: .appSettings) {
