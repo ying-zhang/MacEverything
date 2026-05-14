@@ -3,7 +3,6 @@ import SwiftUI
 @main
 struct MacEverythingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var appSettings = AppSettings.shared
     @ObservedObject private var searchOptions = SearchOptions.shared
 
@@ -16,14 +15,14 @@ struct MacEverythingApp: App {
         .commands {
             CommandGroup(replacing: .newItem) {
                 Button(L10n.tr("New Search")) {
-                    openWindow(id: "search")
+                    appDelegate.newSearchWindow()
                 }
                 .keyboardShortcut("n", modifiers: [.command])
             }
 
             CommandMenu(Text(L10n.tr("Search"))) {
                 Button(L10n.tr("New Search")) {
-                    openWindow(id: "search")
+                    appDelegate.newSearchWindow()
                 }
 
                 Divider()

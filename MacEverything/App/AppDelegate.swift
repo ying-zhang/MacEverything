@@ -13,6 +13,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private var auxiliarySearchWindows: [NSWindow] = []
     private var settingsSink: AnyCancellable?
 
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = true
+    }
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         MacSearchBridge.initializeLogger()
         applyDockVisibility()
@@ -27,6 +31,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         // Delay by one frame to let SwiftUI create the window
         DispatchQueue.main.async { [weak self] in
             self?.activeSearchWindow = self?.frontmostSearchWindow()
+            self?.activeSearchWindow.map { SearchWindowSupport.configure($0, searchText: "") }
             if shouldMinimize {
                 self?.activeSearchWindow?.orderOut(nil)
                 NSApp.hide(nil)
@@ -174,15 +179,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
     }
 
-    @objc private func newSearchWindow() {
+    @objc func newSearchWindow() {
         NSApp.activate(ignoringOtherApps: true)
         let hostingController = NSHostingController(rootView: ContentView())
         let win = NSWindow(contentViewController: hostingController)
-        win.title = "MacEverything"
         win.styleMask = NSWindow.StyleMask([.titled, .closable, .miniaturizable, .resizable])
         win.setContentSize(NSSize(width: 800, height: 600))
         win.minSize = NSSize(width: 600, height: 400)
         win.delegate = self
+        SearchWindowSupport.configure(win, searchText: "")
         win.center()
         win.makeKeyAndOrderFront(self)
         auxiliarySearchWindows.append(win)
@@ -261,7 +266,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     private func frontmostSearchWindow() -> NSWindow? {
         NSApp.orderedWindows.first { window in
-            window.title == "MacEverything"
+            SearchWindowSupport.isSearchWindow(window)
         }
     }
 
@@ -277,5 +282,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             return true
         }
         return false
+    }
+}
+
+enum SearchWindowSupport {
+    static let windowIdentifier = NSUserInterfaceItemIdentifier("MacEverything.searchWindow")
+    static let tabbingIdentifier = NSWindow.TabbingIdentifier("MacEverything.search")
+    nonisolated(unsafe) private static var tabBarRequestedWindows: Set<ObjectIdentifier> = []
+
+    static func isSearchWindow(_ window: NSWindow) -> Bool {
+        window.identifier == windowIdentifier ||
+        window.tabbingIdentifier == tabbingIdentifier ||
+        window.title == "MacEverything" ||
+        window.title.hasSuffix(" - MacEverything")
+    }
+
+    static func configure(_ window: NSWindow, searchText: String) {
+        window.identifier = windowIdentifier
+        window.tabbingIdentifier = tabbingIdentifier
+        window.tabbingMode = .preferred
+        window.title = title(for: searchText)
+        requestTabBarIfNeeded(for: window)
+    }
+
+    private static func title(for searchText: String) -> String {
+        let compact = searchText
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !compact.isEmpty else { return "MacEverything" }
+
+        let maxTitleKeywordLength = 18
+        let keyword = compact.count > maxTitleKeywordLength
+            ? String(compact.prefix(maxTitleKeywordLength)) + "..."
+            : compact
+        return "\(keyword) - MacEverything"
+    }
+
+    private static func requestTabBarIfNeeded(for window: NSWindow) {
+        let windowID = ObjectIdentifier(window)
+        guard !tabBarRequestedWindows.contains(windowID) else { return }
+        tabBarRequestedWindows.insert(windowID)
+
+        DispatchQueue.main.async {
+            guard window.isVisible else { return }
+            if window.tabGroup?.isTabBarVisible != true {
+                window.toggleTabBar(nil)
+            }
+        }
     }
 }

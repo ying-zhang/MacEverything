@@ -7,10 +7,17 @@ struct ContentView: View {
     @ObservedObject private var searchOptions = SearchOptions.shared
     @ObservedObject private var settings = AppSettings.shared
     @State private var scrollViewID = 0
+    @State private var hostWindow: NSWindow?
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
+            WindowReader { window in
+                hostWindow = window
+                updateSearchWindowTitle()
+            }
+            .frame(width: 0, height: 0)
+
             // Permission banner
             PermissionView()
 
@@ -40,6 +47,7 @@ struct ContentView: View {
                 .frame(height: 36)
                 .onChange(of: viewModel.searchText) {
                     viewModel.onSearchTextChanged()
+                    updateSearchWindowTitle()
                 }
                 SearchOptionBadges(options: searchOptions)
                 if !viewModel.searchText.isEmpty {
@@ -287,6 +295,9 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
+        .onAppear {
+            updateSearchWindowTitle()
+        }
         .onReceive(NotificationCenter.default.publisher(for: .clearContentIndex)) { _ in
             viewModel.clearContentResults()
         }
@@ -302,6 +313,34 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
             scrollViewID += 1
+        }
+    }
+
+    private func updateSearchWindowTitle() {
+        guard let window = hostWindow,
+              SearchWindowSupport.isSearchWindow(window) else { return }
+        SearchWindowSupport.configure(window, searchText: viewModel.searchText)
+    }
+}
+
+private struct WindowReader: NSViewRepresentable {
+    var onWindowChange: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                onWindowChange(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                onWindowChange(window)
+            }
         }
     }
 }
