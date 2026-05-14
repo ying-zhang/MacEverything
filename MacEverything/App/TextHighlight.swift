@@ -1,4 +1,5 @@
 import SwiftUI
+import Foundation
 
 /// Shared highlight function used by ResultRow and ContentResultRow.
 /// Finds all case-insensitive, non-overlapping occurrences of `keyword`
@@ -260,7 +261,10 @@ func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String
             ranges.append(range)
             start = range.upperBound
         }
-        return ranges
+        if !hint.caseSensitive && isAsciiAlphaNumericQuery(searchKey) {
+            ranges.append(contentsOf: computePinyinInitialRanges(in: text, key: searchKey))
+        }
+        return mergeRanges(ranges, in: text)
 
     case .glob:
         let literals = extractGlobLiterals(searchKey)
@@ -296,6 +300,128 @@ func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String
             return text.lowercased() == hint.text.lowercased()
                 ? [text.startIndex..<text.endIndex] : []
         }
+    }
+}
+
+/// Mirrors the engine's pinyin-initial search key rules for UI highlighting.
+/// Han characters contribute their Mandarin initial; ASCII alphanumeric
+/// characters are kept lowercased; punctuation and separators are skipped.
+private func computePinyinInitialRanges(in text: String, key: String) -> [Range<String.Index>] {
+    let mapped = mandarinInitialMapping(for: text)
+    guard !mapped.key.isEmpty else { return [] }
+
+    var ranges: [Range<String.Index>] = []
+    var searchStart = mapped.key.startIndex
+    while searchStart < mapped.key.endIndex,
+          let keyRange = mapped.key.range(of: key, range: searchStart..<mapped.key.endIndex) {
+        let lowerOffset = mapped.key.distance(from: mapped.key.startIndex, to: keyRange.lowerBound)
+        let upperOffset = mapped.key.distance(from: mapped.key.startIndex, to: keyRange.upperBound)
+        if lowerOffset < upperOffset,
+           lowerOffset >= 0,
+           upperOffset <= mapped.sourceRanges.count {
+            ranges.append(contentsOf: sourceRangesForMappedKeyMatch(
+                mapped.sourceRanges[lowerOffset..<upperOffset]))
+        }
+        searchStart = keyRange.upperBound
+    }
+    return ranges
+}
+
+private func sourceRangesForMappedKeyMatch(
+    _ mappedRanges: ArraySlice<Range<String.Index>>
+) -> [Range<String.Index>] {
+    guard var current = mappedRanges.first else { return [] }
+    var ranges: [Range<String.Index>] = []
+    for sourceRange in mappedRanges.dropFirst() {
+        if current.upperBound == sourceRange.lowerBound {
+            current = current.lowerBound..<sourceRange.upperBound
+        } else {
+            ranges.append(current)
+            current = sourceRange
+        }
+    }
+    ranges.append(current)
+    return ranges
+}
+
+private func mandarinInitialMapping(for text: String) -> (key: String, sourceRanges: [Range<String.Index>]) {
+    guard text.unicodeScalars.contains(where: isCJKIdeograph) else {
+        return ("", [])
+    }
+
+    var key = ""
+    var sourceRanges: [Range<String.Index>] = []
+    var index = text.startIndex
+    while index < text.endIndex {
+        let nextIndex = text.index(after: index)
+        let character = text[index..<nextIndex]
+        if let scalar = character.unicodeScalars.first,
+           character.unicodeScalars.count == 1,
+           isCJKIdeograph(scalar),
+           let initial = mandarinInitial(for: String(character)) {
+            key.append(initial)
+            sourceRanges.append(index..<nextIndex)
+        } else if let ascii = asciiAlphaNumericLowercase(character) {
+            key.append(ascii)
+            sourceRanges.append(index..<nextIndex)
+        }
+        index = nextIndex
+    }
+    return (key, sourceRanges)
+}
+
+private func mandarinInitial(for character: String) -> Character? {
+    let mutable = NSMutableString(string: character)
+    guard CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false) else {
+        return nil
+    }
+    CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
+    for scalar in String(mutable).unicodeScalars {
+        guard scalar.value < 128 else { continue }
+        let value = UInt8(scalar.value)
+        if value >= 65 && value <= 90 {
+            return Character(UnicodeScalar(value + 32))
+        }
+        if value >= 97 && value <= 122 {
+            return Character(scalar)
+        }
+    }
+    return nil
+}
+
+private func isCJKIdeograph(_ scalar: UnicodeScalar) -> Bool {
+    (scalar.value >= 0x3400 && scalar.value <= 0x4DBF) ||
+    (scalar.value >= 0x4E00 && scalar.value <= 0x9FFF) ||
+    (scalar.value >= 0xF900 && scalar.value <= 0xFAFF)
+}
+
+private func asciiAlphaNumericLowercase(_ character: Substring) -> Character? {
+    guard character.unicodeScalars.count == 1,
+          let scalar = character.unicodeScalars.first,
+          scalar.value < 128 else {
+        return nil
+    }
+    let value = UInt8(scalar.value)
+    if value >= 48 && value <= 57 {
+        return Character(scalar)
+    }
+    if value >= 65 && value <= 90 {
+        return Character(UnicodeScalar(value + 32))
+    }
+    if value >= 97 && value <= 122 {
+        return Character(scalar)
+    }
+    return nil
+}
+
+private func isAsciiAlphaNumericQuery(_ key: String) -> Bool {
+    guard !key.isEmpty else { return false }
+    return key.unicodeScalars.allSatisfy { scalar in
+        guard scalar.value < 128 else { return false }
+        let value = UInt8(scalar.value)
+        return (value >= 48 && value <= 57) ||
+               (value >= 65 && value <= 90) ||
+               (value >= 97 && value <= 122)
     }
 }
 

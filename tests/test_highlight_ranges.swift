@@ -92,6 +92,59 @@ func testSubstringEmpty() {
     assertEqual(ranges.count, 0, "empty hint should produce no ranges")
 }
 
+func testPinyinInitialsChinese() {
+    print("  test: pinyin initials — Chinese filename")
+    let hint = HighlightHint(text: "zywj", matchMode: .substring)
+    let text = "重要文件.txt"
+    let ranges = computeRangesForHint(in: text, hint: hint)
+    assertEqual(ranges.count, 1, "should find initials match")
+    let o = offsets(text, ranges)
+    assertEqual(o[0].0, 0, "match starts at first Chinese character")
+    assertEqual(o[0].1, 4, "match covers four Chinese characters")
+}
+
+func testPinyinInitialsMixedChineseEnglish() {
+    print("  test: pinyin initials — mixed Chinese and English")
+    let hint = HighlightHint(text: "zyfile", matchMode: .substring)
+    let text = "重要File.txt"
+    let ranges = computeRangesForHint(in: text, hint: hint)
+    assertEqual(ranges.count, 1, "should find mixed initials/ascii match")
+    let o = offsets(text, ranges)
+    assertEqual(o[0].0, 0, "match starts at first Chinese character")
+    assertEqual(o[0].1, 6, "match covers Chinese prefix and File")
+}
+
+func testPinyinInitialsPartialChinese() {
+    print("  test: pinyin initials — partial Chinese filename")
+    let hint = HighlightHint(text: "wj", matchMode: .substring)
+    let text = "重要文件.txt"
+    let ranges = computeRangesForHint(in: text, hint: hint)
+    assertEqual(ranges.count, 1, "should find partial initials match")
+    let o = offsets(text, ranges)
+    assertEqual(o[0].0, 2, "partial match starts at 文")
+    assertEqual(o[0].1, 4, "partial match ends after 件")
+}
+
+func testPinyinInitialsCaseSensitiveDisabled() {
+    print("  test: pinyin initials — disabled for case-sensitive hints")
+    let hint = HighlightHint(text: "zywj", matchMode: .substring, caseSensitive: true)
+    let ranges = computeRangesForHint(in: "重要文件.txt", hint: hint)
+    assertEqual(ranges.count, 0, "case-sensitive substring should not use pinyin initials")
+}
+
+func testPinyinInitialsSkipSeparators() {
+    print("  test: pinyin initials — separators are not highlighted")
+    let hint = HighlightHint(text: "zywj", matchMode: .substring)
+    let text = "重要-文件.txt"
+    let ranges = computeRangesForHint(in: text, hint: hint)
+    assertEqual(ranges.count, 2, "separator should split highlighted source ranges")
+    let o = offsets(text, ranges)
+    assertEqual(o[0].0, 0, "first range starts at 重")
+    assertEqual(o[0].1, 2, "first range ends before separator")
+    assertEqual(o[1].0, 3, "second range starts after separator")
+    assertEqual(o[1].1, 5, "second range ends after 件")
+}
+
 func testGlobMatch() {
     print("  test: glob match — highlights literal segments")
     let hint = HighlightHint(text: "*.cpp", matchMode: .glob)
@@ -280,6 +333,11 @@ struct TestRunner {
         testSubstringCaseSensitive()
         testSubstringNoMatch()
         testSubstringEmpty()
+        testPinyinInitialsChinese()
+        testPinyinInitialsMixedChineseEnglish()
+        testPinyinInitialsPartialChinese()
+        testPinyinInitialsCaseSensitiveDisabled()
+        testPinyinInitialsSkipSeparators()
         testGlobMatch()
         testGlobMultipleLiterals()
         testGlobAllWild()
