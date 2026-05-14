@@ -2,6 +2,8 @@
 "Search files..." = "Search files...";
 "Search files... (Chinese initials supported, infile: for content)" = "Search files... (Chinese initials supported, infile: for content)";
 "Search files... (Chinese initials supported)" = "Search files... (Chinese initials supported)";
+"Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)" = "Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)";
+"Search filenames (Chinese initials supported; Cmd+N for new search)" = "Search filenames (Chinese initials supported; Cmd+N for new search)";
 "Scanning... %d items scanned" = "Scanning... %d items scanned";
 "Syncing..." = "Syncing...";
 "Live" = "Live";

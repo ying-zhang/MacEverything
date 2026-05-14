@@ -2,6 +2,8 @@
 "Search files..." = "搜索文件...";
 "Search files... (Chinese initials supported, infile: for content)" = "搜索文件...（支持拼音首字母，infile: 搜内容）";
 "Search files... (Chinese initials supported)" = "搜索文件...（支持拼音首字母）";
+"Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)" = "搜索文件名（支持拼音首字母；Cmd+N新建搜索；infile: 搜索文件内容）";
+"Search filenames (Chinese initials supported; Cmd+N for new search)" = "搜索文件名（支持拼音首字母；Cmd+N新建搜索）";
 "Scanning... %d items scanned" = "正在扫描... 已扫描 %d 项";
 "Syncing..." = "正在同步...";
 "Live" = "实时";
