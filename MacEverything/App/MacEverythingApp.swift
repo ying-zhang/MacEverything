@@ -3,6 +3,7 @@ import SwiftUI
 @main
 struct MacEverythingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var appSettings = AppSettings.shared
     @ObservedObject private var searchOptions = SearchOptions.shared
 
     var body: some Scene {
@@ -25,6 +26,10 @@ struct MacEverythingApp: App {
                 Button(L10n.tr("Regular Expression Help...")) {
                     RegexHelpWindowController.shared.showWindow()
                 }
+            }
+
+            CommandGroup(after: .toolbar) {
+                Toggle(L10n.tr("Hide Dock Icon"), isOn: $appSettings.hideDockIcon)
             }
 
             CommandGroup(replacing: .help) {

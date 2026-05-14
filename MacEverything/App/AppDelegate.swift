@@ -148,7 +148,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             item.title = isVisible ? L10n.tr("Hide MacEverything") : L10n.tr("Show MacEverything")
         }
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        hideDockItem?.state = AppSettings.shared.hideDockIcon ? .on : .off
+        hideDockItem?.state = isDockIconHidden ? .on : .off
         for (client, item) in mcpMenuItems {
             item.state = MCPConfigManager.isEnabled(for: client) ? .on : .off
         }
@@ -206,8 +206,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @MainActor
-    @objc private func toggleHideDockIcon() {
-        AppSettings.shared.hideDockIcon.toggle()
+    @objc func toggleHideDockIcon() {
+        AppSettings.shared.hideDockIcon = !isDockIconHidden
+        applyDockVisibility()
     }
 
     @objc private func quitApp() {
@@ -220,6 +221,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if NSApp.activationPolicy() != policy {
             NSApp.setActivationPolicy(policy)
         }
+    }
+
+    private var isDockIconHidden: Bool {
+        NSApp.activationPolicy() == .accessory || NSApp.activationPolicy() == .prohibited
     }
 
     // MARK: - Launch Mode Detection

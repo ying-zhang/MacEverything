@@ -250,6 +250,7 @@
 "Use regex for a single query without changing the menu option." = "Use regex for a single query without changing the menu option.";
 "The regex: prefix treats the rest of the query as the pattern, including spaces and |." = "The regex: prefix treats the rest of the query as the pattern, including spaces and |.";
 "Common Regex Patterns" = "Common Regex Patterns";
+"Examples" = "Examples";
 "Match a or b" = "Match a or b";
 "Match gray or grey" = "Match gray or grey";
 "Match any single character" = "Match any single character";

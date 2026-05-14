@@ -250,6 +250,7 @@
 "Use regex for a single query without changing the menu option." = "仅对当前查询使用正则，不改变菜单选项。";
 "The regex: prefix treats the rest of the query as the pattern, including spaces and |." = "regex: 前缀会把后续整段查询作为模式处理，包括空格和 |。";
 "Common Regex Patterns" = "常用正则模式";
+"Examples" = "示例";
 "Match a or b" = "匹配 a 或 b";
 "Match gray or grey" = "匹配 gray 或 grey";
 "Match any single character" = "匹配任意单个字符";
