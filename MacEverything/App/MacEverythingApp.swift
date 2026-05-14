@@ -3,17 +3,31 @@ import SwiftUI
 @main
 struct MacEverythingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @Environment(\.openWindow) private var openWindow
     @ObservedObject private var appSettings = AppSettings.shared
     @ObservedObject private var searchOptions = SearchOptions.shared
 
     var body: some Scene {
-        Window("MacEverything", id: "main") {
+        WindowGroup("MacEverything", id: "search") {
             ContentView()
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 600)
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button(L10n.tr("New Search")) {
+                    openWindow(id: "search")
+                }
+                .keyboardShortcut("n", modifiers: [.command])
+            }
+
             CommandMenu(Text(L10n.tr("Search"))) {
+                Button(L10n.tr("New Search")) {
+                    openWindow(id: "search")
+                }
+
+                Divider()
+
                 Toggle(L10n.tr("Regex"), isOn: $searchOptions.isRegex)
                     .keyboardShortcut("r", modifiers: [.command])
                 Toggle(L10n.tr("Case Sensitive"), isOn: $searchOptions.isCaseSensitive)
@@ -73,6 +87,7 @@ extension Notification.Name {
     static let rebuildIndex = Notification.Name("rebuildIndex")
     static let rebuildContentIndex = Notification.Name("rebuildContentIndex")
     static let clearContentIndex = Notification.Name("clearContentIndex")
+    static let searchServiceDidRefresh = Notification.Name("searchServiceDidRefresh")
 }
 
 class GeneralSettingsWindowController {
