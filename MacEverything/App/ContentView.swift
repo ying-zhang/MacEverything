@@ -50,6 +50,17 @@ struct ContentView: View {
                     updateSearchWindowTitle()
                 }
                 SearchOptionBadges(options: searchOptions)
+                Button {
+                    NSApp.activate(ignoringOtherApps: true)
+                    GeneralSettingsWindowController.shared.showWindow()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 17))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.tr("Settings..."))
+                .accessibilityLabel(L10n.tr("Settings..."))
                 if !viewModel.searchText.isEmpty {
                     Button {
                         viewModel.searchText = ""
@@ -97,7 +108,9 @@ struct ContentView: View {
                             .foregroundColor(.green)
                             .fontWeight(.medium)
                     }
-                    Text(L10n.tr("%d files indexed", Int(service.totalRecords)))
+                    Text(L10n.tr("%d files indexed (memory %@)",
+                                 Int(service.totalRecords),
+                                 formattedIndexMemory(service.indexMemoryBytes)))
                         .foregroundColor(.secondary)
                         .accessibilityIdentifier("indexedCount")
                     if service.isContentIndexing, let progress = service.contentIndexProgress {
@@ -111,9 +124,15 @@ struct ContentView: View {
                     if viewModel.totalMatches > 0 {
                         Text("·")
                             .foregroundColor(.secondary)
-                        Text(L10n.tr("%d matches", viewModel.totalMatches))
-                            .foregroundColor(.secondary)
-                            .accessibilityIdentifier("matchCount")
+                        if viewModel.resultLimitReached {
+                            Text(L10n.tr("More than 10000 results"))
+                                .foregroundColor(.secondary)
+                                .accessibilityIdentifier("matchCount")
+                        } else {
+                            Text(L10n.tr("%d matches", viewModel.totalMatches))
+                                .foregroundColor(.secondary)
+                                .accessibilityIdentifier("matchCount")
+                        }
                         Text("·")
                             .foregroundColor(.secondary)
                         Text(String(format: "%.1fms", viewModel.queryTimeMs))
@@ -284,7 +303,9 @@ struct ContentView: View {
                 if viewModel.totalMatches > 0 {
                     HStack {
                         Spacer()
-                        Text(L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
+                        Text(viewModel.resultLimitReached
+                             ? L10n.tr("Result %d, total results limited to 10000; add search terms.", viewModel.displayItems.count)
+                             : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
                             .font(.callout)
                             .foregroundColor(.secondary)
                             .padding(8)
@@ -320,6 +341,14 @@ struct ContentView: View {
         guard let window = hostWindow,
               SearchWindowSupport.isSearchWindow(window) else { return }
         SearchWindowSupport.configure(window, searchText: viewModel.searchText)
+    }
+
+    private func formattedIndexMemory(_ bytes: UInt64) -> String {
+        let mib = Double(bytes) / 1_048_576.0
+        if mib >= 1024 {
+            return String(format: "%.1fGB", mib / 1024.0)
+        }
+        return String(format: "%.0fMB", mib)
     }
 }
 

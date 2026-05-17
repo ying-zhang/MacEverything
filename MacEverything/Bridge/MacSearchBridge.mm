@@ -137,6 +137,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
                        realtimeMonitoring:(BOOL)realtimeMonitoring
                    contentIndexingEnabled:(BOOL)contentIndexingEnabled
               automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
+                            lowMemoryMode:(BOOL)lowMemoryMode
                                  httpPort:(uint16_t)httpPort {
     ServiceConfig config;
     config.scanRoots = NSStringArrayToVector(scanRoots);
@@ -154,6 +155,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     config.realtimeMonitoring = realtimeMonitoring;
     config.contentIndexingEnabled = contentIndexingEnabled;
     config.automaticMaintenanceEnabled = automaticMaintenanceEnabled;
+    config.lowMemoryMode = lowMemoryMode;
     _serviceEngine->updateConfig(config);
 }
 
@@ -463,6 +465,12 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
 
 - (uint32_t)liveRecordCount {
     return _serviceEngine->liveRecordCount();
+}
+
+- (uint64_t)indexMemoryApproxBytes {
+    auto engine = _serviceEngine->safeEngine();
+    if (!engine) return 0;
+    return static_cast<uint64_t>(engine->memoryBreakdown().totalApproxBytes);
 }
 
 - (BOOL)saveIndexToFile:(NSString *)path {

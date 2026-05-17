@@ -101,8 +101,62 @@ struct QueryCancelCtx {
     }
 };
 
+struct SearchEngineOptions {
+    bool enablePinyinInitials = true;
+    bool enablePathTrigramIndex = true;
+    bool enablePathIndex = true;
+
+    static SearchEngineOptions lowMemoryMode() {
+        SearchEngineOptions opts;
+        opts.enablePinyinInitials = false;
+        opts.enablePathTrigramIndex = false;
+        opts.enablePathIndex = false;
+        return opts;
+    }
+};
+
 class SearchEngine {
 public:
+    explicit SearchEngine(SearchEngineOptions options = {}) : options_(options) {}
+
+    const SearchEngineOptions& options() const { return options_; }
+
+    struct MemoryBreakdown {
+        size_t origNamePoolBytes = 0;
+        size_t namePoolBytes = 0;
+        size_t pinyinInitialsPoolBytes = 0;
+        size_t pathPoolBytes = 0;
+        size_t lowerPathPoolBytes = 0;
+        size_t pathIndicesBytes = 0;
+        size_t typesBytes = 0;
+        size_t sizesBytes = 0;
+        size_t modTimesBytes = 0;
+        size_t inodesBytes = 0;
+        size_t devIdsBytes = 0;
+        size_t pathIndexEntries = 0;
+        size_t pathIndexApproxBytes = 0;
+        size_t pathLookupEntries = 0;
+        size_t pathLookupApproxBytes = 0;
+        size_t lowerPathLookupEntries = 0;
+        size_t lowerPathLookupApproxBytes = 0;
+        size_t nameTrigramEntries = 0;
+        size_t nameTrigramApproxBytes = 0;
+        size_t nameTrigramPostingBytes = 0;
+        size_t pinyinTrigramEntries = 0;
+        size_t pinyinTrigramApproxBytes = 0;
+        size_t pinyinTrigramPostingBytes = 0;
+        size_t pathTrigramEntries = 0;
+        size_t pathTrigramApproxBytes = 0;
+        size_t pathTrigramPostingBytes = 0;
+        size_t pathIdxToRecordsBytes = 0;
+        size_t extensionIndexEntries = 0;
+        size_t extensionIndexApproxBytes = 0;
+        size_t extensionIndexPostingBytes = 0;
+        size_t totalApproxBytes = 0;
+    };
+
+    MemoryBreakdown memoryBreakdown() const;
+
     /// Takes ownership of scanned records and pre-computes lowercase names.
     void loadRecords(std::vector<FileRecord>&& records);
 
@@ -370,6 +424,8 @@ public:
     }
 
 private:
+    SearchEngineOptions options_;
+
     StringPool origNamePool_;              // contiguous original-case filenames (for v6 persistence)
     StringPool namePool_;                  // contiguous lowercase filenames
     StringPool pinyinInitialsPool_;        // per-record Chinese pinyin initials search keys
@@ -385,7 +441,8 @@ private:
     std::vector<int32_t>  devIds_;         // device ID
     std::unordered_map<std::string, uint32_t> pathLookup_; // path string -> pathPool_ index
     std::unordered_map<std::string, uint32_t> lowerPathLookup_; // lowered path -> pathPool_ index
-    std::unordered_map<std::string, uint32_t> pathIndex_; // fullPath -> record index
+    std::unordered_map<uint64_t, uint32_t> pathIndex_; // hash(lower fullPath) -> record index
+    std::unordered_map<uint64_t, std::vector<uint32_t>> pathIndexCollisions_; // rare hash collision overflow
     std::atomic<uint32_t> liveCount_{0};
     mutable std::shared_mutex mutex_;
 
@@ -409,6 +466,12 @@ private:
 
     /// Append a record to SoA columns. Must be called under unique_lock.
     void pushRecord(FileRecord&& rec);
+    uint32_t findIndexForLowerPathUnlocked(const std::string& lowerFullPath) const;
+    void setPathIndexUnlocked(const std::string& lowerFullPath, uint32_t idx);
+    void erasePathIndexUnlocked(const std::string& lowerFullPath);
+    bool lowerFullPathMatchesRecordUnlocked(uint32_t idx, const std::string& lowerFullPath) const;
+    static uint64_t hashLowerFullPath(std::string_view lowerFullPath);
+    void appendPinyinInitialsForRecordUnlocked(uint32_t idx, const std::string& name);
 
     /// Unlocked variants — caller must hold unique_lock on mutex_.
     bool removeByPathUnlocked(const std::string& fullPath);

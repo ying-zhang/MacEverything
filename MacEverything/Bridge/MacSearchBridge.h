@@ -68,10 +68,11 @@ NS_ASSUME_NONNULL_BEGIN
                       contentExcludedPaths:(NSArray<NSString *> *)contentExcludedPaths
                               includeHidden:(BOOL)includeHidden
                               includeSystem:(BOOL)includeSystem
-                    includeAppBundleContents:(BOOL)includeAppBundleContents
+                 includeAppBundleContents:(BOOL)includeAppBundleContents
                          realtimeMonitoring:(BOOL)realtimeMonitoring
                     contentIndexingEnabled:(BOOL)contentIndexingEnabled
                  automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
+                              lowMemoryMode:(BOOL)lowMemoryMode
                                   httpPort:(uint16_t)httpPort;
 
 /// Compact the index: write new base snapshot, clear WAL.
@@ -109,6 +110,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Number of live (non-tombstoned) records.
 - (uint32_t)liveRecordCount;
+
+/// Approximate memory used by the in-memory filename/path index.
+- (uint64_t)indexMemoryApproxBytes;
 
 /// Stop file system monitoring.
 - (void)stopMonitoring;

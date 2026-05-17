@@ -150,6 +150,7 @@ curl "http://localhost:19860/api/search?q=readme&limit=10"       # Search files
 curl "http://localhost:19860/api/search/content?q=TODO"           # Content search
 curl "http://localhost:19860/api/recent?limit=20"                 # Recent files
 curl "http://localhost:19860/api/status"                          # Index status
+curl "http://localhost:19860/api/memory"                          # Memory breakdown
 ```
 
 ### Installation

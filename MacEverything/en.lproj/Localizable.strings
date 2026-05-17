@@ -8,8 +8,10 @@
 "Syncing..." = "Syncing...";
 "Live" = "Live";
 "%d files indexed" = "%d files indexed";
+"%d files indexed (memory %@)" = "%d files indexed (memory %@)";
 "Content indexing %d/%d" = "Content indexing %d/%d";
 "%d matches" = "%d matches";
+"More than 10000 results" = "More than 10000 results";
 "Indexing files... %d items scanned" = "Indexing files... %d items scanned";
 "Content index is building..." = "Content index is building...";
 "Indexed %d / %d files" = "Indexed %d / %d files";
@@ -22,6 +24,7 @@
 "Recent Files" = "Recent Files";
 "Loading more results..." = "Loading more results...";
 "Showing %d of %d results" = "Showing %d of %d results";
+"Result %d, total results limited to 10000; add search terms." = "Result %d, total results limited to 10000; add search terms.";
 "Show MacEverything" = "Show MacEverything";
 "Hide MacEverything" = "Hide MacEverything";
 "New Search" = "New Search";
@@ -70,6 +73,8 @@
 "Index hidden files and folders" = "Index hidden files and folders";
 "Index system files" = "Index system files";
 "Index inside application bundles" = "Index inside application bundles";
+"Low memory mode" = "Low Memory Mode";
+"Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it." = "Low Memory Mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it.";
 "Refresh Mode" = "Refresh Mode";
 "Realtime" = "Realtime";
 "Manual" = "Manual";
@@ -136,6 +141,7 @@
 "Regular Expression Help..." = "Regular Expression Help...";
 "Regular Expression Help" = "Regular Expression Help";
 "Maximum Results: %d" = "Maximum Results: %d";
+"Maximum Results" = "Maximum Results";
 "Default Sort" = "Default Sort";
 "Sort Results By" = "Sort Results By";
 "Relevance" = "Relevance";
@@ -157,12 +163,19 @@
 "Comfortable" = "Comfortable";
 "Compact" = "Compact";
 "Startup & Window" = "Startup & Window";
+"Shortcuts" = "Shortcuts";
+"Configure the global shortcut used to show or hide MacEverything." = "Configure the global shortcut used to show or hide MacEverything.";
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "Enable HTTP API";
 "Port: %d" = "Port: %d";
+"Port" = "Port";
 "HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API listens on local loopback only: http://127.0.0.1:%d";
+"HTTP API listens on local loopback only: %@" = "HTTP API listens on local loopback only: %@";
 "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
+"Example: curl \"%@/api/search?q=readme&limit=10\"" = "Example: curl \"%@/api/search?q=readme&limit=10\"";
 "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status";
+"Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory" = "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory";
+"Enable MacEverything MCP integration for supported AI clients." = "Enable MacEverything MCP integration for supported AI clients.";
 "Maintenance" = "Maintenance";
 "Automatic index maintenance" = "Automatic index maintenance";
 "Add folder path..." = "Add folder path...";

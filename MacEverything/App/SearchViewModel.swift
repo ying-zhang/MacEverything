@@ -57,6 +57,7 @@ final class SearchServiceModel: ObservableObject {
     @Published var isScanning: Bool = false
     @Published var scanComplete: Bool = false
     @Published var totalRecords: UInt32 = 0
+    @Published var indexMemoryBytes: UInt64 = 0
     @Published var isMonitoring: Bool = false
     @Published var scannedCount: UInt64 = 0
     @Published var isContentIndexing: Bool = false
@@ -139,6 +140,7 @@ final class SearchServiceModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.totalRecords = count
+                self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
                 self.isScanning = false
                 self.scanComplete = true
                 self.isMonitoring = self.bridge.isMonitoring
@@ -164,6 +166,7 @@ final class SearchServiceModel: ObservableObject {
             realtimeMonitoring: snapshot.refreshMode == .realtime,
             contentIndexingEnabled: snapshot.contentIndexingEnabled,
             automaticMaintenanceEnabled: snapshot.automaticMaintenanceEnabled,
+            lowMemoryMode: snapshot.lowMemoryMode,
             httpPort: snapshot.httpServerEnabled ? UInt16(snapshot.httpPort) : UInt16(0)
         )
     }
@@ -173,6 +176,7 @@ final class SearchServiceModel: ObservableObject {
         indexChangeTask?.cancel()
         scanComplete = false
         totalRecords = 0
+        indexMemoryBytes = 0
         isMonitoring = false
         isSyncing = false
 
@@ -250,6 +254,7 @@ final class SearchServiceModel: ObservableObject {
 
     private func performIndexRefresh() {
         totalRecords = bridge.liveRecordCount()
+        indexMemoryBytes = bridge.indexMemoryApproxBytes()
         isMonitoring = bridge.isMonitoring
         isSyncing = bridge.isSyncing
         refreshContentIndexInfo()
@@ -262,6 +267,7 @@ class SearchViewModel: ObservableObject {
     @Published var searchText: String = ""
     @Published var displayItems: [FileItem] = []
     @Published var totalMatches: Int = 0
+    @Published var resultLimitReached: Bool = false
     @Published var queryTimeMs: Double = 0
     var isLoadingMore: Bool = false
     @Published var showingRecent: Bool = false
@@ -377,6 +383,7 @@ class SearchViewModel: ObservableObject {
 
         if text.isEmpty {
             totalMatches = 0
+            resultLimitReached = false
             queryTimeMs = 0
             cachedResults = []
             sourceItems = []
@@ -431,6 +438,7 @@ class SearchViewModel: ObservableObject {
             guard !keyword.isEmpty else {
                 contentResults = []
                 totalMatches = 0
+                resultLimitReached = false
                 queryTimeMs = 0
                 return
             }
@@ -484,6 +492,7 @@ class SearchViewModel: ObservableObject {
                 self.cachedItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
                 self.totalMatches = finalItems.count
+                self.resultLimitReached = results.count >= Int(maxResults)
                 self.queryTimeMs = elapsed
             }
         }
@@ -521,6 +530,7 @@ class SearchViewModel: ObservableObject {
                 guard let self, self.searchGeneration == gen else { return }
                 self.contentResults = finalItems
                 self.totalMatches = finalItems.count
+                self.resultLimitReached = false
                 self.queryTimeMs = elapsed
             }
         }
@@ -550,6 +560,7 @@ class SearchViewModel: ObservableObject {
     func clearContentResults() {
         contentResults = []
         totalMatches = 0
+        resultLimitReached = false
         queryTimeMs = 0
         if isContentSearch {
             contentKeyword = ""
@@ -577,6 +588,7 @@ class SearchViewModel: ObservableObject {
                 self.cachedItems = finalItems
                 self.applySortedResults(pageSize: Self.pageSize)
                 self.totalMatches = finalItems.count
+                self.resultLimitReached = false
                 self.showingRecent = true
                 self.queryTimeMs = 0
             }

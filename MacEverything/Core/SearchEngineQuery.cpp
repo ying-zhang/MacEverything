@@ -255,15 +255,24 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
         if (it == pathLookup_.end()) continue;
 
         uint32_t childPathIdx = it->second;
-        if (childPathIdx >= pathIdxToRecords_.size()) continue;
-
-        const auto& childRecords = pathIdxToRecords_[childPathIdx];
-        for (uint32_t childIdx : childRecords) {
-            if (types_[childIdx] == 0) continue; // skip tombstones
-            uint16_t nl = namePool_.length(childIdx);
-            uint8_t priority = 2; // children are all "contains" priority
-            uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
-            merged.push_back({childIdx, priority, pLen});
+        if (childPathIdx < pathIdxToRecords_.size()) {
+            const auto& childRecords = pathIdxToRecords_[childPathIdx];
+            for (uint32_t childIdx : childRecords) {
+                if (types_[childIdx] == 0) continue; // skip tombstones
+                uint16_t nl = namePool_.length(childIdx);
+                uint8_t priority = 2; // children are all "contains" priority
+                uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
+                merged.push_back({childIdx, priority, pLen});
+            }
+        } else {
+            for (uint32_t childIdx = 0; childIdx < totalSize; childIdx++) {
+                if (types_[childIdx] == 0) continue;
+                if (pathIndices_[childIdx] != childPathIdx) continue;
+                uint16_t nl = namePool_.length(childIdx);
+                uint8_t priority = 2;
+                uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
+                merged.push_back({childIdx, priority, pLen});
+            }
         }
     }
 }
@@ -286,16 +295,13 @@ static PreprocessedQuery preprocessQuery(const std::string& raw) {
     auto end = raw.find_last_not_of(" \t\r\n");
     std::string result = raw.substr(start, end - start + 1);
 
-    // 1) Expand leading ~ to the user's home directory so that patterns like
+    // 1) Expand leading ~/ to the user's home directory so that patterns like
     //    ~/*/*.txt match absolute indexed paths (e.g. /Users/username/Downloads/f1.txt).
-    if (!result.empty() && result[0] == '~') {
+    //    A bare "~" remains a literal search term.
+    if (result.size() >= 2 && result[0] == '~' && result[1] == '/') {
         const char* home = std::getenv("HOME");
         if (home) {
-            if (result.size() == 1) {
-                result = home;
-            } else if (result[1] == '/') {
-                result = std::string(home) + result.substr(1);
-            }
+            result = std::string(home) + result.substr(1);
         }
     }
 

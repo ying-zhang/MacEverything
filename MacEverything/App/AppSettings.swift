@@ -100,6 +100,7 @@ struct AppSettingsSnapshot {
     var httpPort: Int
     var hideDockIcon: Bool
     var automaticMaintenanceEnabled: Bool
+    var lowMemoryMode: Bool
 }
 
 @MainActor
@@ -142,6 +143,7 @@ final class AppSettings: ObservableObject {
         static let httpPort = "settings.httpPort"
         static let hideDockIcon = "settings.hideDockIcon"
         static let automaticMaintenanceEnabled = "settings.automaticMaintenanceEnabled"
+        static let lowMemoryMode = "settings.lowMemoryMode"
         static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
@@ -160,7 +162,7 @@ final class AppSettings: ObservableObject {
     @Published var defaultMatchFilename: Bool { didSet { save(defaultMatchFilename, Key.defaultMatchFilename) } }
     @Published var maxResults: Int {
         didSet {
-            let value = clamped(maxResults, 100, 100_000)
+            let value = clamped(maxResults, 100, 10_000)
             if value != maxResults { maxResults = value; return }
             save(value, Key.maxResults)
         }
@@ -203,6 +205,7 @@ final class AppSettings: ObservableObject {
         }
     }
     @Published var automaticMaintenanceEnabled: Bool { didSet { save(automaticMaintenanceEnabled, Key.automaticMaintenanceEnabled) } }
+    @Published var lowMemoryMode: Bool { didSet { save(lowMemoryMode, Key.lowMemoryMode) } }
     @Published var hideDockIcon: Bool { didSet { save(hideDockIcon, Key.hideDockIcon) } }
 
     private let defaults = UserDefaults.standard
@@ -225,7 +228,7 @@ final class AppSettings: ObservableObject {
         defaultCaseSensitive = defaults.object(forKey: Key.defaultCaseSensitive) as? Bool ?? false
         defaultWholeWord = defaults.object(forKey: Key.defaultWholeWord) as? Bool ?? false
         defaultMatchFilename = defaults.object(forKey: Key.defaultMatchFilename) as? Bool ?? false
-        maxResults = defaults.object(forKey: Key.maxResults) as? Int ?? 10_000
+        maxResults = clamped(defaults.object(forKey: Key.maxResults) as? Int ?? 10_000, 100, 10_000)
         sortField = SortField(rawValue: defaults.string(forKey: Key.sortField) ?? "") ?? .relevance
         sortAscending = defaults.object(forKey: Key.sortAscending) as? Bool ?? false
         contentIndexingEnabled = defaults.object(forKey: Key.contentIndexingEnabled) as? Bool ?? true
@@ -246,6 +249,7 @@ final class AppSettings: ObservableObject {
         httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? true
         httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
         automaticMaintenanceEnabled = defaults.object(forKey: Key.automaticMaintenanceEnabled) as? Bool ?? true
+        lowMemoryMode = defaults.object(forKey: Key.lowMemoryMode) as? Bool ?? false
         hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
 
         migrateSettingsIfNeeded()
@@ -266,7 +270,7 @@ final class AppSettings: ObservableObject {
             defaultCaseSensitive: defaultCaseSensitive,
             defaultWholeWord: defaultWholeWord,
             defaultMatchFilename: defaultMatchFilename,
-            maxResults: clamped(maxResults, 100, 100_000),
+            maxResults: clamped(maxResults, 100, 10_000),
             sortField: sortField,
             sortAscending: sortAscending,
             contentIndexingEnabled: contentIndexingEnabled,
@@ -287,7 +291,8 @@ final class AppSettings: ObservableObject {
             httpServerEnabled: httpServerEnabled,
             httpPort: clamped(httpPort, 1024, 65535),
             hideDockIcon: hideDockIcon,
-            automaticMaintenanceEnabled: automaticMaintenanceEnabled
+            automaticMaintenanceEnabled: automaticMaintenanceEnabled,
+            lowMemoryMode: lowMemoryMode
         )
     }
 
@@ -312,11 +317,22 @@ final class AppSettings: ObservableObject {
 
     private func migrateSettingsIfNeeded() {
         let version = defaults.object(forKey: Key.settingsSchemaVersion) as? Int ?? 0
-        guard version < 1 else { return }
 
-        let appRoots = Self.defaultApplicationRoots()
-        indexRoots = normalizedPaths(appRoots + indexRoots)
-        defaults.set(1, forKey: Key.settingsSchemaVersion)
+        if version < 1 {
+            let appRoots = Self.defaultApplicationRoots()
+            indexRoots = normalizedPaths(appRoots + indexRoots)
+        }
+
+        if version < 2 {
+            let supplementalRoots = Self.defaultSupplementalIndexRoots()
+            indexRoots = normalizedExistingPaths(indexRoots + supplementalRoots)
+            if contentSearchUsesIndexRoots {
+                contentSearchRoots = normalizedExistingPaths(contentSearchRoots + supplementalRoots)
+                contentIndexRoots = normalizedExistingPaths(contentIndexRoots + supplementalRoots)
+            }
+        }
+
+        defaults.set(2, forKey: Key.settingsSchemaVersion)
     }
 
     private func save(_ value: Bool, _ key: String) {
@@ -345,11 +361,19 @@ final class AppSettings: ObservableObject {
         let userFolders = names
             .map { home.appendingPathComponent($0).path }
             .filter { FileManager.default.fileExists(atPath: $0) }
-        return normalizedExistingPaths(defaultApplicationRoots() + userFolders)
+        return normalizedExistingPaths(defaultApplicationRoots() + userFolders + defaultSupplementalIndexRoots())
     }
 
     private static func defaultApplicationRoots() -> [String] {
         normalizedExistingPaths(["/Applications", "/System/Applications"])
+    }
+
+    private static func defaultSupplementalIndexRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return normalizedExistingPaths([
+            home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs").path,
+            home.appendingPathComponent("Public").path
+        ])
     }
 
     private static func defaultExcludedPaths() -> [String] {

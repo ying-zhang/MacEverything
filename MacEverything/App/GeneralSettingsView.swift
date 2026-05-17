@@ -67,7 +67,9 @@ struct GeneralSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     startupSection
+                    shortcutSection
                     serviceSection
+                    mcpSection
                     maintenanceSection
                 }
                 .padding()
@@ -112,7 +114,12 @@ struct GeneralSettingsView: View {
                 Toggle(L10n.tr("Index hidden files and folders"), isOn: $settings.indexHiddenFiles)
                 Toggle(L10n.tr("Index system files"), isOn: $settings.indexSystemFiles)
                 Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
+                Toggle(L10n.tr("Low memory mode"), isOn: $settings.lowMemoryMode)
             }
+
+            Text(L10n.tr("Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it."))
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L10n.tr("Refresh Mode"))
@@ -332,28 +339,30 @@ struct GeneralSettingsView: View {
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
-            HStack {
-                Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: defaultRegexBinding)
-                Spacer()
-                Button(L10n.tr("Regular Expression Help...")) {
-                    RegexHelpWindowController.shared.showWindow()
-                }
-            }
+            Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: defaultRegexBinding)
             Text(L10n.tr("Regex uses patterns such as ^README, \\.(swift|mm|cpp)$, [0-9]{4}, and .* to match filenames more precisely."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .textSelection(.enabled)
                 .padding(.leading, 20)
-            Button(L10n.tr("Search Syntax Help")) {
-                SearchSyntaxHelpWindowController.shared.showWindow()
+            HStack {
+                Button(L10n.tr("Search Syntax Help...")) {
+                    SearchSyntaxHelpWindowController.shared.showWindow()
+                }
+                Button(L10n.tr("Regular Expression Help...")) {
+                    RegexHelpWindowController.shared.showWindow()
+                }
             }
             Toggle(L10n.tr("Case Sensitive"), isOn: $settings.defaultCaseSensitive)
             Toggle(L10n.tr("Whole Word"), isOn: $settings.defaultWholeWord)
             Toggle(L10n.tr("Match Filename"), isOn: $settings.defaultMatchFilename)
 
-            Stepper(value: $settings.maxResults, in: 100...100_000, step: 100) {
-                Text(L10n.tr("Maximum Results: %d", settings.maxResults))
-            }
+            BoundedIntegerControl(
+                title: L10n.tr("Maximum Results"),
+                value: $settings.maxResults,
+                range: 100...10_000,
+                step: 100
+            )
 
             Picker(L10n.tr("Sort Results By"), selection: $settings.sortField) {
                 ForEach(SortField.allCases) { field in
@@ -433,22 +442,60 @@ struct GeneralSettingsView: View {
         }
     }
 
+    private var shortcutSection: some View {
+        SettingsSection(title: L10n.tr("Shortcuts")) {
+            HStack {
+                Text(L10n.tr("Configure the global shortcut used to show or hide MacEverything."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(L10n.tr("Shortcut Settings...")) {
+                    ShortcutSettingsWindowController.shared.showWindow()
+                }
+            }
+        }
+    }
+
     private var serviceSection: some View {
         SettingsSection(title: L10n.tr("HTTP API")) {
             Toggle(L10n.tr("Enable HTTP API"), isOn: $settings.httpServerEnabled)
-            Stepper(value: $settings.httpPort, in: 1024...65535, step: 1) {
-                Text(L10n.tr("Port: %d", settings.httpPort))
-            }
+                .onChange(of: settings.httpServerEnabled) {
+                    SearchServiceModel.shared.applyRuntimeConfiguration()
+                }
+            BoundedIntegerControl(
+                title: L10n.tr("Port"),
+                value: $settings.httpPort,
+                range: 1024...65535,
+                step: 1
+            )
             .disabled(!settings.httpServerEnabled)
+            .onChange(of: settings.httpPort) {
+                guard settings.httpServerEnabled else { return }
+                SearchServiceModel.shared.applyRuntimeConfiguration()
+            }
             VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.tr("HTTP API listens on local loopback only: http://127.0.0.1:%d", settings.httpPort))
-                Text(L10n.tr("Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"", settings.httpPort))
-                Text(L10n.tr("Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status"))
+                Text(L10n.tr("HTTP API listens on local loopback only: %@", "http://127.0.0.1:\(settings.httpPort)"))
+                Text(L10n.tr("Example: curl \"%@/api/search?q=readme&limit=10\"", "http://127.0.0.1:\(settings.httpPort)"))
+                Text(L10n.tr("Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory"))
             }
             .font(.caption)
             .foregroundColor(.secondary)
             .textSelection(.enabled)
             .disabled(!settings.httpServerEnabled)
+        }
+    }
+
+    private var mcpSection: some View {
+        SettingsSection(title: L10n.tr("MCP Integration")) {
+            ForEach(MCPClient.allCases, id: \.self) { client in
+                Toggle(client.displayName, isOn: Binding(
+                    get: { MCPConfigManager.isEnabled(for: client) },
+                    set: { MCPConfigManager.setEnabled($0, for: client) }
+                ))
+            }
+            Text(L10n.tr("Enable MacEverything MCP integration for supported AI clients."))
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 
@@ -631,5 +678,51 @@ private struct StringListEditor: View {
             lhs.localizedStandardCompare(rhs) == .orderedAscending
         }
         newItem = ""
+    }
+}
+
+private struct BoundedIntegerControl: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .frame(minWidth: 120, alignment: .leading)
+            TextField("", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 96)
+                .focused($isFocused)
+                .onSubmit(commitText)
+                .onChange(of: isFocused) {
+                    if !isFocused {
+                        commitText()
+                    }
+                }
+                .onChange(of: value) {
+                    guard !isFocused else { return }
+                    text = String(value)
+                }
+            Stepper("", value: $value, in: range, step: step)
+                .labelsHidden()
+            Text("\(range.lowerBound)-\(range.upperBound)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .onAppear {
+            text = String(value)
+        }
+    }
+
+    private func commitText() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsed = Int(trimmed) ?? value
+        value = min(max(parsed, range.lowerBound), range.upperBound)
+        text = String(value)
     }
 }

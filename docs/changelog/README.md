@@ -147,6 +147,7 @@
 | [130](130-publish-opensource-script.md) | chore | 开源发布脚本 (publish-opensource.sh) | 2026-04-19 |
 | [131](131-soa-tombstone-check.md) | performance | SoA Tombstone Check 优化 | 2026-04-19 |
 | [132](132-docs-release-preparation.md) | docs | 公开发布前文档审计与修复 | 2026-04-19 |
+| [146](146-release-1.5.md) | docs | MacEverything 1.5 Release Notes | 2026-05-21 |
 
 ## 统计
 
