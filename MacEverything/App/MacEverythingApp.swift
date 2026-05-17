@@ -66,6 +66,8 @@ struct MacEverythingApp: App {
 
 extension Notification.Name {
     static let rebuildIndex = Notification.Name("rebuildIndex")
+    static let rebuildContentIndex = Notification.Name("rebuildContentIndex")
+    static let clearContentIndex = Notification.Name("clearContentIndex")
 }
 
 class GeneralSettingsWindowController {
@@ -105,6 +107,28 @@ class ShortcutSettingsWindowController {
         let win = NSWindow(contentViewController: hostingController)
         win.title = L10n.tr("Shortcut Settings")
         win.styleMask = [.titled, .closable]
+        win.center()
+        win.makeKeyAndOrderFront(nil)
+        window = win
+    }
+}
+
+class ContentSettingsWindowController {
+    static let shared = ContentSettingsWindowController()
+    private var window: NSWindow?
+
+    func showWindow() {
+        if let existing = window, existing.isVisible {
+            existing.makeKeyAndOrderFront(nil)
+            return
+        }
+
+        let settingsView = ContentSettingsView()
+        let hostingController = NSHostingController(rootView: settingsView)
+        let win = NSWindow(contentViewController: hostingController)
+        win.title = L10n.tr("Content Settings")
+        win.styleMask = [.titled, .closable, .resizable]
+        win.minSize = NSSize(width: 420, height: 440)
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win

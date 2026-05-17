@@ -61,16 +61,30 @@ struct ResultRow: View {
     let isSelected: Bool
     let onSelect: () -> Void
     @ObservedObject private var settings = AppSettings.shared
+    @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
 
     var body: some View {
         let dense = settings.resultDensity == .compact
+        GeometryReader { proxy in
+            rowContent(dense: dense, widths: columnLayout.resolvedWidths(
+                showPath: settings.showPath,
+                showSize: settings.showSize,
+                showModifiedDate: settings.showModifiedDate,
+                availableWidth: proxy.size.width
+            ))
+        }
+        .frame(height: dense ? 28 : 38)
+        .accessibilityIdentifier("resultRow")
+    }
+
+    private func rowContent(dense: Bool, widths: ResolvedResultColumnWidths) -> some View {
         let highlighted = highlightCrossMatches(
             path: item.path, name: item.name, hints: hints,
             nameFont: .subheadline, nameColor: .primary,
             pathFont: .subheadline, pathColor: .secondary)
 
-        HStack(spacing: 10) {
+        return HStack(spacing: 10) {
             HStack(spacing: 8) {
                 fileIcon(for: item)
                     .resizable()
@@ -78,12 +92,12 @@ struct ResultRow: View {
                     .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
                 highlighted.nameText.lineLimit(1)
             }
-            .frame(width: ResultColumnLayout.nameWidth, alignment: .leading)
+            .frame(width: widths.name, alignment: .leading)
 
             if settings.showPath {
                 highlighted.pathText
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(width: widths.path, alignment: .leading)
             }
 
             if settings.showSize {
@@ -91,7 +105,7 @@ struct ResultRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                    .frame(width: ResultColumnLayout.sizeWidth, alignment: .trailing)
+                    .frame(width: widths.size, alignment: .trailing)
             }
 
             if settings.showModifiedDate {
@@ -99,9 +113,10 @@ struct ResultRow: View {
                     .font(.subheadline)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
-                    .frame(width: ResultColumnLayout.modifiedWidth, alignment: .leading)
+                    .frame(width: widths.modified, alignment: .leading)
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.vertical, dense ? 2 : 5)
         .padding(.horizontal, 6)
         .background(
@@ -136,7 +151,6 @@ struct ResultRow: View {
                 revealInFinder(item)
             }
         }
-        .accessibilityIdentifier("resultRow")
     }
 
     private func fileIcon(for item: FileItem) -> Image {
@@ -191,8 +205,49 @@ struct ResultRow: View {
     }
 }
 
-enum ResultColumnLayout {
-    static let nameWidth: CGFloat = 260
-    static let sizeWidth: CGFloat = 92
-    static let modifiedWidth: CGFloat = 150
+struct ResolvedResultColumnWidths {
+    let name: CGFloat
+    let path: CGFloat
+    let size: CGFloat
+    let modified: CGFloat
+}
+
+final class ResultColumnLayout: ObservableObject {
+    static let nameWidthRange: ClosedRange<CGFloat> = 160...520
+    static let pathWidthRange: ClosedRange<CGFloat> = 180...800
+    static let sizeWidthRange: ClosedRange<CGFloat> = 72...150
+    static let modifiedWidthRange: ClosedRange<CGFloat> = 120...240
+
+    @Published var nameWidth: CGFloat = 260
+    @Published var pathWidth: CGFloat = 260
+    @Published var sizeWidth: CGFloat = 92
+    @Published var modifiedWidth: CGFloat = 150
+
+    func resolvedWidths(showPath: Bool,
+                        showSize: Bool,
+                        showModifiedDate: Bool,
+                        availableWidth: CGFloat) -> ResolvedResultColumnWidths {
+        let visibleColumns = 1 + (showPath ? 1 : 0) + (showSize ? 1 : 0) + (showModifiedDate ? 1 : 0)
+        let interColumnSpace = CGFloat(max(0, visibleColumns - 1)) * 10
+        let contentWidth = max(0, availableWidth - 12)
+        let fixedTrailingWidth = (showSize ? sizeWidth : 0) + (showModifiedDate ? modifiedWidth : 0)
+
+        if showPath {
+            let remainingPathWidth = contentWidth - interColumnSpace - nameWidth - fixedTrailingWidth
+            return ResolvedResultColumnWidths(
+                name: nameWidth,
+                path: max(Self.pathWidthRange.lowerBound, remainingPathWidth),
+                size: sizeWidth,
+                modified: modifiedWidth
+            )
+        }
+
+        let remainingNameWidth = contentWidth - interColumnSpace - fixedTrailingWidth
+        return ResolvedResultColumnWidths(
+            name: max(Self.nameWidthRange.lowerBound, max(nameWidth, remainingNameWidth)),
+            path: pathWidth,
+            size: sizeWidth,
+            modified: modifiedWidth
+        )
+    }
 }
