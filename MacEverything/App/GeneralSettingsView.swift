@@ -28,7 +28,7 @@ struct GeneralSettingsView: View {
                 }
                 .padding()
             }
-            .tabItem { Text(L10n.tr("Indexes")) }
+            .tabItem { Text(L10n.tr("Index Scope")) }
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -178,7 +178,7 @@ struct GeneralSettingsView: View {
 
     private var contentSection: some View {
         SettingsSection(title: L10n.tr("Search Text Content")) {
-            Toggle(L10n.tr("Enable content indexing"), isOn: $settings.contentIndexingEnabled)
+            Toggle(L10n.tr("Enable text content indexing"), isOn: $settings.contentIndexingEnabled)
 
             HStack {
                 Text(L10n.tr("Max File Size"))
@@ -344,6 +344,9 @@ struct GeneralSettingsView: View {
                 .foregroundColor(.secondary)
                 .textSelection(.enabled)
                 .padding(.leading, 20)
+            Button(L10n.tr("Search Syntax Help")) {
+                SearchSyntaxHelpWindowController.shared.showWindow()
+            }
             Toggle(L10n.tr("Case Sensitive"), isOn: $settings.defaultCaseSensitive)
             Toggle(L10n.tr("Whole Word"), isOn: $settings.defaultWholeWord)
             Toggle(L10n.tr("Match Filename"), isOn: $settings.defaultMatchFilename)

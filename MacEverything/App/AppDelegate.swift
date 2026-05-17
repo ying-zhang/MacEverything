@@ -1,15 +1,21 @@
 import Cocoa
 import ServiceManagement
 import Combine
+import SwiftUI
 
-class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var hotkeyManager: HotkeyManager?
     private var statusItem: NSStatusItem?
     private var launchAtLoginItem: NSMenuItem?
     private var hideDockItem: NSMenuItem?
     private var mcpMenuItems: [MCPClient: NSMenuItem] = [:]
-    private(set) var mainSearchWindow: NSWindow?
+    private(set) var activeSearchWindow: NSWindow?
+    private var auxiliarySearchWindows: [NSWindow] = []
     private var settingsSink: AnyCancellable?
+
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        NSWindow.allowsAutomaticWindowTabbing = true
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         MacSearchBridge.initializeLogger()
@@ -24,9 +30,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         // Delay by one frame to let SwiftUI create the window
         DispatchQueue.main.async { [weak self] in
-            self?.mainSearchWindow = NSApp.windows.first { $0.title == "MacEverything" }
+            self?.activeSearchWindow = self?.frontmostSearchWindow()
+            self?.activeSearchWindow.map { SearchWindowSupport.configure($0, searchText: "") }
             if shouldMinimize {
-                self?.mainSearchWindow?.orderOut(nil)
+                self?.activeSearchWindow?.orderOut(nil)
                 NSApp.hide(nil)
             }
         }
@@ -65,6 +72,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let menu = NSMenu()
         menu.delegate = self
         menu.addItem(NSMenuItem(title: L10n.tr("Show MacEverything"), action: #selector(toggleWindow), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("New Search"), action: #selector(newSearchWindow), keyEquivalent: ""))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.tr("Rebuild Index"), action: #selector(rebuildIndex), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Shortcut Settings..."), action: #selector(openShortcutSettings), keyEquivalent: ""))
@@ -143,12 +151,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - NSMenuDelegate
 
     func menuWillOpen(_ menu: NSMenu) {
+        activeSearchWindow = frontmostSearchWindow() ?? activeSearchWindow
         if let item = menu.items.first {
-            let isVisible = mainSearchWindow?.isVisible ?? false
+            let isVisible = activeSearchWindow?.isVisible ?? false
             item.title = isVisible ? L10n.tr("Hide MacEverything") : L10n.tr("Show MacEverything")
         }
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
-        hideDockItem?.state = AppSettings.shared.hideDockIcon ? .on : .off
+        hideDockItem?.state = isDockIconHidden ? .on : .off
         for (client, item) in mcpMenuItems {
             item.state = MCPConfigManager.isEnabled(for: client) ? .on : .off
         }
@@ -157,17 +166,45 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - Menu Actions
 
     @objc private func toggleWindow() {
-        if let window = mainSearchWindow, window.isVisible {
+        activeSearchWindow = frontmostSearchWindow() ?? activeSearchWindow
+        if let window = activeSearchWindow, window.isVisible {
             NSApp.hide(nil)
         } else {
             NSApp.activate(ignoringOtherApps: true)
-            mainSearchWindow?.makeKeyAndOrderFront(nil)
+            if let window = activeSearchWindow {
+                window.makeKeyAndOrderFront(nil)
+            } else {
+                newSearchWindow()
+            }
+        }
+    }
+
+    @objc func newSearchWindow() {
+        NSApp.activate(ignoringOtherApps: true)
+        let hostingController = NSHostingController(rootView: ContentView())
+        let win = NSWindow(contentViewController: hostingController)
+        win.styleMask = NSWindow.StyleMask([.titled, .closable, .miniaturizable, .resizable])
+        win.setContentSize(NSSize(width: 800, height: 600))
+        win.minSize = NSSize(width: 600, height: 400)
+        win.delegate = self
+        SearchWindowSupport.configure(win, searchText: "")
+        win.center()
+        win.makeKeyAndOrderFront(self)
+        auxiliarySearchWindows.append(win)
+        activeSearchWindow = win
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow else { return }
+        auxiliarySearchWindows.removeAll { $0 === window }
+        if activeSearchWindow === window {
+            activeSearchWindow = frontmostSearchWindow()
         }
     }
 
     @objc private func rebuildIndex() {
         NSApp.activate(ignoringOtherApps: true)
-        mainSearchWindow?.makeKeyAndOrderFront(nil)
+        activeSearchWindow?.makeKeyAndOrderFront(nil)
         NotificationCenter.default.post(name: .rebuildIndex, object: nil)
     }
 
@@ -206,8 +243,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @MainActor
-    @objc private func toggleHideDockIcon() {
-        AppSettings.shared.hideDockIcon.toggle()
+    @objc func toggleHideDockIcon() {
+        AppSettings.shared.hideDockIcon = !isDockIconHidden
+        applyDockVisibility()
     }
 
     @objc private func quitApp() {
@@ -219,6 +257,16 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let policy: NSApplication.ActivationPolicy = AppSettings.shared.hideDockIcon ? .accessory : .regular
         if NSApp.activationPolicy() != policy {
             NSApp.setActivationPolicy(policy)
+        }
+    }
+
+    private var isDockIconHidden: Bool {
+        NSApp.activationPolicy() == .accessory || NSApp.activationPolicy() == .prohibited
+    }
+
+    private func frontmostSearchWindow() -> NSWindow? {
+        NSApp.orderedWindows.first { window in
+            SearchWindowSupport.isSearchWindow(window)
         }
     }
 
@@ -234,5 +282,54 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             return true
         }
         return false
+    }
+}
+
+enum SearchWindowSupport {
+    static let windowIdentifier = NSUserInterfaceItemIdentifier("MacEverything.searchWindow")
+    static let tabbingIdentifier = NSWindow.TabbingIdentifier("MacEverything.search")
+    nonisolated(unsafe) private static var tabBarRequestedWindows: Set<ObjectIdentifier> = []
+
+    static func isSearchWindow(_ window: NSWindow) -> Bool {
+        window.identifier == windowIdentifier ||
+        window.tabbingIdentifier == tabbingIdentifier ||
+        window.title == "MacEverything" ||
+        window.title.hasSuffix(" - MacEverything")
+    }
+
+    static func configure(_ window: NSWindow, searchText: String) {
+        window.identifier = windowIdentifier
+        window.tabbingIdentifier = tabbingIdentifier
+        window.tabbingMode = .preferred
+        window.title = title(for: searchText)
+        requestTabBarIfNeeded(for: window)
+    }
+
+    private static func title(for searchText: String) -> String {
+        let compact = searchText
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !compact.isEmpty else { return "MacEverything" }
+
+        let maxTitleKeywordLength = 18
+        let keyword = compact.count > maxTitleKeywordLength
+            ? String(compact.prefix(maxTitleKeywordLength)) + "..."
+            : compact
+        return "\(keyword) - MacEverything"
+    }
+
+    private static func requestTabBarIfNeeded(for window: NSWindow) {
+        let windowID = ObjectIdentifier(window)
+        guard !tabBarRequestedWindows.contains(windowID) else { return }
+        tabBarRequestedWindows.insert(windowID)
+
+        DispatchQueue.main.async {
+            guard window.isVisible else { return }
+            if window.tabGroup?.isTabBarVisible != true {
+                window.toggleTabBar(nil)
+            }
+        }
     }
 }

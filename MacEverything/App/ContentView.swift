@@ -3,13 +3,21 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
     @StateObject private var columnLayout = ResultColumnLayout()
+    @ObservedObject private var service = SearchServiceModel.shared
     @ObservedObject private var searchOptions = SearchOptions.shared
     @ObservedObject private var settings = AppSettings.shared
     @State private var scrollViewID = 0
+    @State private var hostWindow: NSWindow?
     @FocusState private var isSearchFieldFocused: Bool
 
     var body: some View {
         VStack(spacing: 0) {
+            WindowReader { window in
+                hostWindow = window
+                updateSearchWindowTitle()
+            }
+            .frame(width: 0, height: 0)
+
             // Permission banner
             PermissionView()
 
@@ -21,8 +29,8 @@ struct ContentView: View {
                 HighlightedSearchField(
                     text: $viewModel.searchText,
                     placeholder: settings.contentIndexingEnabled
-                        ? L10n.tr("Search files... (Chinese initials supported, infile: for content)")
-                        : L10n.tr("Search files... (Chinese initials supported)"),
+                        ? L10n.tr("Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)")
+                        : L10n.tr("Search filenames (Chinese initials supported; Cmd+N for new search)"),
                     ghostSuggestion: viewModel.ghostSuggestion,
                     isFocused: $isSearchFieldFocused,
                     onTab: {
@@ -39,6 +47,7 @@ struct ContentView: View {
                 .frame(height: 36)
                 .onChange(of: viewModel.searchText) {
                     viewModel.onSearchTextChanged()
+                    updateSearchWindowTitle()
                 }
                 SearchOptionBadges(options: searchOptions)
                 if !viewModel.searchText.isEmpty {
@@ -69,18 +78,18 @@ struct ContentView: View {
 
             // Status bar
             HStack {
-                if viewModel.isScanning {
+                if service.isScanning {
                     ProgressView()
                         .controlSize(.small)
-                    Text(L10n.tr("Scanning... %d items scanned", Int(viewModel.scannedCount)))
+                    Text(L10n.tr("Scanning... %d items scanned", Int(service.scannedCount)))
                         .foregroundColor(.secondary)
-                } else if viewModel.scanComplete {
-                    if viewModel.isSyncing {
+                } else if service.scanComplete {
+                    if service.isSyncing {
                         ProgressView()
                             .controlSize(.small)
                         Text(L10n.tr("Syncing..."))
                             .foregroundColor(.orange)
-                    } else if viewModel.isMonitoring {
+                    } else if service.isMonitoring {
                         Circle()
                             .fill(.green)
                             .frame(width: 6, height: 6)
@@ -88,10 +97,10 @@ struct ContentView: View {
                             .foregroundColor(.green)
                             .fontWeight(.medium)
                     }
-                    Text(L10n.tr("%d files indexed", Int(viewModel.totalRecords)))
+                    Text(L10n.tr("%d files indexed", Int(service.totalRecords)))
                         .foregroundColor(.secondary)
                         .accessibilityIdentifier("indexedCount")
-                    if viewModel.isContentIndexing, let progress = viewModel.contentIndexProgress {
+                    if service.isContentIndexing, let progress = service.contentIndexProgress {
                         Text("·")
                             .foregroundColor(.secondary)
                         ProgressView()
@@ -122,29 +131,29 @@ struct ContentView: View {
             Divider()
 
             // Results list
-            if viewModel.isScanning {
+            if service.isScanning {
                 VStack(spacing: 12) {
                     Spacer()
                     ProgressView()
                         .controlSize(.large)
-                    Text(L10n.tr("Indexing files... %d items scanned", Int(viewModel.scannedCount)))
+                    Text(L10n.tr("Indexing files... %d items scanned", Int(service.scannedCount)))
                         .font(.callout)
                         .foregroundColor(.secondary)
                     Spacer()
                 }
             } else if viewModel.isContentSearch {
                 // Content search results
-                if viewModel.contentResults.isEmpty && !viewModel.contentKeyword.isEmpty && viewModel.scanComplete {
+                if viewModel.contentResults.isEmpty && !viewModel.contentKeyword.isEmpty && service.scanComplete {
                     VStack(spacing: 8) {
                         Spacer()
-                        if viewModel.isContentIndexing {
+                        if service.isContentIndexing {
                             ProgressView()
                                 .controlSize(.large)
                                 .padding(.bottom, 4)
                             Text(L10n.tr("Content index is building..."))
                                 .font(.headline)
                                 .foregroundColor(.orange)
-                            if let progress = viewModel.contentIndexProgress {
+                            if let progress = service.contentIndexProgress {
                                 Text(L10n.tr("Indexed %d / %d files", Int(progress.indexed), Int(progress.total)))
                                     .font(.subheadline)
                                     .foregroundColor(.secondary)
@@ -159,7 +168,7 @@ struct ContentView: View {
                                 .padding(.bottom, 4)
                             Text(L10n.tr("No content matches found"))
                                 .foregroundColor(.secondary)
-                            if viewModel.contentIndexedCount == 0 {
+                            if service.contentIndexedCount == 0 {
                                 Text(L10n.tr("No files indexed. Configure extensions in Content Settings."))
                                     .font(.caption)
                                     .foregroundColor(.secondary)
@@ -199,7 +208,7 @@ struct ContentView: View {
                         .background(Color(nsColor: .controlBackgroundColor))
                     }
                 }
-            } else if viewModel.displayItems.isEmpty && !viewModel.searchText.isEmpty && viewModel.scanComplete {
+            } else if viewModel.displayItems.isEmpty && !viewModel.searchText.isEmpty && service.scanComplete {
                 VStack {
                     Spacer()
                     Text(L10n.tr("No results found"))
@@ -286,14 +295,14 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
-        .onReceive(NotificationCenter.default.publisher(for: .rebuildIndex)) { _ in
-            viewModel.rebuildIndex()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .rebuildContentIndex)) { _ in
-            viewModel.rebuildContentIndex()
+        .onAppear {
+            updateSearchWindowTitle()
         }
         .onReceive(NotificationCenter.default.publisher(for: .clearContentIndex)) { _ in
-            viewModel.clearContentIndex()
+            viewModel.clearContentResults()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .searchServiceDidRefresh)) { _ in
+            viewModel.refreshForServiceUpdate()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(true)
@@ -304,6 +313,34 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
             scrollViewID += 1
+        }
+    }
+
+    private func updateSearchWindowTitle() {
+        guard let window = hostWindow,
+              SearchWindowSupport.isSearchWindow(window) else { return }
+        SearchWindowSupport.configure(window, searchText: viewModel.searchText)
+    }
+}
+
+private struct WindowReader: NSViewRepresentable {
+    var onWindowChange: (NSWindow) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        DispatchQueue.main.async {
+            if let window = view.window {
+                onWindowChange(window)
+            }
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async {
+            if let window = nsView.window {
+                onWindowChange(window)
+            }
         }
     }
 }

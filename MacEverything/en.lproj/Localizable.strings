@@ -2,6 +2,8 @@
 "Search files..." = "Search files...";
 "Search files... (Chinese initials supported, infile: for content)" = "Search files... (Chinese initials supported, infile: for content)";
 "Search files... (Chinese initials supported)" = "Search files... (Chinese initials supported)";
+"Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)" = "Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)";
+"Search filenames (Chinese initials supported; Cmd+N for new search)" = "Search filenames (Chinese initials supported; Cmd+N for new search)";
 "Scanning... %d items scanned" = "Scanning... %d items scanned";
 "Syncing..." = "Syncing...";
 "Live" = "Live";
@@ -22,6 +24,7 @@
 "Showing %d of %d results" = "Showing %d of %d results";
 "Show MacEverything" = "Show MacEverything";
 "Hide MacEverything" = "Hide MacEverything";
+"New Search" = "New Search";
 "Rebuild Index" = "Rebuild Index";
 "Shortcut Settings..." = "Shortcut Settings...";
 "Content Settings..." = "Content Settings...";
@@ -55,6 +58,7 @@
 "Add" = "Add";
 "Apply" = "Apply";
 "Indexes" = "Indexes";
+"Index Scope" = "Index Scope";
 "Content" = "Content";
 "Search Text Content" = "Search Text Content";
 "Index Files" = "Index Files";
@@ -83,6 +87,7 @@
 "Exclusion changes take effect after rebuilding the index." = "Exclusion changes take effect after rebuilding the index.";
 "Rebuild Index Now" = "Rebuild Index Now";
 "Enable content indexing" = "Enable content indexing";
+"Enable text content indexing" = "Enable text content indexing";
 "Text Content Index Folders" = "Text Content Index Folders";
 "Text Content Excluded Folders" = "Text Content Excluded Folders";
 "Content Search Folders" = "Content Search Folders";
@@ -250,6 +255,7 @@
 "Use regex for a single query without changing the menu option." = "Use regex for a single query without changing the menu option.";
 "The regex: prefix treats the rest of the query as the pattern, including spaces and |." = "The regex: prefix treats the rest of the query as the pattern, including spaces and |.";
 "Common Regex Patterns" = "Common Regex Patterns";
+"Examples" = "Examples";
 "Match a or b" = "Match a or b";
 "Match gray or grey" = "Match gray or grey";
 "Match any single character" = "Match any single character";

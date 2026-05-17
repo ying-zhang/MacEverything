@@ -46,7 +46,7 @@ class HotkeyManager {
             var eventSpec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard),
                                           eventKind: UInt32(kEventHotKeyPressed))
             InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
-                let mainWindow = NSApp.windows.first { $0.title == "MacEverything" }
+                let mainWindow = NSApp.orderedWindows.first { SearchWindowSupport.isSearchWindow($0) }
                 if NSApp.isActive, let window = mainWindow, window.isVisible {
                     NSApp.hide(nil)
                 } else {

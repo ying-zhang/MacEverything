@@ -51,25 +51,222 @@ nonisolated private func isAllowedContentSearchPath(
 }
 
 @MainActor
-class SearchViewModel: ObservableObject {
-    @Published var searchText: String = ""
-    @Published var displayItems: [FileItem] = []
-    @Published var totalMatches: Int = 0
+final class SearchServiceModel: ObservableObject {
+    static let shared = SearchServiceModel()
+
     @Published var isScanning: Bool = false
     @Published var scanComplete: Bool = false
     @Published var totalRecords: UInt32 = 0
-    @Published var queryTimeMs: Double = 0
     @Published var isMonitoring: Bool = false
     @Published var scannedCount: UInt64 = 0
-    var isLoadingMore: Bool = false
-    @Published var showingRecent: Bool = false
-    @Published var isContentSearch: Bool = false
-    @Published var contentResults: [ContentFileItem] = []
     @Published var isContentIndexing: Bool = false
     @Published var contentIndexProgress: (indexed: UInt32, total: UInt32)?
     @Published var contentIndexedCount: UInt32 = 0
     @Published var contentIndexStorageBytes: UInt64 = 0
     @Published var isSyncing: Bool = false
+
+    private let bridge = MacSearchBridge.shared()
+    private let settings = AppSettings.shared
+    private var indexChangeTask: Task<Void, Never>?
+    private var notificationObservers: [NSObjectProtocol] = []
+    let refreshThrottle = IndexRefreshThrottle()
+
+    private static let indexChangeThrottleNs: UInt64 = 5_000_000_000 // 5 seconds
+
+    private init() {
+        notificationObservers.append(NotificationCenter.default.addObserver(forName: .rebuildIndex, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebuildIndex()
+            }
+        })
+        notificationObservers.append(NotificationCenter.default.addObserver(forName: .rebuildContentIndex, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.rebuildContentIndex()
+            }
+        })
+        notificationObservers.append(NotificationCenter.default.addObserver(forName: .clearContentIndex, object: nil, queue: .main) { [weak self] _ in
+            Task { @MainActor in
+                self?.clearContentIndex()
+            }
+        })
+        startIncremental()
+    }
+
+    func startIncremental() {
+        isScanning = true
+        scannedCount = 0
+
+        bridge.onScanProgress = { [weak self] fileCount, dirCount in
+            Task { @MainActor in
+                self?.scannedCount = fileCount + dirCount
+            }
+        }
+
+        bridge.onContentIndexProgress = { [weak self] indexed, total in
+            Task { @MainActor in
+                guard let self else { return }
+                guard self.settings.snapshot.contentIndexingEnabled else { return }
+                self.isContentIndexing = true
+                self.contentIndexProgress = (indexed, total)
+            }
+        }
+
+        bridge.onContentIndexComplete = { [weak self] totalIndexed in
+            Task { @MainActor in
+                guard let self else { return }
+                self.isContentIndexing = false
+                self.contentIndexProgress = nil
+                self.contentIndexedCount = totalIndexed
+                self.refreshContentIndexInfo()
+                NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+            }
+        }
+
+        bridge.onIndexChanged = { [weak self] in
+            Task { @MainActor in
+                self?.onIndexChanged()
+            }
+        }
+
+        isContentIndexing = false
+        contentIndexProgress = nil
+        applyRuntimeConfiguration()
+        refreshContentIndexInfo()
+
+        bridge.startIncremental(from: "/",
+                                cachePath: SearchViewModel.cachePath,
+                                walPath: SearchViewModel.walPath) { [weak self] count, _ in
+            Task { @MainActor in
+                guard let self else { return }
+                self.totalRecords = count
+                self.isScanning = false
+                self.scanComplete = true
+                self.isMonitoring = self.bridge.isMonitoring
+                self.isSyncing = self.bridge.isSyncing
+                self.refreshContentIndexInfo()
+                NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+            }
+        }
+    }
+
+    func applyRuntimeConfiguration() {
+        let snapshot = settings.snapshot
+        bridge.setContentMaxFileSize(UInt64(snapshot.contentMaxFileSizeMB * 1024 * 1024))
+        bridge.updateConfiguration(
+            withScanRoots: snapshot.indexRoots,
+            excludedPaths: snapshot.excludedPaths,
+            excludedPatterns: snapshot.excludedPatterns,
+            contentRoots: snapshot.contentIndexRoots,
+            contentExcludedPaths: snapshot.contentExcludedPaths,
+            includeHidden: snapshot.indexHiddenFiles,
+            includeSystem: snapshot.indexSystemFiles,
+            includeAppBundleContents: snapshot.indexAppBundleContents,
+            realtimeMonitoring: snapshot.refreshMode == .realtime,
+            contentIndexingEnabled: snapshot.contentIndexingEnabled,
+            automaticMaintenanceEnabled: snapshot.automaticMaintenanceEnabled,
+            httpPort: snapshot.httpServerEnabled ? UInt16(snapshot.httpPort) : UInt16(0)
+        )
+    }
+
+    func rebuildIndex() {
+        guard !isScanning else { return }
+        indexChangeTask?.cancel()
+        scanComplete = false
+        totalRecords = 0
+        isMonitoring = false
+        isSyncing = false
+
+        try? FileManager.default.removeItem(atPath: SearchViewModel.cachePath)
+        try? FileManager.default.removeItem(atPath: SearchViewModel.walPath)
+        try? FileManager.default.removeItem(atPath: SearchViewModel.pagesPath)
+        try? FileManager.default.removeItem(atPath: SearchViewModel.ptablePath)
+        try? FileManager.default.removeItem(atPath: SearchViewModel.v6Path)
+        try? FileManager.default.removeItem(atPath: SearchViewModel.contentIndexPath)
+        try? FileManager.default.removeItem(atPath: SearchViewModel.contentWalPath)
+
+        applyRuntimeConfiguration()
+        startIncremental()
+        NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+    }
+
+    func rebuildContentIndex() {
+        applyRuntimeConfiguration()
+        isContentIndexing = settings.snapshot.contentIndexingEnabled
+        contentIndexProgress = nil
+        DispatchQueue.global(qos: .utility).async { [bridge] in
+            bridge.rebuildContentIndex()
+        }
+    }
+
+    func clearContentIndex() {
+        isContentIndexing = false
+        contentIndexProgress = nil
+        contentIndexedCount = 0
+        contentIndexStorageBytes = 0
+        DispatchQueue.global(qos: .utility).async { [bridge] in
+            bridge.clearContentIndex()
+        }
+        NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+    }
+
+    func refreshContentIndexInfo() {
+        let fileManager = FileManager.default
+        let paths = [SearchViewModel.contentIndexPath, SearchViewModel.contentWalPath]
+        var total: UInt64 = 0
+        for path in paths {
+            guard let attrs = try? fileManager.attributesOfItem(atPath: path),
+                  let size = attrs[.size] as? NSNumber else { continue }
+            total += size.uint64Value
+        }
+        contentIndexedCount = bridge.contentIndexedFileCount()
+        contentIndexStorageBytes = total
+    }
+
+    func onWindowFocusChanged(_ focused: Bool) {
+        if refreshThrottle.focusChanged(focused) {
+            performIndexRefresh()
+            scheduleCooldown()
+        }
+    }
+
+    private func onIndexChanged() {
+        if refreshThrottle.indexChanged() {
+            performIndexRefresh()
+            scheduleCooldown()
+        }
+    }
+
+    private func scheduleCooldown() {
+        indexChangeTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: Self.indexChangeThrottleNs)
+            guard let self else { return }
+            self.indexChangeTask = nil
+            if self.refreshThrottle.cooldownExpired() {
+                self.performIndexRefresh()
+                self.scheduleCooldown()
+            }
+        }
+    }
+
+    private func performIndexRefresh() {
+        totalRecords = bridge.liveRecordCount()
+        isMonitoring = bridge.isMonitoring
+        isSyncing = bridge.isSyncing
+        refreshContentIndexInfo()
+        NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+    }
+}
+
+@MainActor
+class SearchViewModel: ObservableObject {
+    @Published var searchText: String = ""
+    @Published var displayItems: [FileItem] = []
+    @Published var totalMatches: Int = 0
+    @Published var queryTimeMs: Double = 0
+    var isLoadingMore: Bool = false
+    @Published var showingRecent: Bool = false
+    @Published var isContentSearch: Bool = false
+    @Published var contentResults: [ContentFileItem] = []
     @Published var ghostSuggestion: String? = nil
     @Published var selectedItemID: String? = nil
 
@@ -82,6 +279,7 @@ class SearchViewModel: ObservableObject {
     }
 
     private let bridge = MacSearchBridge.shared()
+    private let service: SearchServiceModel
     private let settings = AppSettings.shared
     private let historyStore = SearchHistoryStore()
     private let searchOptions = SearchOptions.shared
@@ -94,13 +292,9 @@ class SearchViewModel: ObservableObject {
     private var cachedItems: [FileItem] = []
     private var loadedCount: Int = 0
     private var searchGeneration: UInt64 = 0
-    nonisolated private static let guiSessionId: UInt64 = 1
+    private let sessionId: UInt64
 
     private static let pageSize: Int = 100
-    private static let indexChangeThrottleNs: UInt64 = 5_000_000_000 // 5 seconds
-
-    private var indexChangeTask: Task<Void, Never>?
-    let refreshThrottle = IndexRefreshThrottle()
 
     static var cacheDir: String {
         let base = NSSearchPathForDirectoriesInDomains(
@@ -142,12 +336,13 @@ class SearchViewModel: ObservableObject {
     }
 
     init() {
+        self.service = SearchServiceModel.shared
+        self.sessionId = Self.nextSessionId()
         optionsSink = searchOptions.objectWillChange.sink { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.onSearchOptionsChanged()
             }
         }
-        startIncremental()
     }
 
     private var maxResults: UInt32 {
@@ -155,163 +350,21 @@ class SearchViewModel: ObservableObject {
     }
 
     private func onSearchOptionsChanged() {
-        guard scanComplete, !searchText.isEmpty, !isContentSearch else { return }
+        guard service.scanComplete, !searchText.isEmpty, !isContentSearch else { return }
         searchTask?.cancel()
         searchGeneration &+= 1
-        bridge.cancelSession(Self.guiSessionId)
+        bridge.cancelSession(sessionId)
         performSearch(searchText)
     }
 
-    func startIncremental() {
-        isScanning = true
-        scannedCount = 0
+    private nonisolated static let sessionLock = NSLock()
+    private nonisolated(unsafe) static var lastSessionId: UInt64 = 0
 
-        bridge.onScanProgress = { [weak self] fileCount, dirCount in
-            Task { @MainActor in
-                self?.scannedCount = fileCount + dirCount
-            }
-        }
-
-        bridge.onContentIndexProgress = { [weak self] indexed, total in
-            Task { @MainActor in
-                guard let self = self else { return }
-                guard self.settings.snapshot.contentIndexingEnabled else { return }
-                self.isContentIndexing = true
-                self.contentIndexProgress = (indexed, total)
-            }
-        }
-
-        bridge.onContentIndexComplete = { [weak self] totalIndexed in
-            Task { @MainActor in
-                guard let self = self else { return }
-                self.isContentIndexing = false
-                self.contentIndexProgress = nil
-                self.contentIndexedCount = totalIndexed
-                self.refreshContentIndexInfo()
-                // Auto-refresh content search results after indexing completes
-                if self.isContentSearch && !self.contentKeyword.isEmpty {
-                    self.performContentSearch(self.contentKeyword)
-                }
-            }
-        }
-
-        // Set up FSEvents change callback before starting
-        bridge.onIndexChanged = { [weak self] in
-            Task { @MainActor in
-                self?.onIndexChanged()
-            }
-        }
-
-        isContentIndexing = false
-        contentIndexProgress = nil
-        applyRuntimeConfiguration()
-        refreshContentIndexInfo()
-
-        bridge.startIncremental(from: "/",
-                                cachePath: Self.cachePath,
-                                walPath: Self.walPath) { [weak self] count, didFullScan in
-            Task { @MainActor in
-                guard let self = self else { return }
-                self.totalRecords = count
-                self.isScanning = false
-                self.scanComplete = true
-                self.isMonitoring = self.bridge.isMonitoring
-                self.isSyncing = self.bridge.isSyncing
-                self.refreshContentIndexInfo()
-
-                if !self.searchText.isEmpty {
-                    self.performSearch(self.searchText)
-                } else if self.settings.snapshot.startupDisplayMode == .recent {
-                    self.loadRecentFiles()
-                } else {
-                    self.displayItems = []
-                    self.showingRecent = false
-                }
-            }
-        }
-    }
-
-    private func applyRuntimeConfiguration() {
-        let snapshot = settings.snapshot
-        bridge.setContentMaxFileSize(UInt64(snapshot.contentMaxFileSizeMB * 1024 * 1024))
-        bridge.updateConfiguration(
-            withScanRoots: snapshot.indexRoots,
-            excludedPaths: snapshot.excludedPaths,
-            excludedPatterns: snapshot.excludedPatterns,
-            contentRoots: snapshot.contentIndexRoots,
-            contentExcludedPaths: snapshot.contentExcludedPaths,
-            includeHidden: snapshot.indexHiddenFiles,
-            includeSystem: snapshot.indexSystemFiles,
-            includeAppBundleContents: snapshot.indexAppBundleContents,
-            realtimeMonitoring: snapshot.refreshMode == .realtime,
-            contentIndexingEnabled: snapshot.contentIndexingEnabled,
-            automaticMaintenanceEnabled: snapshot.automaticMaintenanceEnabled,
-            httpPort: snapshot.httpServerEnabled ? UInt16(snapshot.httpPort) : UInt16(0)
-        )
-    }
-
-    func rebuildIndex() {
-        guard !isScanning else { return }
-        searchTask?.cancel()
-        recentTask?.cancel()
-        indexChangeTask?.cancel()
-        searchGeneration &+= 1
-        scanComplete = false
-        displayItems = []
-        sourceItems = []
-        cachedItems = []
-        cachedResults = []
-        selectedItemID = nil
-        totalMatches = 0
-        queryTimeMs = 0
-        contentResults = []
-        isContentSearch = false
-        contentKeyword = ""
-
-        // Delete cached index files so startIncremental does a full scan
-        try? FileManager.default.removeItem(atPath: Self.cachePath)
-        try? FileManager.default.removeItem(atPath: Self.walPath)
-        try? FileManager.default.removeItem(atPath: Self.pagesPath)
-        try? FileManager.default.removeItem(atPath: Self.ptablePath)
-        try? FileManager.default.removeItem(atPath: Self.v6Path)
-        try? FileManager.default.removeItem(atPath: Self.contentIndexPath)
-        try? FileManager.default.removeItem(atPath: Self.contentWalPath)
-
-        applyRuntimeConfiguration()
-        startIncremental()
-    }
-
-    func rebuildContentIndex() {
-        applyRuntimeConfiguration()
-        isContentIndexing = settings.snapshot.contentIndexingEnabled
-        contentIndexProgress = nil
-        DispatchQueue.global(qos: .utility).async { [bridge] in
-            bridge.rebuildContentIndex()
-        }
-    }
-
-    func clearContentIndex() {
-        contentResults = []
-        totalMatches = 0
-        queryTimeMs = 0
-        isContentIndexing = false
-        contentIndexProgress = nil
-        DispatchQueue.global(qos: .utility).async { [bridge] in
-            bridge.clearContentIndex()
-        }
-    }
-
-    func refreshContentIndexInfo() {
-        let fileManager = FileManager.default
-        let paths = [Self.contentIndexPath, Self.contentWalPath]
-        var total: UInt64 = 0
-        for path in paths {
-            guard let attrs = try? fileManager.attributesOfItem(atPath: path),
-                  let size = attrs[.size] as? NSNumber else { continue }
-            total += size.uint64Value
-        }
-        contentIndexedCount = bridge.contentIndexedFileCount()
-        contentIndexStorageBytes = total
+    private nonisolated static func nextSessionId() -> UInt64 {
+        sessionLock.lock()
+        defer { sessionLock.unlock() }
+        lastSessionId &+= 1
+        return lastSessionId
     }
 
     func onSearchTextChanged() {
@@ -336,8 +389,8 @@ class SearchViewModel: ObservableObject {
             ghostSuggestion = nil
             settledTask?.cancel()
             // Cancel any in-flight queries for this GUI session
-            bridge.cancelSession(Self.guiSessionId)
-            if scanComplete {
+            bridge.cancelSession(sessionId)
+            if service.scanComplete {
                 // Slight delay so the stale query's dispatch_apply threads
                 // detect the generation change and exit before we compete for the thread pool
                 recentTask = Task { @MainActor [weak self] in
@@ -410,11 +463,12 @@ class SearchViewModel: ObservableObject {
         let maxResults = self.maxResults
         let pageSize = Self.pageSize
         let gen = searchGeneration
+        let sessionId = self.sessionId
         let query = searchOptions.buildQuery(keyword)
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
             // P-4: Use batch method — single engine lock, no NSNumber boxing
-            let results = bridge.queryResults(query, maxResults: maxResults, sessionId: Self.guiSessionId)
+            let results = bridge.queryResults(query, maxResults: maxResults, sessionId: sessionId)
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
             var items: [FileItem] = []
             items.reserveCapacity(results.count)
@@ -490,6 +544,15 @@ class SearchViewModel: ObservableObject {
             self.displayItems.append(contentsOf: self.cachedItems[currentLoaded..<nextEnd])
             self.loadedCount = nextEnd
             self.isLoadingMore = false
+        }
+    }
+
+    func clearContentResults() {
+        contentResults = []
+        totalMatches = 0
+        queryTimeMs = 0
+        if isContentSearch {
+            contentKeyword = ""
         }
     }
 
@@ -591,13 +654,6 @@ class SearchViewModel: ObservableObject {
         }
     }
 
-    private func onIndexChanged() {
-        if refreshThrottle.indexChanged() {
-            performIndexRefresh()
-            scheduleCooldown()
-        }
-    }
-
     func onWindowFocusChanged(_ focused: Bool) {
         if !focused {
             // Record search text to history when window loses focus
@@ -606,39 +662,21 @@ class SearchViewModel: ObservableObject {
                 historyStore.recordQuery(text)
             }
         }
-        if refreshThrottle.focusChanged(focused) {
-            performIndexRefresh()
-            scheduleCooldown()
+        service.onWindowFocusChanged(focused)
+        if focused {
+            refreshForServiceUpdate()
         }
     }
 
-    private func scheduleCooldown() {
-        indexChangeTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: Self.indexChangeThrottleNs)
-            guard let self else { return }
-            self.indexChangeTask = nil
-            if self.refreshThrottle.cooldownExpired() {
-                self.performIndexRefresh()
-                self.scheduleCooldown()
-            }
-        }
-    }
-
-    private func performIndexRefresh() {
-        totalRecords = bridge.liveRecordCount()
-        isMonitoring = bridge.isMonitoring
-        isSyncing = bridge.isSyncing
-        refreshContentIndexInfo()
-
-        // Skip expensive search/query when app is not focused.
-        // Results will refresh on focus regain via onWindowFocusChanged.
-        guard refreshThrottle.isFocused else { return }
-
+    func refreshForServiceUpdate() {
+        guard service.scanComplete else { return }
         if !searchText.isEmpty && !isContentSearch {
             performSearch(searchText)
         } else if isContentSearch && !contentKeyword.isEmpty {
             performContentSearch(contentKeyword)
         } else if showingRecent && settings.snapshot.startupDisplayMode == .recent {
+            loadRecentFiles()
+        } else if searchText.isEmpty && displayItems.isEmpty && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         }
     }

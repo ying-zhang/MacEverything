@@ -3,16 +3,30 @@ import SwiftUI
 @main
 struct MacEverythingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+    @ObservedObject private var appSettings = AppSettings.shared
     @ObservedObject private var searchOptions = SearchOptions.shared
 
     var body: some Scene {
-        Window("MacEverything", id: "main") {
+        WindowGroup("MacEverything", id: "search") {
             ContentView()
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 600)
         .commands {
+            CommandGroup(replacing: .newItem) {
+                Button(L10n.tr("New Search")) {
+                    appDelegate.newSearchWindow()
+                }
+                .keyboardShortcut("n", modifiers: [.command])
+            }
+
             CommandMenu(Text(L10n.tr("Search"))) {
+                Button(L10n.tr("New Search")) {
+                    appDelegate.newSearchWindow()
+                }
+
+                Divider()
+
                 Toggle(L10n.tr("Regex"), isOn: $searchOptions.isRegex)
                     .keyboardShortcut("r", modifiers: [.command])
                 Toggle(L10n.tr("Case Sensitive"), isOn: $searchOptions.isCaseSensitive)
@@ -21,10 +35,10 @@ struct MacEverythingApp: App {
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Toggle(L10n.tr("Match Filename"), isOn: $searchOptions.isMatchFilename)
                     .keyboardShortcut("f", modifiers: [.command, .shift])
-                Divider()
-                Button(L10n.tr("Regular Expression Help...")) {
-                    RegexHelpWindowController.shared.showWindow()
-                }
+            }
+
+            CommandGroup(after: .toolbar) {
+                Toggle(L10n.tr("Hide Dock Icon"), isOn: $appSettings.hideDockIcon)
             }
 
             CommandGroup(replacing: .help) {
@@ -32,6 +46,10 @@ struct MacEverythingApp: App {
                     SearchSyntaxHelpWindowController.shared.showWindow()
                 }
                 .keyboardShortcut("/", modifiers: [.command, .shift])
+
+                Button(L10n.tr("Regular Expression Help")) {
+                    RegexHelpWindowController.shared.showWindow()
+                }
             }
 
             CommandGroup(after: .appSettings) {
@@ -68,6 +86,7 @@ extension Notification.Name {
     static let rebuildIndex = Notification.Name("rebuildIndex")
     static let rebuildContentIndex = Notification.Name("rebuildContentIndex")
     static let clearContentIndex = Notification.Name("clearContentIndex")
+    static let searchServiceDidRefresh = Notification.Name("searchServiceDidRefresh")
 }
 
 class GeneralSettingsWindowController {
