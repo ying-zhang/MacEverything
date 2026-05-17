@@ -449,10 +449,10 @@ static void runMemoryOptimizationTests() {
         check(oob.empty(), "resolveRecordPath: out-of-bounds returns empty");
     }
 
-    // -- Test 15: Low memory mode disables optional resident indexes --
-    std::cout << "\n  --- Low memory mode optional index suppression ---\n";
+    // -- Test 15: Compressed memory mode disables optional accelerators but keeps pathIndex --
+    std::cout << "\n  --- Compressed memory optional index suppression ---\n";
     {
-        SearchEngine engine(SearchEngineOptions::lowMemoryMode());
+        SearchEngine engine(SearchEngineOptions::compressedMemoryMode());
         std::vector<FileRecord> records;
         records.push_back({"alpha.txt", "/Users/test/Documents", 1, 100, 1000});
         records.push_back({"beta.txt", "/Users/test/Downloads", 1, 200, 2000});
@@ -460,19 +460,19 @@ static void runMemoryOptimizationTests() {
         engine.loadRecords(std::move(records));
 
         auto mem = engine.memoryBreakdown();
-        check(mem.pathIndexEntries == 0, "LowMemory: full-path index disabled");
-        check(mem.pinyinTrigramEntries == 0, "LowMemory: pinyin trigram index disabled");
-        check(mem.pathTrigramEntries == 0, "LowMemory: path trigram index disabled");
-        check(mem.pathIdxToRecordsBytes == 0, "LowMemory: pathIdxToRecords disabled");
+        check(mem.pathIndexEntries == 3, "CompressedMemory: full-path index remains enabled");
+        check(mem.pinyinTrigramEntries == 0, "CompressedMemory: pinyin trigram index disabled");
+        check(mem.pathTrigramEntries == 0, "CompressedMemory: path trigram index disabled");
+        check(mem.pathIdxToRecordsBytes == 0, "CompressedMemory: pathIdxToRecords disabled");
 
         auto res = engine.query("alpha");
-        check(res.size() == 1, "LowMemory: filename query still works");
+        check(res.size() == 1, "CompressedMemory: filename query still works");
         check(engine.indexForPath("/Users/test/Documents/alpha.txt") == res[0],
-              "LowMemory: indexForPath falls back without pathIndex");
+              "CompressedMemory: indexForPath uses retained pathIndex");
         check(engine.removeByPath("/Users/test/Documents/alpha.txt"),
-              "LowMemory: removeByPath falls back without pathIndex");
+              "CompressedMemory: removeByPath uses retained pathIndex");
         res = engine.query("alpha");
-        check(res.empty(), "LowMemory: removed record is no longer queryable");
+        check(res.empty(), "CompressedMemory: removed record is no longer queryable");
     }
 
     std::cout << "\n";

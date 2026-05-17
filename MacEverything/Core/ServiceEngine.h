@@ -34,7 +34,8 @@ struct ServiceConfig {
     bool realtimeMonitoring = true;
     bool contentIndexingEnabled = true;
     bool automaticMaintenanceEnabled = true;
-    bool lowMemoryMode = false;
+    bool enablePinyinInitials = true;
+    bool enablePathTrigramIndex = true;
 };
 
 /// Pure C++ orchestration engine — owns all core objects and lifecycle.

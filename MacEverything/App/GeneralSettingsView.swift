@@ -114,12 +114,7 @@ struct GeneralSettingsView: View {
                 Toggle(L10n.tr("Index hidden files and folders"), isOn: $settings.indexHiddenFiles)
                 Toggle(L10n.tr("Index system files"), isOn: $settings.indexSystemFiles)
                 Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
-                Toggle(L10n.tr("Low memory mode"), isOn: $settings.lowMemoryMode)
             }
-
-            Text(L10n.tr("Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it."))
-                .font(.caption)
-                .foregroundColor(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L10n.tr("Refresh Mode"))
@@ -339,6 +334,13 @@ struct GeneralSettingsView: View {
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
+            Toggle(L10n.tr("Pinyin Initials Search"), isOn: $settings.enablePinyinInitials)
+            Toggle(L10n.tr("Accelerate Path Search"), isOn: $settings.enablePathSearchAcceleration)
+            Text(L10n.tr("Disabling Accelerate Path Search can reduce memory usage."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+                .padding(.leading, 20)
+
             Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: defaultRegexBinding)
             Text(L10n.tr("Regex uses patterns such as ^README, \\.(swift|mm|cpp)$, [0-9]{4}, and .* to match filenames more precisely."))
                 .font(.caption)

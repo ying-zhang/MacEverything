@@ -137,7 +137,8 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
                        realtimeMonitoring:(BOOL)realtimeMonitoring
                    contentIndexingEnabled:(BOOL)contentIndexingEnabled
               automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
-                            lowMemoryMode:(BOOL)lowMemoryMode
+                     enablePinyinInitials:(BOOL)enablePinyinInitials
+             enablePathSearchAcceleration:(BOOL)enablePathSearchAcceleration
                                  httpPort:(uint16_t)httpPort {
     ServiceConfig config;
     config.scanRoots = NSStringArrayToVector(scanRoots);
@@ -155,7 +156,8 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     config.realtimeMonitoring = realtimeMonitoring;
     config.contentIndexingEnabled = contentIndexingEnabled;
     config.automaticMaintenanceEnabled = automaticMaintenanceEnabled;
-    config.lowMemoryMode = lowMemoryMode;
+    config.enablePinyinInitials = enablePinyinInitials;
+    config.enablePathTrigramIndex = enablePathSearchAcceleration;
     _serviceEngine->updateConfig(config);
 }
 

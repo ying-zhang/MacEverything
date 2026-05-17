@@ -10,6 +10,14 @@ namespace fs = std::filesystem;
 
 namespace {
 
+SearchEngineOptions searchOptionsFromConfig(const ServiceConfig& config) {
+    SearchEngineOptions options;
+    options.enablePinyinInitials = config.enablePinyinInitials;
+    options.enablePathTrigramIndex = config.enablePathTrigramIndex;
+    options.enablePathIndex = true;
+    return options;
+}
+
 bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
     if (parent.empty()) return false;
     size_t parentLen = parent.size();
@@ -102,8 +110,7 @@ std::vector<std::string> exclusionsForRoots(const std::vector<std::string>& root
 ServiceEngine::ServiceEngine(const ServiceConfig& config)
     : config_(config)
 {
-    engine_ = std::make_shared<SearchEngine>(
-        config_.lowMemoryMode ? SearchEngineOptions::lowMemoryMode() : SearchEngineOptions{});
+    engine_ = std::make_shared<SearchEngine>(searchOptionsFromConfig(config_));
     watcher_ = std::make_shared<FileSystemWatcher>("live");
     contentIndex_ = std::make_shared<ContentIndex>();
     mutationQueue_ = dispatch_queue_create("com.maceverything.mutation", DISPATCH_QUEUE_SERIAL);
@@ -237,8 +244,7 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
         dispatch_source_cancel(timer);
 
         auto results = scanner->takeResults();
-        auto engine = std::make_shared<SearchEngine>(
-            this->config_.lowMemoryMode ? SearchEngineOptions::lowMemoryMode() : SearchEngineOptions{});
+        auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(this->config_));
         engine->loadRecords(std::move(results));
         uint32_t count = engine->liveRecordCount();
 
@@ -290,8 +296,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
 
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         auto incrementalStart = std::chrono::steady_clock::now();
-        auto engine = std::make_shared<SearchEngine>(
-            this->config_.lowMemoryMode ? SearchEngineOptions::lowMemoryMode() : SearchEngineOptions{});
+        auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(this->config_));
 
         std::string cacheStr = config_.cachePath + "/index.bin";
         std::string walStr   = config_.cachePath + "/index.wal";
@@ -619,7 +624,8 @@ std::string ServiceEngine::configSignature() const {
     out << "|hidden=" << (config_.includeHidden ? 1 : 0);
     out << "|system=" << (config_.includeSystem ? 1 : 0);
     out << "|bundles=" << (config_.includeAppBundleContents ? 1 : 0);
-    out << "|lowMemory=" << (config_.lowMemoryMode ? 1 : 0);
+    out << "|pinyin=" << (config_.enablePinyinInitials ? 1 : 0);
+    out << "|pathTrigram=" << (config_.enablePathTrigramIndex ? 1 : 0);
     return out.str();
 }
 

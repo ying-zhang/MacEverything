@@ -72,7 +72,8 @@ NS_ASSUME_NONNULL_BEGIN
                          realtimeMonitoring:(BOOL)realtimeMonitoring
                     contentIndexingEnabled:(BOOL)contentIndexingEnabled
                  automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
-                              lowMemoryMode:(BOOL)lowMemoryMode
+                       enablePinyinInitials:(BOOL)enablePinyinInitials
+               enablePathSearchAcceleration:(BOOL)enablePathSearchAcceleration
                                   httpPort:(uint16_t)httpPort;
 
 /// Compact the index: write new base snapshot, clear WAL.

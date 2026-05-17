@@ -1,18 +1,24 @@
-# 146 — MacEverything 1.5 Release Notes
+# 146 — MacEverything 1.5 发布说明
 
-MacEverything 1.5 focuses on making the search window and settings surface easier to discover, while keeping the fast indexed search workflow unchanged.
+MacEverything 1.5 重点改进搜索响应速度、索引内存占用，以及搜索窗口和设置界面的可用性。
 
-## Highlights
+## 主要变化
 
-- Search results now explain when the result set exceeds the configured maximum instead of presenting the maximum count as if it were the exact total.
-- The search window includes a Settings button next to the search options, making customization easier to discover.
-- Settings now includes shortcuts and MCP integration controls in the General tab.
-- Search syntax help and regular expression help are grouped together in Search & Results settings.
-- The menu bar shortcut menu now places Settings at the top of the second group and includes Regular Expression Help.
-- Default indexed folders now include iCloud Drive and the user's Public folder when those folders exist.
+- 搜索结果超过上限时，现在会明确提示结果已被限制，而不是把上限数量显示得像精确总数。
+- 主界面的索引文件数后会显示近似索引内存占用。
+- 启动时先加载基础记录，让 UI 和 HTTP 状态接口更早可响应，再在后台构建可选搜索加速索引。
+- 路径索引改为存储稳定的路径哈希，替代完整路径字符串，在保留重复检测能力的同时降低内存占用。
+- 拼音首字母搜索和“加速路径搜索”现在可以分别控制。
+- 修正 HTTP API 端口启用逻辑；端口、最大结果数等数字设置支持直接输入，并会校验合法范围。
+- 搜索窗口在搜索选项旁增加“设置”按钮，更容易找到配置入口。
+- 设置界面的“通用”页增加快捷键和 MCP 集成相关控制。
+- 搜索语法帮助和正则表达式帮助集中到“搜索与结果”设置页。
+- 菜单栏快捷菜单中，“设置”调整到第二组顶部，并增加“正则表达式帮助”。
+- 默认索引文件夹现在会在目录存在时包含 iCloud Drive 和用户的 Public 文件夹。
+- 刷新托盘图标，选中的 SVG 源文件保留在 `assets/`，同时保留备用图标和 HTML 预览页便于后续比较。
 
-## Release Checklist
+## 发布检查
 
-- GitHub Actions Release build should be used for the DMG.
-- The downloaded DMG should be tested manually before publishing the GitHub release.
-- The local 1.4 tag was removed because the corresponding GitHub tag and release were deleted.
+- DMG 应使用 GitHub Actions 构建产物。
+- 发布前应下载 DMG 进行手动验证。
+- 此版本作为 `v1.5` 发布到 GitHub Releases。
