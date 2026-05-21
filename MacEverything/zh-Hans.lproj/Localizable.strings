@@ -77,6 +77,7 @@
 "Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it." = "低内存模式会关闭拼音首字母搜索、路径 trigram 加速器和内存中的完整路径查找。修改后需要重建索引。";
 "Pinyin Initials Search" = "拼音首字母搜索";
 "Accelerate Path Search" = "加速路径搜索";
+"Disabling Accelerate Path Search can reduce memory usage." = "关闭“加速路径搜索”可降低内存占用。";
 "Turn off optional search accelerators to reduce memory usage. The in-memory full-path lookup remains enabled. Rebuild the index after changing these options." = "关闭可选搜索加速器可进一步降低内存占用。内存中的完整路径查找会保持启用。修改这些选项后需要重建索引。";
 "Refresh Mode" = "刷新模式";
 "Realtime" = "实时";

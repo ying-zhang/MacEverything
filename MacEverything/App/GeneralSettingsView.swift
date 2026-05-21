@@ -336,7 +336,7 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
             Toggle(L10n.tr("Pinyin Initials Search"), isOn: $settings.enablePinyinInitials)
             Toggle(L10n.tr("Accelerate Path Search"), isOn: $settings.enablePathSearchAcceleration)
-            Text(L10n.tr("Turn off optional search accelerators to reduce memory usage. The in-memory full-path lookup remains enabled. Rebuild the index after changing these options."))
+            Text(L10n.tr("Disabling Accelerate Path Search can reduce memory usage."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .padding(.leading, 20)
