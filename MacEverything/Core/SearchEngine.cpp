@@ -50,12 +50,26 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
     std::shared_lock lock(mutex_);
     MemoryBreakdown m;
     auto poolBytes = [](const StringPool& pool) {
-        return pool.rawSize() + static_cast<size_t>(pool.entryCount()) * sizeof(StringPool::Entry);
+        return pool.rawCapacity() + pool.entryCapacity() * sizeof(StringPool::Entry);
     };
     auto postingBytes = [](const auto& index) {
         size_t bytes = 0;
         for (const auto& [_, list] : index) {
             bytes += list.capacity() * sizeof(uint32_t);
+        }
+        return bytes;
+    };
+    auto stringMapBytes = [](const auto& map) {
+        size_t bytes = map.bucket_count() * sizeof(void*);
+        for (const auto& [key, _] : map) {
+            bytes += sizeof(key) + key.capacity() + sizeof(uint32_t) + sizeof(void*);
+        }
+        return bytes;
+    };
+    auto trigramMapBytes = [](const auto& map) {
+        size_t bytes = map.bucket_count() * sizeof(void*);
+        for (const auto& [_, list] : map) {
+            bytes += sizeof(Trigram) + sizeof(list) + list.capacity() * sizeof(uint32_t) + sizeof(void*);
         }
         return bytes;
     };
@@ -72,29 +86,36 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
     m.inodesBytes = inodes_.capacity() * sizeof(uint64_t);
     m.devIdsBytes = devIds_.capacity() * sizeof(int32_t);
     m.pathIndexEntries = pathIndex_.size();
-    for (const auto& [path, _] : pathIndex_) {
-        m.pathIndexApproxBytes += sizeof(path) + path.capacity() + sizeof(uint32_t);
-    }
+    m.pathIndexApproxBytes = stringMapBytes(pathIndex_);
+    m.pathLookupEntries = pathLookup_.size();
+    m.pathLookupApproxBytes = stringMapBytes(pathLookup_);
+    m.lowerPathLookupEntries = lowerPathLookup_.size();
+    m.lowerPathLookupApproxBytes = stringMapBytes(lowerPathLookup_);
     m.nameTrigramEntries = nameTrigramIndex_.size();
+    m.nameTrigramApproxBytes = trigramMapBytes(nameTrigramIndex_);
     m.nameTrigramPostingBytes = postingBytes(nameTrigramIndex_);
     m.pinyinTrigramEntries = pinyinInitialsTrigramIndex_.size();
+    m.pinyinTrigramApproxBytes = trigramMapBytes(pinyinInitialsTrigramIndex_);
     m.pinyinTrigramPostingBytes = postingBytes(pinyinInitialsTrigramIndex_);
     m.pathTrigramEntries = pathTrigramIndex_.size();
+    m.pathTrigramApproxBytes = trigramMapBytes(pathTrigramIndex_);
     m.pathTrigramPostingBytes = postingBytes(pathTrigramIndex_);
     m.pathIdxToRecordsBytes = pathIdxToRecords_.capacity() * sizeof(std::vector<uint32_t>);
     for (const auto& list : pathIdxToRecords_) {
         m.pathIdxToRecordsBytes += list.capacity() * sizeof(uint32_t);
     }
     m.extensionIndexEntries = extensionIndex_.size();
+    m.extensionIndexApproxBytes = stringMapBytes(extensionIndex_);
     m.extensionIndexPostingBytes = postingBytes(extensionIndex_);
 
     m.totalApproxBytes =
         m.origNamePoolBytes + m.namePoolBytes + m.pinyinInitialsPoolBytes +
         m.pathPoolBytes + m.lowerPathPoolBytes + m.pathIndicesBytes +
         m.typesBytes + m.sizesBytes + m.modTimesBytes + m.inodesBytes +
-        m.devIdsBytes + m.pathIndexApproxBytes + m.nameTrigramPostingBytes +
-        m.pinyinTrigramPostingBytes + m.pathTrigramPostingBytes +
-        m.pathIdxToRecordsBytes + m.extensionIndexPostingBytes;
+        m.devIdsBytes + m.pathIndexApproxBytes + m.pathLookupApproxBytes +
+        m.lowerPathLookupApproxBytes + m.nameTrigramApproxBytes +
+        m.pinyinTrigramApproxBytes + m.pathTrigramApproxBytes +
+        m.pathIdxToRecordsBytes + m.extensionIndexApproxBytes;
     return m;
 }
 

@@ -467,6 +467,12 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     return _serviceEngine->liveRecordCount();
 }
 
+- (uint64_t)indexMemoryApproxBytes {
+    auto engine = _serviceEngine->safeEngine();
+    if (!engine) return 0;
+    return static_cast<uint64_t>(engine->memoryBreakdown().totalApproxBytes);
+}
+
 - (BOOL)saveIndexToFile:(NSString *)path {
     auto engine = _serviceEngine->safeEngine();
     if (!engine) return NO;

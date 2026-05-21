@@ -162,7 +162,7 @@ final class AppSettings: ObservableObject {
     @Published var defaultMatchFilename: Bool { didSet { save(defaultMatchFilename, Key.defaultMatchFilename) } }
     @Published var maxResults: Int {
         didSet {
-            let value = clamped(maxResults, 100, 100_000)
+            let value = clamped(maxResults, 100, 10_000)
             if value != maxResults { maxResults = value; return }
             save(value, Key.maxResults)
         }
@@ -228,7 +228,7 @@ final class AppSettings: ObservableObject {
         defaultCaseSensitive = defaults.object(forKey: Key.defaultCaseSensitive) as? Bool ?? false
         defaultWholeWord = defaults.object(forKey: Key.defaultWholeWord) as? Bool ?? false
         defaultMatchFilename = defaults.object(forKey: Key.defaultMatchFilename) as? Bool ?? false
-        maxResults = defaults.object(forKey: Key.maxResults) as? Int ?? 10_000
+        maxResults = clamped(defaults.object(forKey: Key.maxResults) as? Int ?? 10_000, 100, 10_000)
         sortField = SortField(rawValue: defaults.string(forKey: Key.sortField) ?? "") ?? .relevance
         sortAscending = defaults.object(forKey: Key.sortAscending) as? Bool ?? false
         contentIndexingEnabled = defaults.object(forKey: Key.contentIndexingEnabled) as? Bool ?? true
@@ -270,7 +270,7 @@ final class AppSettings: ObservableObject {
             defaultCaseSensitive: defaultCaseSensitive,
             defaultWholeWord: defaultWholeWord,
             defaultMatchFilename: defaultMatchFilename,
-            maxResults: clamped(maxResults, 100, 100_000),
+            maxResults: clamped(maxResults, 100, 10_000),
             sortField: sortField,
             sortAscending: sortAscending,
             contentIndexingEnabled: contentIndexingEnabled,

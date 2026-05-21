@@ -57,6 +57,7 @@ final class SearchServiceModel: ObservableObject {
     @Published var isScanning: Bool = false
     @Published var scanComplete: Bool = false
     @Published var totalRecords: UInt32 = 0
+    @Published var indexMemoryBytes: UInt64 = 0
     @Published var isMonitoring: Bool = false
     @Published var scannedCount: UInt64 = 0
     @Published var isContentIndexing: Bool = false
@@ -139,6 +140,7 @@ final class SearchServiceModel: ObservableObject {
             Task { @MainActor in
                 guard let self else { return }
                 self.totalRecords = count
+                self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
                 self.isScanning = false
                 self.scanComplete = true
                 self.isMonitoring = self.bridge.isMonitoring
@@ -174,6 +176,7 @@ final class SearchServiceModel: ObservableObject {
         indexChangeTask?.cancel()
         scanComplete = false
         totalRecords = 0
+        indexMemoryBytes = 0
         isMonitoring = false
         isSyncing = false
 
@@ -251,6 +254,7 @@ final class SearchServiceModel: ObservableObject {
 
     private func performIndexRefresh() {
         totalRecords = bridge.liveRecordCount()
+        indexMemoryBytes = bridge.indexMemoryApproxBytes()
         isMonitoring = bridge.isMonitoring
         isSyncing = bridge.isSyncing
         refreshContentIndexInfo()

@@ -318,6 +318,8 @@ std::string HttpServer::route(const HttpRequest& req) {
             return handleRecent(req.query);
         } else if (req.path == "/api/status") {
             return handleStatus();
+        } else if (req.path == "/api/memory") {
+            return handleMemory();
         } else if (req.path == "/api/health") {
             return handleHealth();
         } else if (req.path == "/api/content/config") {
@@ -507,6 +509,65 @@ std::string HttpServer::handleStatus() {
          << ",\"contentIndexedFileCount\":"
          << (contentIndex ? contentIndex->indexedFileCount() : 0)
          << "}";
+    return jsonResponse(200, json.str());
+}
+
+std::string HttpServer::handleMemory() {
+    auto engine = getEngine_();
+    if (!engine) return errorResponse(503, "Engine not available");
+
+    auto m = engine->memoryBreakdown();
+    auto opts = engine->options();
+    auto field = [](std::ostringstream& json, const char* name, size_t bytes, bool comma = true) {
+        if (comma) json << ',';
+        json << "\"" << name << "\":{\"bytes\":" << bytes
+             << ",\"mib\":" << std::fixed << std::setprecision(2)
+             << (static_cast<double>(bytes) / 1048576.0) << "}";
+    };
+
+    std::ostringstream json;
+    json << "{\"recordCount\":" << engine->recordCount()
+         << ",\"liveRecordCount\":" << engine->liveRecordCount()
+         << ",\"options\":{"
+         << "\"enablePinyinInitials\":" << (opts.enablePinyinInitials ? "true" : "false")
+         << ",\"enablePathTrigramIndex\":" << (opts.enablePathTrigramIndex ? "true" : "false")
+         << ",\"enablePathIndex\":" << (opts.enablePathIndex ? "true" : "false")
+         << "},\"entries\":{"
+         << "\"pathIndex\":" << m.pathIndexEntries
+         << ",\"pathLookup\":" << m.pathLookupEntries
+         << ",\"lowerPathLookup\":" << m.lowerPathLookupEntries
+         << ",\"nameTrigram\":" << m.nameTrigramEntries
+         << ",\"pinyinTrigram\":" << m.pinyinTrigramEntries
+         << ",\"pathTrigram\":" << m.pathTrigramEntries
+         << ",\"extensionIndex\":" << m.extensionIndexEntries
+         << "},\"memory\":{";
+
+    field(json, "totalApprox", m.totalApproxBytes, false);
+    field(json, "origNamePool", m.origNamePoolBytes);
+    field(json, "namePool", m.namePoolBytes);
+    field(json, "pinyinInitialsPool", m.pinyinInitialsPoolBytes);
+    field(json, "pathPool", m.pathPoolBytes);
+    field(json, "lowerPathPool", m.lowerPathPoolBytes);
+    field(json, "pathIndices", m.pathIndicesBytes);
+    field(json, "types", m.typesBytes);
+    field(json, "sizes", m.sizesBytes);
+    field(json, "modTimes", m.modTimesBytes);
+    field(json, "inodes", m.inodesBytes);
+    field(json, "devIds", m.devIdsBytes);
+    field(json, "pathIndex", m.pathIndexApproxBytes);
+    field(json, "pathLookup", m.pathLookupApproxBytes);
+    field(json, "lowerPathLookup", m.lowerPathLookupApproxBytes);
+    field(json, "nameTrigram", m.nameTrigramApproxBytes);
+    field(json, "nameTrigramPostings", m.nameTrigramPostingBytes);
+    field(json, "pinyinTrigram", m.pinyinTrigramApproxBytes);
+    field(json, "pinyinTrigramPostings", m.pinyinTrigramPostingBytes);
+    field(json, "pathTrigram", m.pathTrigramApproxBytes);
+    field(json, "pathTrigramPostings", m.pathTrigramPostingBytes);
+    field(json, "pathIdxToRecords", m.pathIdxToRecordsBytes);
+    field(json, "extensionIndex", m.extensionIndexApproxBytes);
+    field(json, "extensionIndexPostings", m.extensionIndexPostingBytes);
+    json << "}}";
+
     return jsonResponse(200, json.str());
 }
 

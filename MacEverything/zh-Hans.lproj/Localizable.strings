@@ -8,9 +8,10 @@
 "Syncing..." = "正在同步...";
 "Live" = "实时";
 "%d files indexed" = "已索引 %d 个文件";
+"%d files indexed (memory %@)" = "已索引 %d 个文件（内存%@）";
 "Content indexing %d/%d" = "内容索引 %d/%d";
 "%d matches" = "%d 个匹配";
-"More than maximum results matched" = "匹配结果超过上限";
+"More than 10000 results" = "结果超过10000项";
 "Indexing files... %d items scanned" = "正在索引文件... 已扫描 %d 项";
 "Content index is building..." = "正在构建内容索引...";
 "Indexed %d / %d files" = "已索引 %d / %d 个文件";
@@ -23,7 +24,7 @@
 "Recent Files" = "最近文件";
 "Loading more results..." = "正在加载更多结果...";
 "Showing %d of %d results" = "正在显示 %d / %d 个结果";
-"Showing %d results. More results exist; add search terms to narrow the search." = "正在显示 %d 个结果。还有更多匹配项；请增加检索条件以缩小范围。";
+"Result %d, total results limited to 10000; add search terms." = "第%d项结果，总结果已限为10000项；建议增加搜索条件。";
 "Show MacEverything" = "显示 MacEverything";
 "Hide MacEverything" = "隐藏 MacEverything";
 "New Search" = "新建搜索";

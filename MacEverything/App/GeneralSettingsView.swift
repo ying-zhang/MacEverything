@@ -357,7 +357,7 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Whole Word"), isOn: $settings.defaultWholeWord)
             Toggle(L10n.tr("Match Filename"), isOn: $settings.defaultMatchFilename)
 
-            Stepper(value: $settings.maxResults, in: 100...100_000, step: 100) {
+            Stepper(value: $settings.maxResults, in: 100...10_000, step: 100) {
                 Text(L10n.tr("Maximum Results: %d", settings.maxResults))
             }
 

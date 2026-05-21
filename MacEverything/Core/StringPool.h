@@ -87,11 +87,17 @@ public:
     /// Total size of the raw buffer in bytes.
     size_t rawSize() const { return buffer_.size(); }
 
+    /// Allocated capacity of the raw buffer in bytes.
+    size_t rawCapacity() const { return buffer_.capacity(); }
+
     /// Pointer to entries array.
     const Entry* entries() const { return entries_.data(); }
 
     /// Number of entries (including tombstoned).
     uint32_t entryCount() const { return static_cast<uint32_t>(entries_.size()); }
+
+    /// Allocated capacity of the entry table.
+    size_t entryCapacity() const { return entries_.capacity(); }
 
     /// Pre-allocate buffer and entry storage.
     void reserve(size_t totalBytes, size_t entryCount) {

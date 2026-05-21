@@ -150,6 +150,7 @@ curl "http://localhost:19860/api/search?q=readme&limit=10"       # 搜索文件
 curl "http://localhost:19860/api/search/content?q=TODO"           # 内容搜索
 curl "http://localhost:19860/api/recent?limit=20"                 # 最近文件
 curl "http://localhost:19860/api/status"                          # 索引状态
+curl "http://localhost:19860/api/memory"                          # 内存拆分
 ```
 
 ### 安装

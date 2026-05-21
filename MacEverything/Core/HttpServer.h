@@ -57,6 +57,7 @@ private:
     std::string handleContentSearch(const std::unordered_map<std::string, std::string>& params);
     std::string handleRecent(const std::unordered_map<std::string, std::string>& params);
     std::string handleStatus();
+    std::string handleMemory();
     std::string handleHealth();
 
     // Admin endpoints

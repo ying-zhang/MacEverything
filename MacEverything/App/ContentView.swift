@@ -108,7 +108,9 @@ struct ContentView: View {
                             .foregroundColor(.green)
                             .fontWeight(.medium)
                     }
-                    Text(L10n.tr("%d files indexed", Int(service.totalRecords)))
+                    Text(L10n.tr("%d files indexed (memory %@)",
+                                 Int(service.totalRecords),
+                                 formattedIndexMemory(service.indexMemoryBytes)))
                         .foregroundColor(.secondary)
                         .accessibilityIdentifier("indexedCount")
                     if service.isContentIndexing, let progress = service.contentIndexProgress {
@@ -123,7 +125,7 @@ struct ContentView: View {
                         Text("·")
                             .foregroundColor(.secondary)
                         if viewModel.resultLimitReached {
-                            Text(L10n.tr("More than maximum results matched"))
+                            Text(L10n.tr("More than 10000 results"))
                                 .foregroundColor(.secondary)
                                 .accessibilityIdentifier("matchCount")
                         } else {
@@ -302,7 +304,7 @@ struct ContentView: View {
                     HStack {
                         Spacer()
                         Text(viewModel.resultLimitReached
-                             ? L10n.tr("Showing %d results. More results exist; add search terms to narrow the search.", viewModel.displayItems.count)
+                             ? L10n.tr("Result %d, total results limited to 10000; add search terms.", viewModel.displayItems.count)
                              : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
                             .font(.callout)
                             .foregroundColor(.secondary)
@@ -339,6 +341,14 @@ struct ContentView: View {
         guard let window = hostWindow,
               SearchWindowSupport.isSearchWindow(window) else { return }
         SearchWindowSupport.configure(window, searchText: viewModel.searchText)
+    }
+
+    private func formattedIndexMemory(_ bytes: UInt64) -> String {
+        let mib = Double(bytes) / 1_048_576.0
+        if mib >= 1024 {
+            return String(format: "%.1fGB", mib / 1024.0)
+        }
+        return String(format: "%.0fMB", mib)
     }
 }
 

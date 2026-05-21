@@ -111,6 +111,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Number of live (non-tombstoned) records.
 - (uint32_t)liveRecordCount;
 
+/// Approximate memory used by the in-memory filename/path index.
+- (uint64_t)indexMemoryApproxBytes;
+
 /// Stop file system monitoring.
 - (void)stopMonitoring;
 

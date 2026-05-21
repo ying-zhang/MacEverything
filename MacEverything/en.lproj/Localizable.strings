@@ -8,9 +8,10 @@
 "Syncing..." = "Syncing...";
 "Live" = "Live";
 "%d files indexed" = "%d files indexed";
+"%d files indexed (memory %@)" = "%d files indexed (memory %@)";
 "Content indexing %d/%d" = "Content indexing %d/%d";
 "%d matches" = "%d matches";
-"More than maximum results matched" = "More than maximum results matched";
+"More than 10000 results" = "More than 10000 results";
 "Indexing files... %d items scanned" = "Indexing files... %d items scanned";
 "Content index is building..." = "Content index is building...";
 "Indexed %d / %d files" = "Indexed %d / %d files";
@@ -23,7 +24,7 @@
 "Recent Files" = "Recent Files";
 "Loading more results..." = "Loading more results...";
 "Showing %d of %d results" = "Showing %d of %d results";
-"Showing %d results. More results exist; add search terms to narrow the search." = "Showing %d results. More results exist; add search terms to narrow the search.";
+"Result %d, total results limited to 10000; add search terms." = "Result %d, total results limited to 10000; add search terms.";
 "Show MacEverything" = "Show MacEverything";
 "Hide MacEverything" = "Hide MacEverything";
 "New Search" = "New Search";
