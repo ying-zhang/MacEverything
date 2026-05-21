@@ -75,6 +75,9 @@
 "Index inside application bundles" = "Index inside application bundles";
 "Low memory mode" = "Low Memory Mode";
 "Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it." = "Low Memory Mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it.";
+"Pinyin Initials Search" = "Pinyin Initials Search";
+"Accelerate Path Search" = "Accelerate Path Search";
+"Turn off optional search accelerators to reduce memory usage. The in-memory full-path lookup remains enabled. Rebuild the index after changing these options." = "Turn off optional search accelerators to reduce memory usage. The in-memory full-path lookup remains enabled. Rebuild the index after changing these options.";
 "Refresh Mode" = "Refresh Mode";
 "Realtime" = "Realtime";
 "Manual" = "Manual";

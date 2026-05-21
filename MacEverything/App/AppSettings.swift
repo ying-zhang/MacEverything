@@ -100,7 +100,8 @@ struct AppSettingsSnapshot {
     var httpPort: Int
     var hideDockIcon: Bool
     var automaticMaintenanceEnabled: Bool
-    var lowMemoryMode: Bool
+    var enablePinyinInitials: Bool
+    var enablePathSearchAcceleration: Bool
 }
 
 @MainActor
@@ -144,6 +145,8 @@ final class AppSettings: ObservableObject {
         static let hideDockIcon = "settings.hideDockIcon"
         static let automaticMaintenanceEnabled = "settings.automaticMaintenanceEnabled"
         static let lowMemoryMode = "settings.lowMemoryMode"
+        static let enablePinyinInitials = "settings.enablePinyinInitials"
+        static let enablePathSearchAcceleration = "settings.enablePathSearchAcceleration"
         static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
@@ -205,7 +208,8 @@ final class AppSettings: ObservableObject {
         }
     }
     @Published var automaticMaintenanceEnabled: Bool { didSet { save(automaticMaintenanceEnabled, Key.automaticMaintenanceEnabled) } }
-    @Published var lowMemoryMode: Bool { didSet { save(lowMemoryMode, Key.lowMemoryMode) } }
+    @Published var enablePinyinInitials: Bool { didSet { save(enablePinyinInitials, Key.enablePinyinInitials) } }
+    @Published var enablePathSearchAcceleration: Bool { didSet { save(enablePathSearchAcceleration, Key.enablePathSearchAcceleration) } }
     @Published var hideDockIcon: Bool { didSet { save(hideDockIcon, Key.hideDockIcon) } }
 
     private let defaults = UserDefaults.standard
@@ -249,7 +253,9 @@ final class AppSettings: ObservableObject {
         httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? true
         httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
         automaticMaintenanceEnabled = defaults.object(forKey: Key.automaticMaintenanceEnabled) as? Bool ?? true
-        lowMemoryMode = defaults.object(forKey: Key.lowMemoryMode) as? Bool ?? false
+        let oldLowMemoryMode = defaults.object(forKey: Key.lowMemoryMode) as? Bool ?? false
+        enablePinyinInitials = defaults.object(forKey: Key.enablePinyinInitials) as? Bool ?? !oldLowMemoryMode
+        enablePathSearchAcceleration = defaults.object(forKey: Key.enablePathSearchAcceleration) as? Bool ?? !oldLowMemoryMode
         hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
 
         migrateSettingsIfNeeded()
@@ -292,7 +298,8 @@ final class AppSettings: ObservableObject {
             httpPort: clamped(httpPort, 1024, 65535),
             hideDockIcon: hideDockIcon,
             automaticMaintenanceEnabled: automaticMaintenanceEnabled,
-            lowMemoryMode: lowMemoryMode
+            enablePinyinInitials: enablePinyinInitials,
+            enablePathSearchAcceleration: enablePathSearchAcceleration
         )
     }
 
@@ -332,7 +339,15 @@ final class AppSettings: ObservableObject {
             }
         }
 
-        defaults.set(2, forKey: Key.settingsSchemaVersion)
+        if version < 3,
+           defaults.object(forKey: Key.enablePinyinInitials) == nil,
+           defaults.object(forKey: Key.enablePathSearchAcceleration) == nil,
+           (defaults.object(forKey: Key.lowMemoryMode) as? Bool) == true {
+            enablePinyinInitials = false
+            enablePathSearchAcceleration = false
+        }
+
+        defaults.set(3, forKey: Key.settingsSchemaVersion)
     }
 
     private func save(_ value: Bool, _ key: String) {

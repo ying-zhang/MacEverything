@@ -166,7 +166,8 @@ final class SearchServiceModel: ObservableObject {
             realtimeMonitoring: snapshot.refreshMode == .realtime,
             contentIndexingEnabled: snapshot.contentIndexingEnabled,
             automaticMaintenanceEnabled: snapshot.automaticMaintenanceEnabled,
-            lowMemoryMode: snapshot.lowMemoryMode,
+            enablePinyinInitials: snapshot.enablePinyinInitials,
+            enablePathSearchAcceleration: snapshot.enablePathSearchAcceleration,
             httpPort: snapshot.httpServerEnabled ? UInt16(snapshot.httpPort) : UInt16(0)
         )
     }

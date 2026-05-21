@@ -106,12 +106,16 @@ struct SearchEngineOptions {
     bool enablePathTrigramIndex = true;
     bool enablePathIndex = true;
 
-    static SearchEngineOptions lowMemoryMode() {
+    static SearchEngineOptions compressedMemoryMode() {
         SearchEngineOptions opts;
         opts.enablePinyinInitials = false;
         opts.enablePathTrigramIndex = false;
-        opts.enablePathIndex = false;
+        opts.enablePathIndex = true;
         return opts;
+    }
+
+    static SearchEngineOptions lowMemoryMode() {
+        return compressedMemoryMode();
     }
 };
 

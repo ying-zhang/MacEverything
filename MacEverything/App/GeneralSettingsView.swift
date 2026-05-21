@@ -114,10 +114,11 @@ struct GeneralSettingsView: View {
                 Toggle(L10n.tr("Index hidden files and folders"), isOn: $settings.indexHiddenFiles)
                 Toggle(L10n.tr("Index system files"), isOn: $settings.indexSystemFiles)
                 Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
-                Toggle(L10n.tr("Low memory mode"), isOn: $settings.lowMemoryMode)
+                Toggle(L10n.tr("Pinyin Initials Search"), isOn: $settings.enablePinyinInitials)
+                Toggle(L10n.tr("Accelerate Path Search"), isOn: $settings.enablePathSearchAcceleration)
             }
 
-            Text(L10n.tr("Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it."))
+            Text(L10n.tr("Turn off optional search accelerators to reduce memory usage. The in-memory full-path lookup remains enabled. Rebuild the index after changing these options."))
                 .font(.caption)
                 .foregroundColor(.secondary)
 
