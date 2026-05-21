@@ -38,11 +38,9 @@ static void runTildeExpansionTests() {
         check(engine.getRecord(res[0]).name == "f1.txt", "Tilde glob '~/Downloads/*.txt': correct file");
     }
 
-    // ~ alone (just home dir) — expands to e.g. "/Users/username"
-    // This is a plain substring search; results depend on engine matching semantics.
-    // At minimum it should not crash.
+    // Bare ~ should remain a literal search term, not expand to the user's home path.
     res = engine.query("~");
-    (void)res; // Just verify no crash
+    check(res.size() == 0, "Bare tilde '~': no home expansion");
 
     // ~/*.jpg — the glob '*' in this engine matches across '/' boundaries,
     // so this matches photo.jpg even though it's nested deeper.

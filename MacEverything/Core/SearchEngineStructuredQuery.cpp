@@ -122,8 +122,19 @@ void SearchEngine::treeWalkDown(uint32_t dirIdx, const ParsedQuery& pq,
     if (it == lowerPathLookup_.end()) return;
 
     uint32_t childPathIdx = it->second;
-    if (childPathIdx >= pathIdxToRecords_.size()) return;
-    const auto& childRecords = pathIdxToRecords_[childPathIdx];
+    std::vector<uint32_t> fallbackChildRecords;
+    const std::vector<uint32_t>* childRecordsPtr = nullptr;
+    if (childPathIdx < pathIdxToRecords_.size()) {
+        childRecordsPtr = &pathIdxToRecords_[childPathIdx];
+    } else {
+        for (uint32_t idx = 0; idx < pathIndices_.size(); idx++) {
+            if (types_[idx] != 0 && pathIndices_[idx] == childPathIdx) {
+                fallbackChildRecords.push_back(idx);
+            }
+        }
+        childRecordsPtr = &fallbackChildRecords;
+    }
+    const auto& childRecords = *childRecordsPtr;
 
     if (fromSegIdx > toSegIdx) {
         // We've walked through all intermediate segments.
@@ -232,20 +243,28 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
 
         // Lambda: check name match and emit result for records under pathIdx pi
         auto emitRecordsForPath = [&](uint32_t pi) {
-            if (pi >= pathIdxToRecords_.size()) return;
-            const auto& recIds = pathIdxToRecords_[pi];
-            for (uint32_t idx : recIds) {
+            auto emitRecord = [&](uint32_t idx) {
                 if (cancel.cancelled()) return;
-                if (types_[idx] == 0) continue;
+                if (types_[idx] == 0) return;
 
                 const char* nd = namePool_.data(idx);
                 uint16_t nl = namePool_.length(idx);
 
-                if (!namePatternMatches(pq, nd, nl, types_[idx])) continue;
+                if (!namePatternMatches(pq, nd, nl, types_[idx])) return;
 
                 uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[idx]) + 1 + nl);
                 merged.push_back({idx, priority, pLen});
+            };
+
+            if (pi < pathIdxToRecords_.size()) {
+                for (uint32_t idx : pathIdxToRecords_[pi]) {
+                    emitRecord(idx);
+                }
+            } else {
+                for (uint32_t idx = 0; idx < pathIndices_.size(); idx++) {
+                    if (pathIndices_[idx] == pi) emitRecord(idx);
+                }
             }
         };
 

@@ -152,10 +152,15 @@ void SearchEngine::buildPinyinInitialsPoolFromOrigNames() {
 }
 
 void SearchEngine::buildPinyinInitialsIndex() {
+    if (!options_.enablePinyinInitials) {
+        pinyinInitialsTrigramIndex_.clear();
+        return;
+    }
     pinyinInitialsTrigramIndex_ = buildTrigramIndexFromData(types_, pinyinInitialsPool_);
 }
 
 void SearchEngine::addPinyinInitialsForRecord(uint32_t idx) {
+    if (!options_.enablePinyinInitials) return;
     if (idx >= pinyinInitialsPool_.entryCount()) return;
     auto len = pinyinInitialsPool_.length(idx);
     if (len == 0) return;
@@ -171,6 +176,7 @@ void SearchEngine::addPinyinInitialsForRecord(uint32_t idx) {
 }
 
 void SearchEngine::removePinyinInitialsForRecord(uint32_t idx) {
+    if (!options_.enablePinyinInitials) return;
     if (idx >= pinyinInitialsPool_.entryCount() || !pinyinInitialsPool_.isLive(idx)) return;
     auto trigrams = ContentIndex::extractTrigrams(
         std::string(pinyinInitialsPool_.data(idx), pinyinInitialsPool_.length(idx)));
@@ -329,14 +335,23 @@ SearchEngine::buildPathIdxToRecordsFromData(const std::vector<uint8_t>& types,
 }
 
 void SearchEngine::buildPathTrigramIndex() {
+    if (!options_.enablePathTrigramIndex) {
+        pathTrigramIndex_.clear();
+        return;
+    }
     pathTrigramIndex_ = buildPathTrigramIndexFromData(lowerPathPool_);
 }
 
 void SearchEngine::rebuildPathIdxToRecords() {
+    if (!options_.enablePathTrigramIndex) {
+        pathIdxToRecords_.clear();
+        return;
+    }
     pathIdxToRecords_ = buildPathIdxToRecordsFromData(types_, pathIndices_, pathPool_.entryCount());
 }
 
 void SearchEngine::addPathTrigramsForRecord(uint32_t idx) {
+    if (!options_.enablePathTrigramIndex) return;
     if (idx >= pathIndices_.size()) return;
     uint32_t pi = pathIndices_[idx];
     // Ensure pathIdxToRecords_ is large enough
@@ -349,6 +364,7 @@ void SearchEngine::addPathTrigramsForRecord(uint32_t idx) {
 }
 
 void SearchEngine::removePathTrigramsForRecord(uint32_t idx) {
+    if (!options_.enablePathTrigramIndex) return;
     if (idx >= pathIndices_.size()) return;
     uint32_t pi = pathIndices_[idx];
     if (pi >= pathIdxToRecords_.size()) return;
@@ -360,6 +376,7 @@ void SearchEngine::removePathTrigramsForRecord(uint32_t idx) {
 }
 
 void SearchEngine::ensurePathTrigramsForPathIdx(uint32_t pathIdx) {
+    if (!options_.enablePathTrigramIndex) return;
     // Check if this pathIdx already has entries in pathTrigramIndex_
     std::string lowerPath = lowerPathPool_.str(pathIdx);
     auto trigrams = ContentIndex::extractTrigrams(lowerPath);

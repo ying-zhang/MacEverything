@@ -336,7 +336,7 @@ static bool evalTerm(const QueryNode& node,
         if (me::simdContains(nameData, nameLen, lower.data(), lower.size())) {
             return true;
         }
-        if (isAsciiAlphaNumericQuery(lower) &&
+        if (pinyinData && pinyinLen > 0 && isAsciiAlphaNumericQuery(lower) &&
             me::simdContains(pinyinData, pinyinLen, lower.data(), lower.size())) {
             return true;
         }
@@ -949,8 +949,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (typesPtr[idx] == 0) continue;
                     const char* nd = namePool.data(idx);
                     uint16_t nl = namePool.length(idx);
-                    const char* pyd = pinyinPool.data(idx);
-                    uint16_t pyl = pinyinPool.length(idx);
+                    const char* pyd = nullptr;
+                    uint16_t pyl = 0;
+                    if (idx < pinyinPool.entryCount()) {
+                        pyd = pinyinPool.data(idx);
+                        pyl = pinyinPool.length(idx);
+                    }
                     uint32_t pi = pIndices[idx];
                     const char* pd = lowerPathPool.data(pi);
                     uint16_t pl = lowerPathPool.length(pi);
@@ -967,6 +971,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         if (me::simdContains(nd, nl, sTerm.data(), sTerm.size())) {
                             priority = namePriority(nd, nl, sTerm.data(), sTerm.size());
                         } else if (isAsciiAlphaNumericQuery(sTerm) &&
+                                   pyd &&
                                    me::simdContains(pyd, pyl, sTerm.data(), sTerm.size())) {
                             priority = 3;
                         } else {
@@ -998,8 +1003,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 if (smallTypesPtr[idx] == 0) continue;
                 const char* nd = namePool_.data(idx);
                 uint16_t nl = namePool_.length(idx);
-                const char* pyd = pinyinInitialsPool_.data(idx);
-                uint16_t pyl = pinyinInitialsPool_.length(idx);
+                const char* pyd = nullptr;
+                uint16_t pyl = 0;
+                if (idx < pinyinInitialsPool_.entryCount()) {
+                    pyd = pinyinInitialsPool_.data(idx);
+                    pyl = pinyinInitialsPool_.length(idx);
+                }
                 uint32_t pi = pathIndices_[idx];
                 const char* pd = lowerPathPool_.data(pi);
                 uint16_t pl = lowerPathPool_.length(pi);
@@ -1016,6 +1025,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (me::simdContains(nd, nl, scoringTerm.data(), scoringTerm.size())) {
                         priority = namePriority(nd, nl, scoringTerm.data(), scoringTerm.size());
                     } else if (isAsciiAlphaNumericQuery(scoringTerm) &&
+                               pyd &&
                                me::simdContains(pyd, pyl, scoringTerm.data(), scoringTerm.size())) {
                         priority = 3;
                     } else {
@@ -1119,8 +1129,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (typesPtr[idx] == 0) continue;
                     const char* nd = namePool.data(static_cast<uint32_t>(idx));
                     uint16_t nl = namePool.length(static_cast<uint32_t>(idx));
-                    const char* pyd = pinyinPool.data(static_cast<uint32_t>(idx));
-                    uint16_t pyl = pinyinPool.length(static_cast<uint32_t>(idx));
+                    const char* pyd = nullptr;
+                    uint16_t pyl = 0;
+                    if (idx < pinyinPool.entryCount()) {
+                        pyd = pinyinPool.data(static_cast<uint32_t>(idx));
+                        pyl = pinyinPool.length(static_cast<uint32_t>(idx));
+                    }
                     uint32_t pi = pIndices[idx];
                     const char* pd = lowerPathPool.data(pi);
                     uint16_t pl = lowerPathPool.length(pi);
@@ -1139,6 +1153,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         if (me::simdContains(nd, nl, sTerm.data(), sTerm.size())) {
                             priority = namePriority(nd, nl, sTerm.data(), sTerm.size());
                         } else if (isAsciiAlphaNumericQuery(sTerm) &&
+                                   pyd &&
                                    me::simdContains(pyd, pyl, sTerm.data(), sTerm.size())) {
                             priority = 3;
                         } else {

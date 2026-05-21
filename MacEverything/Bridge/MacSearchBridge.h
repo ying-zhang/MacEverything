@@ -68,10 +68,11 @@ NS_ASSUME_NONNULL_BEGIN
                       contentExcludedPaths:(NSArray<NSString *> *)contentExcludedPaths
                               includeHidden:(BOOL)includeHidden
                               includeSystem:(BOOL)includeSystem
-                    includeAppBundleContents:(BOOL)includeAppBundleContents
+                 includeAppBundleContents:(BOOL)includeAppBundleContents
                          realtimeMonitoring:(BOOL)realtimeMonitoring
                     contentIndexingEnabled:(BOOL)contentIndexingEnabled
                  automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
+                              lowMemoryMode:(BOOL)lowMemoryMode
                                   httpPort:(uint16_t)httpPort;
 
 /// Compact the index: write new base snapshot, clear WAL.

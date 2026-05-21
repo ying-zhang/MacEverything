@@ -114,7 +114,12 @@ struct GeneralSettingsView: View {
                 Toggle(L10n.tr("Index hidden files and folders"), isOn: $settings.indexHiddenFiles)
                 Toggle(L10n.tr("Index system files"), isOn: $settings.indexSystemFiles)
                 Toggle(L10n.tr("Index inside application bundles"), isOn: $settings.indexAppBundleContents)
+                Toggle(L10n.tr("Low memory mode"), isOn: $settings.lowMemoryMode)
             }
+
+            Text(L10n.tr("Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it."))
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             VStack(alignment: .leading, spacing: 6) {
                 Text(L10n.tr("Refresh Mode"))

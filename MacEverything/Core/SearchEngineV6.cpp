@@ -25,7 +25,8 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     // Install SoA columns directly (zero-copy from v6 file)
     origNamePool_ = std::move(origNamePool);
     namePool_ = std::move(namePool);
-    buildPinyinInitialsPoolFromOrigNames();
+    if (options_.enablePinyinInitials) buildPinyinInitialsPoolFromOrigNames();
+    else pinyinInitialsPool_.clear();
     pathIndices_ = std::move(pathIndices);
     pathPool_ = std::move(pathPool);
     lowerPathPool_ = std::move(lowerPathPool);
@@ -74,16 +75,15 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
 
     // Insert into pathIndex_ and merge tombstone dedup (last-wins overwrites)
     pathIndex_.clear();
-    pathIndex_.reserve(n);
-    for (uint32_t i = 0; i < n; i++) {
-        if (types_[i] == 0) continue;
-        pathIndex_[std::move(loweredPaths[i])] = i;
-    }
-
-    // Tombstone orphaned duplicates: records not in pathIndex_ as winners
     uint32_t actualLive = 0;
-    {
-        // Collect winner indices from pathIndex_ values
+    if (options_.enablePathIndex) {
+        pathIndex_.reserve(n);
+        for (uint32_t i = 0; i < n; i++) {
+            if (types_[i] == 0) continue;
+            pathIndex_[std::move(loweredPaths[i])] = i;
+        }
+
+        // Tombstone orphaned duplicates: records not in pathIndex_ as winners
         std::vector<bool> isWinner(n, false);
         for (const auto& [_, idx] : pathIndex_) {
             isWinner[idx] = true;
@@ -95,6 +95,10 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
             } else {
                 tombstoneAt(i);
             }
+        }
+    } else {
+        for (uint32_t i = 0; i < n; i++) {
+            if (types_[i] != 0) actualLive++;
         }
     }
 
@@ -134,7 +138,7 @@ void SearchEngine::completePhase2() {
         snapTypes = types_;
         snapModTimes = modTimes_;
         snapNamePool = namePool_;
-        snapPinyinInitialsPool = pinyinInitialsPool_;
+        if (options_.enablePinyinInitials) snapPinyinInitialsPool = pinyinInitialsPool_;
         snapLowerPathPool = lowerPathPool_;
         snapPathIndices = pathIndices_;
         snapPathPoolSize = pathPool_.entryCount();
@@ -143,9 +147,16 @@ void SearchEngine::completePhase2() {
 
     // Build all indices without holding any lock (~3s)
     auto trigramIndex = buildTrigramIndexFromData(snapTypes, snapNamePool);
-    auto pinyinInitialsTrigramIndex = buildTrigramIndexFromData(snapTypes, snapPinyinInitialsPool);
-    auto pathTrigramIndex = buildPathTrigramIndexFromData(snapLowerPathPool);
-    auto pathIdxToRecords = buildPathIdxToRecordsFromData(snapTypes, snapPathIndices, snapPathPoolSize);
+    std::unordered_map<Trigram, std::vector<uint32_t>> pinyinInitialsTrigramIndex;
+    if (options_.enablePinyinInitials) {
+        pinyinInitialsTrigramIndex = buildTrigramIndexFromData(snapTypes, snapPinyinInitialsPool);
+    }
+    std::unordered_map<Trigram, std::vector<uint32_t>> pathTrigramIndex;
+    std::vector<std::vector<uint32_t>> pathIdxToRecords;
+    if (options_.enablePathTrigramIndex) {
+        pathTrigramIndex = buildPathTrigramIndexFromData(snapLowerPathPool);
+        pathIdxToRecords = buildPathIdxToRecordsFromData(snapTypes, snapPathIndices, snapPathPoolSize);
+    }
     auto recentCache = buildRecentCacheFromData(snapTypes, snapModTimes, kRecentCacheSize);
     auto extensionIndex = buildExtensionIndexFromData(snapTypes, snapNamePool);
 
