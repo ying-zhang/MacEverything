@@ -106,7 +106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private static func makeStatusBarIcon() -> NSImage {
         if let assetImage = NSImage(named: "StatusBarIcon") {
             assetImage.size = NSSize(width: 18, height: 18)
-            assetImage.isTemplate = true
+            assetImage.isTemplate = false
             return assetImage
         }
 
