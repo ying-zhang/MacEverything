@@ -10,6 +10,7 @@
 "%d files indexed" = "%d files indexed";
 "Content indexing %d/%d" = "Content indexing %d/%d";
 "%d matches" = "%d matches";
+"More than maximum results matched" = "More than maximum results matched";
 "Indexing files... %d items scanned" = "Indexing files... %d items scanned";
 "Content index is building..." = "Content index is building...";
 "Indexed %d / %d files" = "Indexed %d / %d files";
@@ -22,6 +23,7 @@
 "Recent Files" = "Recent Files";
 "Loading more results..." = "Loading more results...";
 "Showing %d of %d results" = "Showing %d of %d results";
+"Showing %d results. More results exist; add search terms to narrow the search." = "Showing %d results. More results exist; add search terms to narrow the search.";
 "Show MacEverything" = "Show MacEverything";
 "Hide MacEverything" = "Hide MacEverything";
 "New Search" = "New Search";
@@ -157,12 +159,15 @@
 "Comfortable" = "Comfortable";
 "Compact" = "Compact";
 "Startup & Window" = "Startup & Window";
+"Shortcuts" = "Shortcuts";
+"Configure the global shortcut used to show or hide MacEverything." = "Configure the global shortcut used to show or hide MacEverything.";
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "Enable HTTP API";
 "Port: %d" = "Port: %d";
 "HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API listens on local loopback only: http://127.0.0.1:%d";
 "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
 "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status";
+"Enable MacEverything MCP integration for supported AI clients." = "Enable MacEverything MCP integration for supported AI clients.";
 "Maintenance" = "Maintenance";
 "Automatic index maintenance" = "Automatic index maintenance";
 "Add folder path..." = "Add folder path...";

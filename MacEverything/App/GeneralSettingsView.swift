@@ -67,7 +67,9 @@ struct GeneralSettingsView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     startupSection
+                    shortcutSection
                     serviceSection
+                    mcpSection
                     maintenanceSection
                 }
                 .padding()
@@ -332,20 +334,19 @@ struct GeneralSettingsView: View {
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
-            HStack {
-                Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: defaultRegexBinding)
-                Spacer()
-                Button(L10n.tr("Regular Expression Help...")) {
-                    RegexHelpWindowController.shared.showWindow()
-                }
-            }
+            Toggle(L10n.tr("Use regular expressions (advanced)"), isOn: defaultRegexBinding)
             Text(L10n.tr("Regex uses patterns such as ^README, \\.(swift|mm|cpp)$, [0-9]{4}, and .* to match filenames more precisely."))
                 .font(.caption)
                 .foregroundColor(.secondary)
                 .textSelection(.enabled)
                 .padding(.leading, 20)
-            Button(L10n.tr("Search Syntax Help")) {
-                SearchSyntaxHelpWindowController.shared.showWindow()
+            HStack {
+                Button(L10n.tr("Search Syntax Help...")) {
+                    SearchSyntaxHelpWindowController.shared.showWindow()
+                }
+                Button(L10n.tr("Regular Expression Help...")) {
+                    RegexHelpWindowController.shared.showWindow()
+                }
             }
             Toggle(L10n.tr("Case Sensitive"), isOn: $settings.defaultCaseSensitive)
             Toggle(L10n.tr("Whole Word"), isOn: $settings.defaultWholeWord)
@@ -433,6 +434,20 @@ struct GeneralSettingsView: View {
         }
     }
 
+    private var shortcutSection: some View {
+        SettingsSection(title: L10n.tr("Shortcuts")) {
+            HStack {
+                Text(L10n.tr("Configure the global shortcut used to show or hide MacEverything."))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Spacer()
+                Button(L10n.tr("Shortcut Settings...")) {
+                    ShortcutSettingsWindowController.shared.showWindow()
+                }
+            }
+        }
+    }
+
     private var serviceSection: some View {
         SettingsSection(title: L10n.tr("HTTP API")) {
             Toggle(L10n.tr("Enable HTTP API"), isOn: $settings.httpServerEnabled)
@@ -449,6 +464,20 @@ struct GeneralSettingsView: View {
             .foregroundColor(.secondary)
             .textSelection(.enabled)
             .disabled(!settings.httpServerEnabled)
+        }
+    }
+
+    private var mcpSection: some View {
+        SettingsSection(title: L10n.tr("MCP Integration")) {
+            ForEach(MCPClient.allCases, id: \.self) { client in
+                Toggle(client.displayName, isOn: Binding(
+                    get: { MCPConfigManager.isEnabled(for: client) },
+                    set: { MCPConfigManager.setEnabled($0, for: client) }
+                ))
+            }
+            Text(L10n.tr("Enable MacEverything MCP integration for supported AI clients."))
+                .font(.caption)
+                .foregroundColor(.secondary)
         }
     }
 

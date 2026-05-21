@@ -262,6 +262,7 @@ class SearchViewModel: ObservableObject {
     @Published var searchText: String = ""
     @Published var displayItems: [FileItem] = []
     @Published var totalMatches: Int = 0
+    @Published var resultLimitReached: Bool = false
     @Published var queryTimeMs: Double = 0
     var isLoadingMore: Bool = false
     @Published var showingRecent: Bool = false
@@ -377,6 +378,7 @@ class SearchViewModel: ObservableObject {
 
         if text.isEmpty {
             totalMatches = 0
+            resultLimitReached = false
             queryTimeMs = 0
             cachedResults = []
             sourceItems = []
@@ -431,6 +433,7 @@ class SearchViewModel: ObservableObject {
             guard !keyword.isEmpty else {
                 contentResults = []
                 totalMatches = 0
+                resultLimitReached = false
                 queryTimeMs = 0
                 return
             }
@@ -484,6 +487,7 @@ class SearchViewModel: ObservableObject {
                 self.cachedItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
                 self.totalMatches = finalItems.count
+                self.resultLimitReached = results.count >= Int(maxResults)
                 self.queryTimeMs = elapsed
             }
         }
@@ -521,6 +525,7 @@ class SearchViewModel: ObservableObject {
                 guard let self, self.searchGeneration == gen else { return }
                 self.contentResults = finalItems
                 self.totalMatches = finalItems.count
+                self.resultLimitReached = false
                 self.queryTimeMs = elapsed
             }
         }
@@ -550,6 +555,7 @@ class SearchViewModel: ObservableObject {
     func clearContentResults() {
         contentResults = []
         totalMatches = 0
+        resultLimitReached = false
         queryTimeMs = 0
         if isContentSearch {
             contentKeyword = ""
@@ -577,6 +583,7 @@ class SearchViewModel: ObservableObject {
                 self.cachedItems = finalItems
                 self.applySortedResults(pageSize: Self.pageSize)
                 self.totalMatches = finalItems.count
+                self.resultLimitReached = false
                 self.showingRecent = true
                 self.queryTimeMs = 0
             }

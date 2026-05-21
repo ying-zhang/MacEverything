@@ -74,10 +74,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         menu.addItem(NSMenuItem(title: L10n.tr("Show MacEverything"), action: #selector(toggleWindow), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("New Search"), action: #selector(newSearchWindow), keyEquivalent: ""))
         menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: L10n.tr("Settings..."), action: #selector(openSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Rebuild Index"), action: #selector(rebuildIndex), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Shortcut Settings..."), action: #selector(openShortcutSettings), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: L10n.tr("Settings..."), action: #selector(openSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Search Syntax Help..."), action: #selector(openSearchSyntaxHelp), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: L10n.tr("Regular Expression Help..."), action: #selector(openRegexHelp), keyEquivalent: ""))
 
         let mcpSubmenu = NSMenu(title: L10n.tr("MCP Integration"))
         for client in MCPClient.allCases {
@@ -221,6 +222,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     @objc private func openSearchSyntaxHelp() {
         NSApp.activate(ignoringOtherApps: true)
         SearchSyntaxHelpWindowController.shared.showWindow()
+    }
+
+    @objc private func openRegexHelp() {
+        NSApp.activate(ignoringOtherApps: true)
+        Task { @MainActor in
+            RegexHelpWindowController.shared.showWindow()
+        }
     }
 
     @objc private func toggleMCPClient(_ sender: NSMenuItem) {

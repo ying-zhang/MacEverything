@@ -312,11 +312,22 @@ final class AppSettings: ObservableObject {
 
     private func migrateSettingsIfNeeded() {
         let version = defaults.object(forKey: Key.settingsSchemaVersion) as? Int ?? 0
-        guard version < 1 else { return }
 
-        let appRoots = Self.defaultApplicationRoots()
-        indexRoots = normalizedPaths(appRoots + indexRoots)
-        defaults.set(1, forKey: Key.settingsSchemaVersion)
+        if version < 1 {
+            let appRoots = Self.defaultApplicationRoots()
+            indexRoots = normalizedPaths(appRoots + indexRoots)
+        }
+
+        if version < 2 {
+            let supplementalRoots = Self.defaultSupplementalIndexRoots()
+            indexRoots = normalizedExistingPaths(indexRoots + supplementalRoots)
+            if contentSearchUsesIndexRoots {
+                contentSearchRoots = normalizedExistingPaths(contentSearchRoots + supplementalRoots)
+                contentIndexRoots = normalizedExistingPaths(contentIndexRoots + supplementalRoots)
+            }
+        }
+
+        defaults.set(2, forKey: Key.settingsSchemaVersion)
     }
 
     private func save(_ value: Bool, _ key: String) {
@@ -345,11 +356,19 @@ final class AppSettings: ObservableObject {
         let userFolders = names
             .map { home.appendingPathComponent($0).path }
             .filter { FileManager.default.fileExists(atPath: $0) }
-        return normalizedExistingPaths(defaultApplicationRoots() + userFolders)
+        return normalizedExistingPaths(defaultApplicationRoots() + userFolders + defaultSupplementalIndexRoots())
     }
 
     private static func defaultApplicationRoots() -> [String] {
         normalizedExistingPaths(["/Applications", "/System/Applications"])
+    }
+
+    private static func defaultSupplementalIndexRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return normalizedExistingPaths([
+            home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs").path,
+            home.appendingPathComponent("Public").path
+        ])
     }
 
     private static func defaultExcludedPaths() -> [String] {

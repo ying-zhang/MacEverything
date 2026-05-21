@@ -50,6 +50,17 @@ struct ContentView: View {
                     updateSearchWindowTitle()
                 }
                 SearchOptionBadges(options: searchOptions)
+                Button {
+                    NSApp.activate(ignoringOtherApps: true)
+                    GeneralSettingsWindowController.shared.showWindow()
+                } label: {
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 17))
+                        .foregroundColor(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help(L10n.tr("Settings..."))
+                .accessibilityLabel(L10n.tr("Settings..."))
                 if !viewModel.searchText.isEmpty {
                     Button {
                         viewModel.searchText = ""
@@ -111,9 +122,15 @@ struct ContentView: View {
                     if viewModel.totalMatches > 0 {
                         Text("·")
                             .foregroundColor(.secondary)
-                        Text(L10n.tr("%d matches", viewModel.totalMatches))
-                            .foregroundColor(.secondary)
-                            .accessibilityIdentifier("matchCount")
+                        if viewModel.resultLimitReached {
+                            Text(L10n.tr("More than maximum results matched"))
+                                .foregroundColor(.secondary)
+                                .accessibilityIdentifier("matchCount")
+                        } else {
+                            Text(L10n.tr("%d matches", viewModel.totalMatches))
+                                .foregroundColor(.secondary)
+                                .accessibilityIdentifier("matchCount")
+                        }
                         Text("·")
                             .foregroundColor(.secondary)
                         Text(String(format: "%.1fms", viewModel.queryTimeMs))
@@ -284,7 +301,9 @@ struct ContentView: View {
                 if viewModel.totalMatches > 0 {
                     HStack {
                         Spacer()
-                        Text(L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
+                        Text(viewModel.resultLimitReached
+                             ? L10n.tr("Showing %d results. More results exist; add search terms to narrow the search.", viewModel.displayItems.count)
+                             : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
                             .font(.callout)
                             .foregroundColor(.secondary)
                             .padding(8)

@@ -10,6 +10,7 @@
 "%d files indexed" = "已索引 %d 个文件";
 "Content indexing %d/%d" = "内容索引 %d/%d";
 "%d matches" = "%d 个匹配";
+"More than maximum results matched" = "匹配结果超过上限";
 "Indexing files... %d items scanned" = "正在索引文件... 已扫描 %d 项";
 "Content index is building..." = "正在构建内容索引...";
 "Indexed %d / %d files" = "已索引 %d / %d 个文件";
@@ -22,6 +23,7 @@
 "Recent Files" = "最近文件";
 "Loading more results..." = "正在加载更多结果...";
 "Showing %d of %d results" = "正在显示 %d / %d 个结果";
+"Showing %d results. More results exist; add search terms to narrow the search." = "正在显示 %d 个结果。还有更多匹配项；请增加检索条件以缩小范围。";
 "Show MacEverything" = "显示 MacEverything";
 "Hide MacEverything" = "隐藏 MacEverything";
 "New Search" = "新建搜索";
@@ -157,12 +159,15 @@
 "Comfortable" = "舒适";
 "Compact" = "紧凑";
 "Startup & Window" = "启动与窗口";
+"Shortcuts" = "快捷键";
+"Configure the global shortcut used to show or hide MacEverything." = "配置用于显示或隐藏 MacEverything 的全局快捷键。";
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "启用 HTTP API";
 "Port: %d" = "端口：%d";
 "HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API 仅监听本机回环地址：http://127.0.0.1:%d";
 "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "示例：curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
 "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "常用端点：/api/search、/api/search/content、/api/recent、/api/status";
+"Enable MacEverything MCP integration for supported AI clients." = "为支持的 AI 客户端启用 MacEverything MCP 集成。";
 "Maintenance" = "维护";
 "Automatic index maintenance" = "自动索引维护";
 "Add folder path..." = "添加文件夹路径...";
