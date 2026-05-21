@@ -73,6 +73,8 @@
 "Index hidden files and folders" = "索引隐藏文件和文件夹";
 "Index system files" = "索引系统文件";
 "Index inside application bundles" = "索引应用包内部内容";
+"Low memory mode" = "低内存模式";
+"Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it." = "低内存模式会关闭拼音首字母搜索、路径 trigram 加速器和内存中的完整路径查找。修改后需要重建索引。";
 "Refresh Mode" = "刷新模式";
 "Realtime" = "实时";
 "Manual" = "手动";
@@ -139,6 +141,7 @@
 "Regular Expression Help..." = "正则表达式帮助...";
 "Regular Expression Help" = "正则表达式帮助";
 "Maximum Results: %d" = "最大结果数：%d";
+"Maximum Results" = "最大结果数";
 "Default Sort" = "默认排序";
 "Sort Results By" = "排序方式";
 "Relevance" = "相关性";
@@ -165,9 +168,13 @@
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "启用 HTTP API";
 "Port: %d" = "端口：%d";
+"Port" = "端口";
 "HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API 仅监听本机回环地址：http://127.0.0.1:%d";
+"HTTP API listens on local loopback only: %@" = "HTTP API 仅监听本机回环地址：%@";
 "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "示例：curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
+"Example: curl \"%@/api/search?q=readme&limit=10\"" = "示例：curl \"%@/api/search?q=readme&limit=10\"";
 "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "常用端点：/api/search、/api/search/content、/api/recent、/api/status";
+"Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory" = "常用端点：/api/search、/api/search/content、/api/recent、/api/status、/api/memory";
 "Enable MacEverything MCP integration for supported AI clients." = "为支持的 AI 客户端启用 MacEverything MCP 集成。";
 "Maintenance" = "维护";
 "Automatic index maintenance" = "自动索引维护";

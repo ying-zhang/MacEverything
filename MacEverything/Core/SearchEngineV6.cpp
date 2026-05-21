@@ -25,8 +25,8 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     // Install SoA columns directly (zero-copy from v6 file)
     origNamePool_ = std::move(origNamePool);
     namePool_ = std::move(namePool);
-    if (options_.enablePinyinInitials) buildPinyinInitialsPoolFromOrigNames();
-    else pinyinInitialsPool_.clear();
+    pinyinInitialsPool_.clear();
+    pinyinInitialsTrigramIndex_.clear();
     pathIndices_ = std::move(pathIndices);
     pathPool_ = std::move(pathPool);
     lowerPathPool_ = std::move(lowerPathPool);
@@ -75,18 +75,22 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
 
     // Insert into pathIndex_ and merge tombstone dedup (last-wins overwrites)
     pathIndex_.clear();
+    pathIndexCollisions_.clear();
     uint32_t actualLive = 0;
     if (options_.enablePathIndex) {
         pathIndex_.reserve(n);
         for (uint32_t i = 0; i < n; i++) {
             if (types_[i] == 0) continue;
-            pathIndex_[std::move(loweredPaths[i])] = i;
+            setPathIndexUnlocked(loweredPaths[i], i);
         }
 
         // Tombstone orphaned duplicates: records not in pathIndex_ as winners
         std::vector<bool> isWinner(n, false);
         for (const auto& [_, idx] : pathIndex_) {
             isWinner[idx] = true;
+        }
+        for (const auto& [_, list] : pathIndexCollisions_) {
+            for (uint32_t idx : list) isWinner[idx] = true;
         }
         for (uint32_t i = 0; i < n; i++) {
             if (types_[i] == 0) continue;
@@ -128,7 +132,7 @@ void SearchEngine::completePhase2() {
     std::vector<uint8_t> snapTypes;
     std::vector<int64_t> snapModTimes;
     StringPool snapNamePool;
-    StringPool snapPinyinInitialsPool;
+    StringPool snapOrigNamePool;
     StringPool snapLowerPathPool;
     std::vector<uint32_t> snapPathIndices;
     uint32_t snapPathPoolSize;
@@ -138,7 +142,7 @@ void SearchEngine::completePhase2() {
         snapTypes = types_;
         snapModTimes = modTimes_;
         snapNamePool = namePool_;
-        if (options_.enablePinyinInitials) snapPinyinInitialsPool = pinyinInitialsPool_;
+        if (options_.enablePinyinInitials) snapOrigNamePool = origNamePool_;
         snapLowerPathPool = lowerPathPool_;
         snapPathIndices = pathIndices_;
         snapPathPoolSize = pathPool_.entryCount();
@@ -147,9 +151,11 @@ void SearchEngine::completePhase2() {
 
     // Build all indices without holding any lock (~3s)
     auto trigramIndex = buildTrigramIndexFromData(snapTypes, snapNamePool);
+    StringPool pinyinInitialsPool;
     std::unordered_map<Trigram, std::vector<uint32_t>> pinyinInitialsTrigramIndex;
     if (options_.enablePinyinInitials) {
-        pinyinInitialsTrigramIndex = buildTrigramIndexFromData(snapTypes, snapPinyinInitialsPool);
+        pinyinInitialsPool = buildPinyinInitialsPoolFromData(snapOrigNamePool);
+        pinyinInitialsTrigramIndex = buildTrigramIndexFromData(snapTypes, pinyinInitialsPool);
     }
     std::unordered_map<Trigram, std::vector<uint32_t>> pathTrigramIndex;
     std::vector<std::vector<uint32_t>> pathIdxToRecords;
@@ -167,6 +173,7 @@ void SearchEngine::completePhase2() {
         std::unique_lock lock(mutex_);
 
         nameTrigramIndex_ = std::move(trigramIndex);
+        pinyinInitialsPool_ = std::move(pinyinInitialsPool);
         pinyinInitialsTrigramIndex_ = std::move(pinyinInitialsTrigramIndex);
         pathTrigramIndex_ = std::move(pathTrigramIndex);
         pathIdxToRecords_ = std::move(pathIdxToRecords);
@@ -178,6 +185,12 @@ void SearchEngine::completePhase2() {
         uint32_t replayCount = 0;
         for (uint32_t i = snapSize; i < currentSize; i++) {
             if (types_[i] == 0) continue;
+            if (options_.enablePinyinInitials) {
+                while (pinyinInitialsPool_.entryCount() < i) {
+                    pinyinInitialsPool_.append("");
+                }
+                pinyinInitialsPool_.append(me::mandarinInitialsKey(origNamePool_.str(i)));
+            }
             // Add trigrams for this record
             addTrigramsForRecord(i, namePool_.data(i), namePool_.length(i));
             addPinyinInitialsForRecord(i);

@@ -506,6 +506,7 @@ std::string HttpServer::handleStatus() {
     std::ostringstream json;
     json << "{\"recordCount\":" << (engine ? engine->recordCount() : 0)
          << ",\"liveRecordCount\":" << (engine ? engine->liveRecordCount() : 0)
+         << ",\"phase2Pending\":" << (engine && engine->isPhase2Pending() ? "true" : "false")
          << ",\"contentIndexedFileCount\":"
          << (contentIndex ? contentIndex->indexedFileCount() : 0)
          << "}";

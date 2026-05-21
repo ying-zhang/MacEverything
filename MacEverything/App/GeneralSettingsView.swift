@@ -357,9 +357,12 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Whole Word"), isOn: $settings.defaultWholeWord)
             Toggle(L10n.tr("Match Filename"), isOn: $settings.defaultMatchFilename)
 
-            Stepper(value: $settings.maxResults, in: 100...10_000, step: 100) {
-                Text(L10n.tr("Maximum Results: %d", settings.maxResults))
-            }
+            BoundedIntegerControl(
+                title: L10n.tr("Maximum Results"),
+                value: $settings.maxResults,
+                range: 100...10_000,
+                step: 100
+            )
 
             Picker(L10n.tr("Sort Results By"), selection: $settings.sortField) {
                 ForEach(SortField.allCases) { field in
@@ -456,14 +459,24 @@ struct GeneralSettingsView: View {
     private var serviceSection: some View {
         SettingsSection(title: L10n.tr("HTTP API")) {
             Toggle(L10n.tr("Enable HTTP API"), isOn: $settings.httpServerEnabled)
-            Stepper(value: $settings.httpPort, in: 1024...65535, step: 1) {
-                Text(L10n.tr("Port: %d", settings.httpPort))
-            }
+                .onChange(of: settings.httpServerEnabled) {
+                    SearchServiceModel.shared.applyRuntimeConfiguration()
+                }
+            BoundedIntegerControl(
+                title: L10n.tr("Port"),
+                value: $settings.httpPort,
+                range: 1024...65535,
+                step: 1
+            )
             .disabled(!settings.httpServerEnabled)
+            .onChange(of: settings.httpPort) {
+                guard settings.httpServerEnabled else { return }
+                SearchServiceModel.shared.applyRuntimeConfiguration()
+            }
             VStack(alignment: .leading, spacing: 4) {
-                Text(L10n.tr("HTTP API listens on local loopback only: http://127.0.0.1:%d", settings.httpPort))
-                Text(L10n.tr("Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"", settings.httpPort))
-                Text(L10n.tr("Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status"))
+                Text(L10n.tr("HTTP API listens on local loopback only: %@", "http://127.0.0.1:\(settings.httpPort)"))
+                Text(L10n.tr("Example: curl \"%@/api/search?q=readme&limit=10\"", "http://127.0.0.1:\(settings.httpPort)"))
+                Text(L10n.tr("Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory"))
             }
             .font(.caption)
             .foregroundColor(.secondary)
@@ -665,5 +678,51 @@ private struct StringListEditor: View {
             lhs.localizedStandardCompare(rhs) == .orderedAscending
         }
         newItem = ""
+    }
+}
+
+private struct BoundedIntegerControl: View {
+    let title: String
+    @Binding var value: Int
+    let range: ClosedRange<Int>
+    let step: Int
+
+    @State private var text: String = ""
+    @FocusState private var isFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(title)
+                .frame(minWidth: 120, alignment: .leading)
+            TextField("", text: $text)
+                .textFieldStyle(.roundedBorder)
+                .frame(width: 96)
+                .focused($isFocused)
+                .onSubmit(commitText)
+                .onChange(of: isFocused) {
+                    if !isFocused {
+                        commitText()
+                    }
+                }
+                .onChange(of: value) {
+                    guard !isFocused else { return }
+                    text = String(value)
+                }
+            Stepper("", value: $value, in: range, step: step)
+                .labelsHidden()
+            Text("\(range.lowerBound)-\(range.upperBound)")
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+        .onAppear {
+            text = String(value)
+        }
+    }
+
+    private func commitText() {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let parsed = Int(trimmed) ?? value
+        value = min(max(parsed, range.lowerBound), range.upperBound)
+        text = String(value)
     }
 }

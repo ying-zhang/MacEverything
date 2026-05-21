@@ -73,6 +73,8 @@
 "Index hidden files and folders" = "Index hidden files and folders";
 "Index system files" = "Index system files";
 "Index inside application bundles" = "Index inside application bundles";
+"Low memory mode" = "Low Memory Mode";
+"Low memory mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it." = "Low Memory Mode disables pinyin initials search, the path trigram accelerator, and the in-memory full-path lookup. Rebuild the index after changing it.";
 "Refresh Mode" = "Refresh Mode";
 "Realtime" = "Realtime";
 "Manual" = "Manual";
@@ -139,6 +141,7 @@
 "Regular Expression Help..." = "Regular Expression Help...";
 "Regular Expression Help" = "Regular Expression Help";
 "Maximum Results: %d" = "Maximum Results: %d";
+"Maximum Results" = "Maximum Results";
 "Default Sort" = "Default Sort";
 "Sort Results By" = "Sort Results By";
 "Relevance" = "Relevance";
@@ -165,9 +168,13 @@
 "HTTP API" = "HTTP API";
 "Enable HTTP API" = "Enable HTTP API";
 "Port: %d" = "Port: %d";
+"Port" = "Port";
 "HTTP API listens on local loopback only: http://127.0.0.1:%d" = "HTTP API listens on local loopback only: http://127.0.0.1:%d";
+"HTTP API listens on local loopback only: %@" = "HTTP API listens on local loopback only: %@";
 "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"" = "Example: curl \"http://127.0.0.1:%d/api/search?q=readme&limit=10\"";
+"Example: curl \"%@/api/search?q=readme&limit=10\"" = "Example: curl \"%@/api/search?q=readme&limit=10\"";
 "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status" = "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status";
+"Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory" = "Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory";
 "Enable MacEverything MCP integration for supported AI clients." = "Enable MacEverything MCP integration for supported AI clients.";
 "Maintenance" = "Maintenance";
 "Automatic index maintenance" = "Automatic index maintenance";

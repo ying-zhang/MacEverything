@@ -66,6 +66,15 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
         }
         return bytes;
     };
+    auto pathHashMapBytes = [](const auto& map, const auto& collisions) {
+        size_t bytes = map.bucket_count() * sizeof(void*);
+        bytes += map.size() * (sizeof(uint64_t) + sizeof(uint32_t) + sizeof(void*));
+        bytes += collisions.bucket_count() * sizeof(void*);
+        for (const auto& [_, list] : collisions) {
+            bytes += sizeof(uint64_t) + sizeof(list) + list.capacity() * sizeof(uint32_t) + sizeof(void*);
+        }
+        return bytes;
+    };
     auto trigramMapBytes = [](const auto& map) {
         size_t bytes = map.bucket_count() * sizeof(void*);
         for (const auto& [_, list] : map) {
@@ -86,7 +95,10 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
     m.inodesBytes = inodes_.capacity() * sizeof(uint64_t);
     m.devIdsBytes = devIds_.capacity() * sizeof(int32_t);
     m.pathIndexEntries = pathIndex_.size();
-    m.pathIndexApproxBytes = stringMapBytes(pathIndex_);
+    for (const auto& [_, list] : pathIndexCollisions_) {
+        m.pathIndexEntries += list.size();
+    }
+    m.pathIndexApproxBytes = pathHashMapBytes(pathIndex_, pathIndexCollisions_);
     m.pathLookupEntries = pathLookup_.size();
     m.pathLookupApproxBytes = stringMapBytes(pathLookup_);
     m.lowerPathLookupEntries = lowerPathLookup_.size();
@@ -127,10 +139,47 @@ void SearchEngine::pushRecord(FileRecord&& rec) {
     devIds_.push_back(rec.devId);
 }
 
+void SearchEngine::appendPinyinInitialsForRecordUnlocked(uint32_t idx, const std::string& name) {
+    if (!options_.enablePinyinInitials) return;
+    if (phase2Pending_.load(std::memory_order_acquire)) return;
+    while (pinyinInitialsPool_.entryCount() < idx) {
+        pinyinInitialsPool_.append("");
+    }
+    pinyinInitialsPool_.append(me::mandarinInitialsKey(name));
+}
+
+uint64_t SearchEngine::hashLowerFullPath(std::string_view lowerFullPath) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (unsigned char c : lowerFullPath) {
+        hash ^= c;
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+bool SearchEngine::lowerFullPathMatchesRecordUnlocked(uint32_t idx,
+                                                      const std::string& lowerFullPath) const {
+    if (idx >= types_.size() || types_[idx] == 0) return false;
+    auto path = lowerPathPool_.view(pathIndices_[idx]);
+    auto name = namePool_.view(idx);
+    std::string full = makeFullPath(path, name);
+    return full == lowerFullPath;
+}
+
 uint32_t SearchEngine::findIndexForLowerPathUnlocked(const std::string& lowerFullPath) const {
     if (options_.enablePathIndex) {
-        auto it = pathIndex_.find(lowerFullPath);
-        return it != pathIndex_.end() ? it->second : UINT32_MAX;
+        uint64_t hash = hashLowerFullPath(lowerFullPath);
+        auto it = pathIndex_.find(hash);
+        if (it != pathIndex_.end() &&
+            lowerFullPathMatchesRecordUnlocked(it->second, lowerFullPath)) {
+            return it->second;
+        }
+        auto collisionIt = pathIndexCollisions_.find(hash);
+        if (collisionIt != pathIndexCollisions_.end()) {
+            for (uint32_t idx : collisionIt->second) {
+                if (lowerFullPathMatchesRecordUnlocked(idx, lowerFullPath)) return idx;
+            }
+        }
     }
     for (uint32_t i = 0; i < types_.size(); i++) {
         if (types_[i] == 0) continue;
@@ -143,11 +192,52 @@ uint32_t SearchEngine::findIndexForLowerPathUnlocked(const std::string& lowerFul
 }
 
 void SearchEngine::setPathIndexUnlocked(const std::string& lowerFullPath, uint32_t idx) {
-    if (options_.enablePathIndex) pathIndex_[lowerFullPath] = idx;
+    if (!options_.enablePathIndex) return;
+    uint64_t hash = hashLowerFullPath(lowerFullPath);
+    auto it = pathIndex_.find(hash);
+    if (it == pathIndex_.end()) {
+        pathIndex_[hash] = idx;
+        return;
+    }
+    if (lowerFullPathMatchesRecordUnlocked(it->second, lowerFullPath)) {
+        it->second = idx;
+        return;
+    }
+    auto& collisions = pathIndexCollisions_[hash];
+    for (uint32_t& existingIdx : collisions) {
+        if (lowerFullPathMatchesRecordUnlocked(existingIdx, lowerFullPath)) {
+            existingIdx = idx;
+            return;
+        }
+    }
+    collisions.push_back(idx);
 }
 
 void SearchEngine::erasePathIndexUnlocked(const std::string& lowerFullPath) {
-    if (options_.enablePathIndex) pathIndex_.erase(lowerFullPath);
+    if (!options_.enablePathIndex) return;
+    uint64_t hash = hashLowerFullPath(lowerFullPath);
+    auto it = pathIndex_.find(hash);
+    if (it != pathIndex_.end() &&
+        lowerFullPathMatchesRecordUnlocked(it->second, lowerFullPath)) {
+        pathIndex_.erase(it);
+        auto collisionIt = pathIndexCollisions_.find(hash);
+        if (collisionIt != pathIndexCollisions_.end() && !collisionIt->second.empty()) {
+            pathIndex_[hash] = collisionIt->second.back();
+            collisionIt->second.pop_back();
+            if (collisionIt->second.empty()) pathIndexCollisions_.erase(collisionIt);
+        }
+        return;
+    }
+    auto collisionIt = pathIndexCollisions_.find(hash);
+    if (collisionIt == pathIndexCollisions_.end()) return;
+    auto& collisions = collisionIt->second;
+    for (auto vit = collisions.begin(); vit != collisions.end(); ++vit) {
+        if (lowerFullPathMatchesRecordUnlocked(*vit, lowerFullPath)) {
+            collisions.erase(vit);
+            if (collisions.empty()) pathIndexCollisions_.erase(collisionIt);
+            return;
+        }
+    }
 }
 
 void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
@@ -238,17 +328,21 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     }
     uint32_t actualLive = 0;
     pathIndex_.clear();
+    pathIndexCollisions_.clear();
     if (options_.enablePathIndex) {
         pathIndex_.reserve(n);
         for (size_t i = 0; i < n; i++) {
             if (types_[i] == 0) continue;
-            pathIndex_[std::move(loweredPaths[i])] = static_cast<uint32_t>(i);
+            setPathIndexUnlocked(loweredPaths[i], static_cast<uint32_t>(i));
         }
 
         // Tombstone orphaned duplicates: records not in pathIndex_ as winners
         std::vector<bool> isWinner(n, false);
         for (const auto& [_, idx] : pathIndex_) {
             isWinner[idx] = true;
+        }
+        for (const auto& [_, list] : pathIndexCollisions_) {
+            for (uint32_t idx : list) isWinner[idx] = true;
         }
         for (size_t i = 0; i < n; i++) {
             if (types_[i] == 0) continue;
@@ -367,17 +461,21 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
     }
     uint32_t actualLive = 0;
     pathIndex_.clear();
+    pathIndexCollisions_.clear();
     if (options_.enablePathIndex) {
         pathIndex_.reserve(n);
         for (size_t i = 0; i < n; i++) {
             if (types_[i] == 0) continue;
-            pathIndex_[std::move(loweredPaths[i])] = static_cast<uint32_t>(i);
+            setPathIndexUnlocked(loweredPaths[i], static_cast<uint32_t>(i));
         }
 
         // Tombstone orphaned duplicates
         std::vector<bool> isWinner(n, false);
         for (const auto& [_, idx] : pathIndex_) {
             isWinner[idx] = true;
+        }
+        for (const auto& [_, list] : pathIndexCollisions_) {
+            for (uint32_t idx : list) isWinner[idx] = true;
         }
         for (size_t i = 0; i < n; i++) {
             if (types_[i] == 0) continue;
@@ -457,8 +555,8 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
         removeTrigramsForRecord(oldIdx);
         removePinyinInitialsForRecord(oldIdx);
         removePathTrigramsForRecord(oldIdx);
-        tombstoneAt(oldIdx);
         erasePathIndexUnlocked(lowerFull);
+        tombstoneAt(oldIdx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
         removeFromRecentCache(oldIdx, oldModTime);
     }
@@ -472,9 +570,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
     record.path.shrink_to_fit();
 
     origNamePool_.append(record.name);
-    if (options_.enablePinyinInitials) {
-        pinyinInitialsPool_.append(me::mandarinInitialsKey(record.name));
-    }
+    appendPinyinInitialsForRecordUnlocked(idx, record.name);
     pushRecord(std::move(record));
     uint32_t nameIdx = namePool_.append(lower);
     (void)nameIdx; // nameIdx == idx since namePool_ grows in lockstep
@@ -511,8 +607,8 @@ bool SearchEngine::removeByPathUnlocked(const std::string& fullPath) {
     removePinyinInitialsForRecord(idx);
     removePathTrigramsForRecord(idx);
     removeExtensionForRecord(idx);
-    tombstoneAt(idx);
     erasePathIndexUnlocked(lowerFull);
+    tombstoneAt(idx);
 
     liveCount_.fetch_sub(1, std::memory_order_relaxed);
     removeFromRecentCache(idx, oldModTime);
@@ -540,35 +636,20 @@ uint32_t SearchEngine::removeByPathPrefix(const std::string& pathPrefix) {
         removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
+        erasePathIndexUnlocked(lowerFullPath);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
         removeFromRecentCache(idx, oldModTime);
-        erasePathIndexUnlocked(lowerFullPath);
         removed++;
     };
 
-    if (options_.enablePathIndex) {
-        for (auto it = pathIndex_.begin(); it != pathIndex_.end(); ) {
-            const auto& path = it->first;
-            if (path.size() >= lowerPrefix.size() &&
-                path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
-                (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
-                uint32_t idx = it->second;
-                ++it;
-                removeIdx(idx, path);
-            } else {
-                ++it;
-            }
-        }
-    } else {
-        for (uint32_t idx = 0; idx < types_.size(); idx++) {
-            if (types_[idx] == 0) continue;
-            std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[idx]), namePool_.view(idx));
-            if (path.size() >= lowerPrefix.size() &&
-                path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
-                (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
-                removeIdx(idx, path);
-            }
+    for (uint32_t idx = 0; idx < types_.size(); idx++) {
+        if (types_[idx] == 0) continue;
+        std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[idx]), namePool_.view(idx));
+        if (path.size() >= lowerPrefix.size() &&
+            path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
+            (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
+            removeIdx(idx, path);
         }
     }
 
@@ -592,34 +673,19 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
+        erasePathIndexUnlocked(lowerFullPath);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
-        erasePathIndexUnlocked(lowerFullPath);
         removed++;
     };
 
-    if (options_.enablePathIndex) {
-        for (auto it = pathIndex_.begin(); it != pathIndex_.end(); ) {
-            const auto& path = it->first;
-            if (path.size() >= lowerPrefix.size() &&
-                path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
-                (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
-                uint32_t idx = it->second;
-                ++it;
-                removeIdx(idx, path);
-            } else {
-                ++it;
-            }
-        }
-    } else {
-        for (uint32_t idx = 0; idx < types_.size(); idx++) {
-            if (types_[idx] == 0) continue;
-            std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[idx]), namePool_.view(idx));
-            if (path.size() >= lowerPrefix.size() &&
-                path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
-                (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
-                removeIdx(idx, path);
-            }
+    for (uint32_t idx = 0; idx < types_.size(); idx++) {
+        if (types_[idx] == 0) continue;
+        std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[idx]), namePool_.view(idx));
+        if (path.size() >= lowerPrefix.size() &&
+            path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
+            (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
+            removeIdx(idx, path);
         }
     }
 
@@ -639,9 +705,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         record.path.shrink_to_fit();
 
         origNamePool_.append(record.name);
-        if (options_.enablePinyinInitials) {
-            pinyinInitialsPool_.append(me::mandarinInitialsKey(record.name));
-        }
+        appendPinyinInitialsForRecordUnlocked(newIdx, record.name);
         pushRecord(std::move(record));
         namePool_.append(lower);
         pathIndices_.push_back(pIdx);
@@ -676,8 +740,8 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
         removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
-        tombstoneAt(idx);
         erasePathIndexUnlocked(lowerFull);
+        tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
         removeFromRecentCache(idx, oldModTime);
     }
@@ -696,9 +760,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
     updated.path.shrink_to_fit();
 
     origNamePool_.append(updated.name);
-    if (options_.enablePinyinInitials) {
-        pinyinInitialsPool_.append(me::mandarinInitialsKey(updated.name));
-    }
+    appendPinyinInitialsForRecordUnlocked(newIdx, updated.name);
     pushRecord(std::move(updated));
     namePool_.append(lower);
     pathIndices_.push_back(pIdx);
@@ -744,7 +806,6 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     StringPool snapOrigNamePool;
     std::vector<uint32_t> snapPathIndices;
     StringPool snapPathPool;
-    std::unordered_map<std::string, uint32_t> snapPathIndex;
     uint32_t snapSize;
     {
         std::shared_lock lock(mutex_);
@@ -759,7 +820,6 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         snapOrigNamePool = origNamePool_;
         snapPathIndices = pathIndices_;
         snapPathPool = pathPool_;
-        if (options_.enablePathIndex) snapPathIndex = pathIndex_;
         snapSize = static_cast<uint32_t>(types_.size());
     }
 
@@ -771,6 +831,16 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     // on the live data; they will be replayed in Phase 3.
     std::unordered_map<uint32_t, uint32_t> remap;
     remap.reserve(snapSize);
+    std::unordered_map<std::string, uint32_t> snapshotWinners;
+    if (options_.enablePathIndex) {
+        snapshotWinners.reserve(snapSize);
+        for (size_t i = 0; i < snapSize; i++) {
+            if (snapTypes[i] == 0) continue;
+            std::string fullPathLower = me::toLower(
+                makeFullPath(snapPathPool.view(snapPathIndices[i]), snapOrigNamePool.view(i)));
+            snapshotWinners[std::move(fullPathLower)] = static_cast<uint32_t>(i);
+        }
+    }
 
     std::vector<uint8_t> cdTypes;
     std::vector<uint64_t> cdSizes;
@@ -791,7 +861,8 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     StringPool cdLowerPathPool;
     std::unordered_map<std::string, uint32_t> cdPathLookup;
     std::unordered_map<std::string, uint32_t> cdLowerPathLookup;
-    std::unordered_map<std::string, uint32_t> cdPathIndex;
+    std::unordered_map<uint64_t, uint32_t> cdPathIndex;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> cdPathIndexCollisions;
     if (options_.enablePathIndex) cdPathIndex.reserve(snapSize);
 
     for (size_t i = 0; i < snapSize; i++) {
@@ -801,8 +872,8 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         std::string snapName = snapOrigNamePool.str(i);
         std::string fullPathLower = me::toLower(makeFullPath(origPath, snapName));
         if (options_.enablePathIndex) {
-            auto pathIt = snapPathIndex.find(fullPathLower);
-            if (pathIt == snapPathIndex.end() || pathIt->second != static_cast<uint32_t>(i)) continue;
+            auto winnerIt = snapshotWinners.find(fullPathLower);
+            if (winnerIt == snapshotWinners.end() || winnerIt->second != static_cast<uint32_t>(i)) continue;
         }
         uint32_t newIdx = static_cast<uint32_t>(cdTypes.size());
         remap[static_cast<uint32_t>(i)] = newIdx;
@@ -817,7 +888,35 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             cdPathLookup[origPath] = newPIdx;
             cdLowerPathLookup[me::toLower(origPath)] = newPIdx;
         }
-        if (options_.enablePathIndex) cdPathIndex[fullPathLower] = newIdx;
+        if (options_.enablePathIndex) {
+            uint64_t hash = hashLowerFullPath(fullPathLower);
+            auto existing = cdPathIndex.find(hash);
+            if (existing == cdPathIndex.end()) {
+                cdPathIndex[hash] = newIdx;
+            } else {
+                // Compaction visits records in index order, so exact duplicate paths
+                // should keep the last record while true hash collisions go to overflow.
+                uint32_t existingIdx = existing->second;
+                std::string existingPath = makeFullPath(cdLowerPathPool.view(cdPathIndices[existingIdx]),
+                                                        cdNamePool.view(existingIdx));
+                if (existingPath == fullPathLower) {
+                    existing->second = newIdx;
+                } else {
+                    auto& collisions = cdPathIndexCollisions[hash];
+                    bool replaced = false;
+                    for (uint32_t& collisionIdx : collisions) {
+                        std::string collisionPath = makeFullPath(cdLowerPathPool.view(cdPathIndices[collisionIdx]),
+                                                                 cdNamePool.view(collisionIdx));
+                        if (collisionPath == fullPathLower) {
+                            collisionIdx = newIdx;
+                            replaced = true;
+                            break;
+                        }
+                    }
+                    if (!replaced) collisions.push_back(newIdx);
+                }
+            }
+        }
         // Copy name from snapshot pool into compacted pool
         cdOrigNamePool.append(snapOrigNamePool.data(i), snapOrigNamePool.length(i));
         cdNamePool.append(snapNamePool.data(i), snapNamePool.length(i));
@@ -869,7 +968,8 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         auto oldPathPool = std::move(pathPool_);
         auto oldPathLookup = std::move(pathLookup_);
         auto oldLowerPathLookup = std::move(lowerPathLookup_);
-        auto oldPathIndex = std::move(pathIndex_);
+        pathIndex_.clear();
+        pathIndexCollisions_.clear();
 
         // Install compacted data
         types_ = std::move(cdTypes);
@@ -886,6 +986,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         pathLookup_ = std::move(cdPathLookup);
         lowerPathLookup_ = std::move(cdLowerPathLookup);
         pathIndex_ = std::move(cdPathIndex);
+        pathIndexCollisions_ = std::move(cdPathIndexCollisions);
         nameTrigramIndex_ = std::move(cdTrigramIndex);
         pinyinInitialsTrigramIndex_ = std::move(cdPinyinInitialsTrigramIndex);
         pathTrigramIndex_ = std::move(cdPathTrigramIndex);
@@ -908,9 +1009,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             // Copy name from old pool into current pool
             origNamePool_.append(oldOrigNamePool.data(i), oldOrigNamePool.length(i));
             namePool_.append(oldNamePool.data(i), oldNamePool.length(i));
-            if (options_.enablePinyinInitials) {
-                pinyinInitialsPool_.append(me::mandarinInitialsKey(origName));
-            }
+            appendPinyinInitialsForRecordUnlocked(newIdx, origName);
             setPathIndexUnlocked(fullPath, newIdx);
             pathIndices_.push_back(pIdx);
             addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
@@ -928,27 +1027,24 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             replayedAdds++;
         }
 
-        // Replay tombstones: paths in snapshot but removed during Phase 2
+        // Replay tombstones: compacted records that were removed during Phase 2
         uint32_t replayedDeletes = 0;
         if (options_.enablePathIndex) {
-            for (auto& [path, snapIdx] : snapPathIndex) {
-                if (oldPathIndex.find(path) != oldPathIndex.end()) continue;
-                // This path was deleted during Phase 2
-                auto it = remap.find(snapIdx);
-                if (it == remap.end()) continue; // was already tombstoned in snapshot
-                uint32_t newIdx = it->second;
-                if (newIdx < types_.size() && types_[newIdx] != 0) {
-                    removeTrigramsForRecord(newIdx);
-                    removePinyinInitialsForRecord(newIdx);
-                    removePathTrigramsForRecord(newIdx);
-                    removeExtensionForRecord(newIdx);
-                    time_t oldMod = static_cast<time_t>(modTimes_[newIdx]);
-                    tombstoneAt(newIdx);
-                    erasePathIndexUnlocked(path);
-                    removeFromRecentCache(newIdx, oldMod);
-                    cdLiveCount--;
-                    replayedDeletes++;
-                }
+            for (const auto& [oldIdx, newIdx] : remap) {
+                if (oldIdx >= oldTypes.size() || oldTypes[oldIdx] != 0) continue;
+                if (newIdx >= types_.size() || types_[newIdx] == 0) continue;
+                std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[newIdx]),
+                                                namePool_.view(newIdx));
+                removeTrigramsForRecord(newIdx);
+                removePinyinInitialsForRecord(newIdx);
+                removePathTrigramsForRecord(newIdx);
+                removeExtensionForRecord(newIdx);
+                time_t oldMod = static_cast<time_t>(modTimes_[newIdx]);
+                erasePathIndexUnlocked(path);
+                tombstoneAt(newIdx);
+                removeFromRecentCache(newIdx, oldMod);
+                cdLiveCount--;
+                replayedDeletes++;
             }
         }
 
@@ -1066,8 +1162,8 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
                 removePinyinInitialsForRecord(oldIdx);
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
-                tombstoneAt(oldIdx);
                 erasePathIndexUnlocked(lowerFull);
+                tombstoneAt(oldIdx);
                 liveCount_.fetch_sub(1, std::memory_order_relaxed);
             }
 
@@ -1081,9 +1177,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             e.record.path.shrink_to_fit();
 
             origNamePool_.append(e.record.name);
-            if (options_.enablePinyinInitials) {
-                pinyinInitialsPool_.append(me::mandarinInitialsKey(e.record.name));
-            }
+            appendPinyinInitialsForRecordUnlocked(idx, e.record.name);
             pushRecord(std::move(e.record));
             namePool_.append(lower);
             pathIndices_.push_back(pIdx);
@@ -1106,8 +1200,8 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             removePinyinInitialsForRecord(idx);
             removePathTrigramsForRecord(idx);
             removeExtensionForRecord(idx);
-            tombstoneAt(idx);
             erasePathIndexUnlocked(lowerFull);
+            tombstoneAt(idx);
             liveCount_.fetch_sub(1, std::memory_order_relaxed);
             break;
         }
@@ -1119,8 +1213,8 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
                 removePinyinInitialsForRecord(oldIdx);
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
-                tombstoneAt(oldIdx);
                 erasePathIndexUnlocked(lowerFull);
+                tombstoneAt(oldIdx);
                 liveCount_.fetch_sub(1, std::memory_order_relaxed);
             }
             // Add updated record
@@ -1134,9 +1228,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             e.record.path.shrink_to_fit();
 
             origNamePool_.append(e.record.name);
-            if (options_.enablePinyinInitials) {
-                pinyinInitialsPool_.append(me::mandarinInitialsKey(e.record.name));
-            }
+            appendPinyinInitialsForRecordUnlocked(newIdx, e.record.name);
             pushRecord(std::move(e.record));
             namePool_.append(lower);
             pathIndices_.push_back(pIdx);

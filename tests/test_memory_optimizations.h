@@ -400,6 +400,27 @@ static void runMemoryOptimizationTests() {
         check(idx == UINT32_MAX, "indexForPath: returns UINT32_MAX for missing");
     }
 
+    // -- Test 12b: pathIndex hash mode preserves last-wins and case-insensitive lookup --
+    std::cout << "\n  --- hashed pathIndex semantics ---\n";
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        records.push_back({"Target.txt", "/Lookup/Dir", 1, 100, 1000});
+        records.push_back({"target.txt", "/lookup/dir", 1, 200, 2000});
+        records.push_back({"other.txt", "/lookup/dir", 1, 300, 3000});
+        engine.loadRecords(std::move(records));
+
+        uint32_t idx = engine.indexForPath("/LOOKUP/DIR/TARGET.TXT");
+        check(idx != UINT32_MAX, "HashedPathIndex: case-insensitive lookup finds duplicate path");
+        auto rec = engine.getRecord(idx);
+        check(rec.size == 200, "HashedPathIndex: duplicate full path keeps last record");
+
+        auto mem = engine.memoryBreakdown();
+        check(mem.pathIndexEntries == 2, "HashedPathIndex: unique live paths counted");
+        check(mem.pathIndexApproxBytes < 1024,
+              "HashedPathIndex: small fixture pathIndex avoids storing full path strings");
+    }
+
     // -- Test 13: PathTable::resolve bounds check --
     std::cout << "\n  --- PathTable bounds check ---\n";
     {
