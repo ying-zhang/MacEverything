@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>托盘图标预览</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --tray-bg: #3a3a3c;
+      --tray-bg-alt: #2f2f31;
+      --tray-hover: #515154;
+      --page-bg: #1d1d1f;
+      --text: #f5f5f7;
+      --muted: #b8b8bd;
+      --line: rgba(255, 255, 255, 0.16);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--page-bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Arial, sans-serif;
+    }
+
+    main {
+      width: min(960px, calc(100vw - 40px));
+      margin: 40px auto;
+    }
+
+    h1 {
+      margin: 0 0 20px;
+      font-size: 22px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .preview {
+      overflow: hidden;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: #252527;
+    }
+
+    .tray {
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: flex-end;
+      gap: 12px;
+      padding: 0 18px;
+      background: var(--tray-bg);
+      box-shadow: inset 0 -1px rgba(255, 255, 255, 0.08);
+    }
+
+    .tray.alt {
+      background: var(--tray-bg-alt);
+    }
+
+    .tray-slot {
+      width: 24px;
+      height: 24px;
+      display: grid;
+      place-items: center;
+      border-radius: 5px;
+    }
+
+    .tray-slot.hover {
+      background: var(--tray-hover);
+    }
+
+    .tray-icon {
+      width: 18px;
+      height: 18px;
+      display: block;
+      object-fit: contain;
+    }
+
+    .content {
+      padding: 28px;
+    }
+
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 24px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      overflow: hidden;
+      background: #202022;
+    }
+
+    .panel-header {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--line);
+      font-size: 14px;
+      font-weight: 600;
+    }
+
+    .sizes {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 1px;
+      background: var(--line);
+    }
+
+    .size-cell {
+      min-height: 132px;
+      display: grid;
+      place-items: center;
+      gap: 10px;
+      padding: 16px;
+      background: var(--tray-bg);
+    }
+
+    .size-cell:nth-child(2) {
+      background: var(--tray-bg-alt);
+    }
+
+    .size-cell:nth-child(3) {
+      background: var(--tray-hover);
+    }
+
+    .size-cell img {
+      display: block;
+      object-fit: contain;
+    }
+
+    .label {
+      color: var(--muted);
+      font-size: 12px;
+      line-height: 1.3;
+      text-align: center;
+    }
+
+    @media (max-width: 720px) {
+      main {
+        width: min(100vw - 24px, 960px);
+        margin: 24px auto;
+      }
+
+      .grid {
+        grid-template-columns: 1fr;
+      }
+
+      .content {
+        padding: 18px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>托盘图标预览</h1>
+
+    <section class="preview" aria-label="托盘图标效果">
+      <div class="tray" aria-label="系统托盘深灰背景">
+        <span class="tray-slot"><img class="tray-icon" src="icon1.svg" alt="icon1 托盘尺寸"></span>
+        <span class="tray-slot hover"><img class="tray-icon" src="icon1.svg" alt="icon1 悬停状态"></span>
+        <span class="tray-slot"><img class="tray-icon" src="icon2.svg" alt="icon2 托盘尺寸"></span>
+        <span class="tray-slot hover"><img class="tray-icon" src="icon2.svg" alt="icon2 悬停状态"></span>
+      </div>
+      <div class="tray alt" aria-label="更深的托盘背景">
+        <span class="tray-slot"><img class="tray-icon" src="icon1.svg" alt="icon1 更深背景"></span>
+        <span class="tray-slot hover"><img class="tray-icon" src="icon1.svg" alt="icon1 更深背景悬停"></span>
+        <span class="tray-slot"><img class="tray-icon" src="icon2.svg" alt="icon2 更深背景"></span>
+        <span class="tray-slot hover"><img class="tray-icon" src="icon2.svg" alt="icon2 更深背景悬停"></span>
+      </div>
+
+      <div class="content">
+        <div class="grid">
+          <article class="panel">
+            <div class="panel-header">icon1.svg</div>
+            <div class="sizes">
+              <div class="size-cell">
+                <img src="icon1.svg" alt="icon1 18px" style="width: 18px; height: 18px;">
+                <div class="label">18px 托盘尺寸</div>
+              </div>
+              <div class="size-cell">
+                <img src="icon1.svg" alt="icon1 36px" style="width: 36px; height: 36px;">
+                <div class="label">36px 双倍尺寸</div>
+              </div>
+              <div class="size-cell">
+                <img src="icon1.svg" alt="icon1 72px" style="width: 72px; height: 72px;">
+                <div class="label">72px 细节检查</div>
+              </div>
+            </div>
+          </article>
+
+          <article class="panel">
+            <div class="panel-header">icon2.svg</div>
+            <div class="sizes">
+              <div class="size-cell">
+                <img src="icon2.svg" alt="icon2 18px" style="width: 18px; height: 18px;">
+                <div class="label">18px 托盘尺寸</div>
+              </div>
+              <div class="size-cell">
+                <img src="icon2.svg" alt="icon2 36px" style="width: 36px; height: 36px;">
+                <div class="label">36px 双倍尺寸</div>
+              </div>
+              <div class="size-cell">
+                <img src="icon2.svg" alt="icon2 72px" style="width: 72px; height: 72px;">
+                <div class="label">72px 细节检查</div>
+              </div>
+            </div>
+          </article>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
