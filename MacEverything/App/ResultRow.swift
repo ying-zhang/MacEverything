@@ -368,6 +368,7 @@ final class ResultColumnLayout: ObservableObject {
 }
 
 /// NSTextField wrapper that commits on focus loss and cancels on Escape.
+/// Uses a local mouse-down event monitor to detect clicks outside the field.
 private struct RenameTextField: NSViewRepresentable {
     @Binding var text: String
     var onCommit: () -> Void
@@ -383,9 +384,11 @@ private struct RenameTextField: NSViewRepresentable {
         field.focusRingType = .exterior
         field.delegate = context.coordinator
         field.stringValue = text
+        context.coordinator.field = field
         DispatchQueue.main.async {
             field.window?.makeFirstResponder(field)
             field.currentEditor()?.selectAll(nil)
+            context.coordinator.installClickMonitor()
         }
         return field
     }
@@ -394,10 +397,37 @@ private struct RenameTextField: NSViewRepresentable {
         context.coordinator.parent = self
     }
 
+    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
+        coordinator.removeClickMonitor()
+    }
+
     class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: RenameTextField
+        weak var field: NSTextField?
+        private var didEnd = false
+        private var clickMonitor: Any?
 
         init(_ parent: RenameTextField) { self.parent = parent }
+
+        func installClickMonitor() {
+            guard clickMonitor == nil else { return }
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, let field = self.field, !self.didEnd else { return event }
+                let locationInField = field.convert(event.locationInWindow, from: nil)
+                if !field.bounds.contains(locationInField) {
+                    self.parent.text = field.stringValue
+                    self.finish(commit: true)
+                }
+                return event
+            }
+        }
+
+        func removeClickMonitor() {
+            if let monitor = clickMonitor {
+                NSEvent.removeMonitor(monitor)
+                clickMonitor = nil
+            }
+        }
 
         func controlTextDidChange(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
@@ -407,12 +437,23 @@ private struct RenameTextField: NSViewRepresentable {
         func controlTextDidEndEditing(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
             parent.text = field.stringValue
-            if let movement = obj.userInfo?["NSTextMovement"] as? Int,
-               movement == NSTextMovement.cancel.rawValue {
-                parent.onCancel()
-            } else {
+            let isCancel = (obj.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.cancel.rawValue
+            finish(commit: !isCancel)
+        }
+
+        private func finish(commit: Bool) {
+            guard !didEnd else { return }
+            didEnd = true
+            removeClickMonitor()
+            if commit {
                 parent.onCommit()
+            } else {
+                parent.onCancel()
             }
+        }
+
+        deinit {
+            removeClickMonitor()
         }
     }
 }
