@@ -3,7 +3,7 @@ import AppKit
 
 struct ContentResultRow: View {
     let item: ContentFileItem
-    let keyword: String
+    let hints: [HighlightHint]
     @ObservedObject private var settings = AppSettings.shared
     @State private var isHovered = false
 
@@ -33,7 +33,7 @@ struct ContentResultRow: View {
                 }
 
                 if settings.showContentSnippets {
-                    highlightMatches(in: item.snippet, keyword: keyword, font: .caption, color: .secondary)
+                    highlightMatches(in: item.snippet, hints: hints, font: .caption, color: .secondary)
                         .lineLimit(dense ? 1 : 2)
                 }
             }

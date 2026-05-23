@@ -8,9 +8,8 @@ import Foundation
 /// - Window unfocused → mark pending, never refresh
 /// - Focus regained + pending → refresh immediately
 ///
-/// This class is synchronous and has no dependency on MainActor, Task, or UI frameworks,
-/// making it fully unit-testable.
-final class IndexRefreshThrottle {
+/// This class is synchronous. All callers must be on MainActor (enforced by SearchServiceModel).
+final class IndexRefreshThrottle: @unchecked Sendable {
 
     /// Called when a refresh should actually be performed.
     var onRefresh: (() -> Void)?

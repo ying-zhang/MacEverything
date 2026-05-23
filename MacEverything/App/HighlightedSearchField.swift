@@ -218,14 +218,21 @@ struct HighlightedSearchField: NSViewRepresentable {
 
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? HighlightedNSTextView else { return }
+        context.coordinator.parent = self
 
         // Update text if externally changed (e.g., clear button, ghost suggestion accept)
         if textView.string != text {
             context.coordinator.isUpdatingFromSwiftUI = true
-            let selectedRanges = textView.selectedRanges
             textView.string = text
             context.coordinator.applyHighlighting(textView)
-            textView.selectedRanges = selectedRanges
+            let newLen = textView.string.count
+            let clampedRanges = textView.selectedRanges.map { rangeValue -> NSValue in
+                let r = rangeValue.rangeValue
+                let start = min(r.location, newLen)
+                let len = min(r.length, newLen - start)
+                return NSValue(range: NSRange(location: start, length: len))
+            }
+            textView.selectedRanges = clampedRanges
             context.coordinator.isUpdatingFromSwiftUI = false
         }
 

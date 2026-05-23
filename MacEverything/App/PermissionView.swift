@@ -1,17 +1,9 @@
 import SwiftUI
 
 struct PermissionView: View {
-    @State private var hasFullDiskAccess: Bool = true
+    @State private var hasFullDiskAccess: Bool = false
 
     var body: some View {
-        Group {}.onAppear { checkAccess() }
-            .task {
-                while !hasFullDiskAccess {
-                    try? await Task.sleep(for: .seconds(3))
-                    checkAccess()
-                }
-            }
-
         if !hasFullDiskAccess {
             HStack {
                 Image(systemName: "exclamationmark.triangle.fill")
@@ -27,11 +19,17 @@ struct PermissionView: View {
             }
             .padding(8)
             .background(Color.yellow.opacity(0.15))
+            .onAppear { checkAccess() }
+            .task {
+                while !hasFullDiskAccess {
+                    try? await Task.sleep(for: .seconds(3))
+                    checkAccess()
+                }
+            }
         }
     }
 
     private func checkAccess() {
-        // Test read access to a TCC-protected directory
         let testPath = NSHomeDirectory() + "/Library/Safari"
         hasFullDiskAccess = FileManager.default.isReadableFile(atPath: testPath)
     }

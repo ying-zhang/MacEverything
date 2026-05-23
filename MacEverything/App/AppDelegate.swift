@@ -3,6 +3,7 @@ import ServiceManagement
 import Combine
 import SwiftUI
 
+@MainActor
 class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDelegate {
     private var hotkeyManager: HotkeyManager?
     private var statusItem: NSStatusItem?
@@ -106,52 +107,51 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private static func makeStatusBarIcon() -> NSImage {
         if let assetImage = NSImage(named: "StatusBarIcon") {
             assetImage.size = NSSize(width: 18, height: 18)
-            assetImage.isTemplate = false
+            assetImage.isTemplate = true
             return assetImage
         }
 
         let size = NSSize(width: 18, height: 18)
-        let image = NSImage(size: size)
+        let image = NSImage(size: size, flipped: false) { _ in
+            NSColor.black.setStroke()
+
+            let lens = NSBezierPath(ovalIn: NSRect(x: 2.1, y: 5.7, width: 10.9, height: 10.9))
+            lens.lineWidth = 1.8
+            lens.lineCapStyle = .round
+            lens.lineJoinStyle = .round
+            lens.stroke()
+
+            let handle = NSBezierPath()
+            handle.move(to: NSPoint(x: 11.8, y: 6.2))
+            handle.line(to: NSPoint(x: 16.0, y: 2.0))
+            handle.lineWidth = 2.1
+            handle.lineCapStyle = .round
+            handle.lineJoinStyle = .round
+            handle.stroke()
+
+            let window = NSBezierPath(roundedRect: NSRect(x: 5.0, y: 9.3, width: 5.4, height: 3.8), xRadius: 0.55, yRadius: 0.55)
+            window.lineWidth = 1.1
+            window.lineCapStyle = .round
+            window.lineJoinStyle = .round
+            window.stroke()
+
+            let titleBar = NSBezierPath()
+            titleBar.move(to: NSPoint(x: 5.2, y: 12.0))
+            titleBar.line(to: NSPoint(x: 10.2, y: 12.0))
+            titleBar.lineWidth = 0.9
+            titleBar.lineCapStyle = .round
+            titleBar.stroke()
+
+            let contentLine = NSBezierPath()
+            contentLine.move(to: NSPoint(x: 6.2, y: 10.6))
+            contentLine.line(to: NSPoint(x: 9.2, y: 10.6))
+            contentLine.lineWidth = 0.9
+            contentLine.lineCapStyle = .round
+            contentLine.stroke()
+
+            return true
+        }
         image.isTemplate = true
-        image.lockFocus()
-        defer { image.unlockFocus() }
-
-        NSColor.black.setStroke()
-
-        let lens = NSBezierPath(ovalIn: NSRect(x: 2.1, y: 5.7, width: 10.9, height: 10.9))
-        lens.lineWidth = 1.8
-        lens.lineCapStyle = .round
-        lens.lineJoinStyle = .round
-        lens.stroke()
-
-        let handle = NSBezierPath()
-        handle.move(to: NSPoint(x: 11.8, y: 6.2))
-        handle.line(to: NSPoint(x: 16.0, y: 2.0))
-        handle.lineWidth = 2.1
-        handle.lineCapStyle = .round
-        handle.lineJoinStyle = .round
-        handle.stroke()
-
-        let window = NSBezierPath(roundedRect: NSRect(x: 5.0, y: 9.3, width: 5.4, height: 3.8), xRadius: 0.55, yRadius: 0.55)
-        window.lineWidth = 1.1
-        window.lineCapStyle = .round
-        window.lineJoinStyle = .round
-        window.stroke()
-
-        let titleBar = NSBezierPath()
-        titleBar.move(to: NSPoint(x: 5.2, y: 12.0))
-        titleBar.line(to: NSPoint(x: 10.2, y: 12.0))
-        titleBar.lineWidth = 0.9
-        titleBar.lineCapStyle = .round
-        titleBar.stroke()
-
-        let contentLine = NSBezierPath()
-        contentLine.move(to: NSPoint(x: 6.2, y: 10.6))
-        contentLine.line(to: NSPoint(x: 9.2, y: 10.6))
-        contentLine.lineWidth = 0.9
-        contentLine.lineCapStyle = .round
-        contentLine.stroke()
-
         return image
     }
 
@@ -299,10 +299,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     }
 }
 
+@MainActor
 enum SearchWindowSupport {
     static let windowIdentifier = NSUserInterfaceItemIdentifier("MacEverything.searchWindow")
     static let tabbingIdentifier = NSWindow.TabbingIdentifier("MacEverything.search")
-    nonisolated(unsafe) private static var tabBarRequestedWindows: Set<ObjectIdentifier> = []
+    private static var tabBarRequestedWindows: Set<ObjectIdentifier> = []
 
     static func isSearchWindow(_ window: NSWindow) -> Bool {
         window.identifier == windowIdentifier ||

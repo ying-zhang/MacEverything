@@ -36,7 +36,7 @@ final class FileIconCache {
         }
 
         let fullPath = item.path + "/" + item.name
-        let nsImage = NSWorkspace.shared.icon(forFile: fullPath)
+        let nsImage = NSWorkspace.shared.icon(forFile: fullPath).copy() as! NSImage
         nsImage.size = NSSize(width: 24, height: 24)
         cache.setObject(nsImage, forKey: nsKey)
         return nsImage
@@ -48,7 +48,7 @@ final class FileIconCache {
         if let cached = cache.object(forKey: key) {
             return cached
         }
-        let nsImage = NSWorkspace.shared.icon(forFile: path)
+        let nsImage = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage
         nsImage.size = NSSize(width: 24, height: 24)
         cache.setObject(nsImage, forKey: key)
         return nsImage
@@ -165,15 +165,7 @@ struct ResultRow: View {
     }
 
     private func formatSize(_ bytes: UInt64) -> String {
-        let units = ["B", "KB", "MB", "GB", "TB"]
-        var size = Double(bytes)
-        var unitIndex = 0
-        while size >= 1024 && unitIndex < units.count - 1 {
-            size /= 1024
-            unitIndex += 1
-        }
-        if unitIndex == 0 { return "\(bytes) B" }
-        return String(format: "%.1f %@", size, units[unitIndex])
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
     private func formatDate(_ modTime: time_t) -> String {

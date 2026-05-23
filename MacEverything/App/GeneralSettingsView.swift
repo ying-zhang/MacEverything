@@ -135,7 +135,7 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(L10n.tr("Rebuild Index Now")) {
-                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                    NotificationCenter.default.post(name: .rebuildIndex, object: nil)
                 }
             }
 
@@ -172,7 +172,7 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(L10n.tr("Rebuild Index Now")) {
-                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                    NotificationCenter.default.post(name: .rebuildIndex, object: nil)
                 }
             }
         }
@@ -313,8 +313,9 @@ struct GeneralSettingsView: View {
         return size.uint64Value
     }
 
+
     private func formattedBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
     private func scheduleContentIndexInfoRefresh() {
@@ -505,7 +506,7 @@ struct GeneralSettingsView: View {
         SettingsSection(title: L10n.tr("Maintenance")) {
             Toggle(L10n.tr("Automatic index maintenance"), isOn: $settings.automaticMaintenanceEnabled)
             Button(L10n.tr("Rebuild Index")) {
-                NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                NotificationCenter.default.post(name: .rebuildIndex, object: nil)
             }
         }
     }

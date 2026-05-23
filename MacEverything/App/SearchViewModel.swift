@@ -1,6 +1,7 @@
 import Foundation
 import Combine
 import AppKit
+import os
 
 struct FileItem: Identifiable {
     let id: String      // path-based stable ID
@@ -23,7 +24,7 @@ struct ContentFileItem: Identifiable {
 
 nonisolated private func fileItem(from result: MEFileResult) -> FileItem {
     FileItem(
-        id: "\(result.path)/\(result.name)", index: 0,
+        id: (result.path as NSString).appendingPathComponent(result.name), index: 0,
         name: result.name, path: result.path,
         type: result.type, size: result.size, modTime: result.modTime
     )
@@ -31,19 +32,17 @@ nonisolated private func fileItem(from result: MEFileResult) -> FileItem {
 
 nonisolated private func isAllowedContentSearchPath(
     _ path: String,
-    roots: [String],
-    excludedPaths: [String]
+    standardizedRoots: [String],
+    standardizedExcluded: [String]
 ) -> Bool {
     let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-    let insideRoot = roots.isEmpty || roots.contains { root in
-        let standardizedRoot = URL(fileURLWithPath: root).standardizedFileURL.path
-        return standardizedPath == standardizedRoot || standardizedPath.hasPrefix(standardizedRoot + "/")
+    let insideRoot = standardizedRoots.isEmpty || standardizedRoots.contains { root in
+        standardizedPath == root || standardizedPath.hasPrefix(root + "/")
     }
     guard insideRoot else { return false }
 
-    for excluded in excludedPaths {
-        let standardizedExcluded = URL(fileURLWithPath: excluded).standardizedFileURL.path
-        if standardizedPath == standardizedExcluded || standardizedPath.hasPrefix(standardizedExcluded + "/") {
+    for excluded in standardizedExcluded {
+        if standardizedPath == excluded || standardizedPath.hasPrefix(excluded + "/") {
             return false
         }
     }
@@ -270,20 +269,14 @@ class SearchViewModel: ObservableObject {
     @Published var totalMatches: Int = 0
     @Published var resultLimitReached: Bool = false
     @Published var queryTimeMs: Double = 0
-    var isLoadingMore: Bool = false
+    @Published var isLoadingMore: Bool = false
     @Published var showingRecent: Bool = false
     @Published var isContentSearch: Bool = false
     @Published var contentResults: [ContentFileItem] = []
     @Published var ghostSuggestion: String? = nil
     @Published var selectedItemID: String? = nil
 
-    /// Structured highlight hints extracted from the C++ query AST.
-    /// Replaces the old keyword-based approach with field-aware, mode-aware hints.
-    var highlightHints: [HighlightHint] {
-        let query = searchOptions.buildQuery(searchText)
-        guard !query.isEmpty else { return [] }
-        return bridge.parseHighlightHints(query).map { HighlightHint(from: $0) }
-    }
+    @Published var highlightHints: [HighlightHint] = []
 
     private let bridge = MacSearchBridge.shared()
     private let service: SearchServiceModel
@@ -361,17 +354,23 @@ class SearchViewModel: ObservableObject {
         searchTask?.cancel()
         searchGeneration &+= 1
         bridge.cancelSession(sessionId)
+        updateHighlightHints()
         performSearch(searchText)
     }
 
-    private nonisolated static let sessionLock = NSLock()
-    private nonisolated(unsafe) static var lastSessionId: UInt64 = 0
+    private func updateHighlightHints() {
+        let query = searchOptions.buildQuery(searchText)
+        guard !query.isEmpty else { highlightHints = []; return }
+        highlightHints = bridge.parseHighlightHints(query).map { HighlightHint(from: $0) }
+    }
+
+    private nonisolated static let sessionCounter = OSAllocatedUnfairLock(initialState: UInt64(0))
 
     private nonisolated static func nextSessionId() -> UInt64 {
-        sessionLock.lock()
-        defer { sessionLock.unlock() }
-        lastSessionId &+= 1
-        return lastSessionId
+        sessionCounter.withLock { value in
+            value &+= 1
+            return value
+        }
     }
 
     func onSearchTextChanged() {
@@ -380,6 +379,7 @@ class SearchViewModel: ObservableObject {
         searchGeneration &+= 1
         isLoadingMore = false
         selectedItemID = nil
+        updateHighlightHints()
         let text = searchText
 
         if text.isEmpty {
@@ -390,7 +390,6 @@ class SearchViewModel: ObservableObject {
             sourceItems = []
             cachedItems = []
             loadedCount = 0
-            selectedItemID = nil
             isContentSearch = false
             contentResults = []
             contentKeyword = "" // H-9: reset cached keyword
@@ -503,6 +502,8 @@ class SearchViewModel: ObservableObject {
         let bridge = self.bridge
         let gen = searchGeneration
         let snapshot = settings.snapshot
+        let stdRoots = snapshot.contentSearchRoots.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
+        let stdExcluded = snapshot.contentSearchExcludedPaths.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
             let results = bridge.queryContent(keyword, maxResults: 200)
@@ -513,8 +514,8 @@ class SearchViewModel: ObservableObject {
             for r in results {
                 guard isAllowedContentSearchPath(
                     r.filePath,
-                    roots: snapshot.contentSearchRoots,
-                    excludedPaths: snapshot.contentSearchExcludedPaths
+                    standardizedRoots: stdRoots,
+                    standardizedExcluded: stdExcluded
                 ) else { continue }
                 items.append(ContentFileItem(
                     id: "\(r.filePath):\(r.matchOffset)",
@@ -617,6 +618,7 @@ class SearchViewModel: ObservableObject {
             openFile(selected)
         } else {
             selectedItemID = first.id
+            openFile(first)
         }
         return true
     }
@@ -657,11 +659,15 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    private static let fileTypeApplication: UInt8 = 5
+
     private func openFile(_ item: FileItem) {
         let fullPath = item.path + "/" + item.name
-        if item.type == 5 {
+        if item.type == Self.fileTypeApplication {
             let url = URL(fileURLWithPath: fullPath)
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
+            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
+                if error != nil { NSSound.beep() }
+            }
         } else if !NSWorkspace.shared.open(URL(fileURLWithPath: fullPath)) {
             NSSound.beep()
         }

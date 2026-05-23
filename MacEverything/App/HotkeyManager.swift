@@ -1,19 +1,23 @@
 import Cocoa
 import Carbon.HIToolbox
 
+@MainActor
 class HotkeyManager {
     private var hotKeyRef: EventHotKeyRef?
     private var eventHandlerRef: EventHandlerRef?
     private var observer: NSObjectProtocol?
 
     func register() {
+        guard observer == nil else { return }
         registerCurrentHotkey()
 
         observer = NotificationCenter.default.addObserver(
             forName: .hotkeyChanged, object: nil, queue: .main
         ) { [weak self] _ in
-            self?.unregisterHotkey()
-            self?.registerCurrentHotkey()
+            Task { @MainActor in
+                self?.unregisterHotkey()
+                self?.registerCurrentHotkey()
+            }
         }
     }
 
@@ -71,10 +75,11 @@ class HotkeyManager {
         if let obs = observer {
             NotificationCenter.default.removeObserver(obs)
         }
-        unregisterHotkey()
+        if let ref = hotKeyRef {
+            UnregisterEventHotKey(ref)
+        }
         if let handler = eventHandlerRef {
             RemoveEventHandler(handler)
-            eventHandlerRef = nil
         }
     }
 }
