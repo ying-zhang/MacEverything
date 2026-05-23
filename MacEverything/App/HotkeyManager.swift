@@ -71,7 +71,7 @@ class HotkeyManager {
         }
     }
 
-    nonisolated deinit {
+    deinit {
         if let obs = observer {
             NotificationCenter.default.removeObserver(obs)
         }
