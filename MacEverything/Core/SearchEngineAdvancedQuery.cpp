@@ -1060,7 +1060,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                             priority = 3;
                         }
                     }
-                    local.push_back({idx, priority, static_cast<uint32_t>(pl + 1 + nl)});
+                    local.push_back({idx, priority, static_cast<uint32_t>(opl + 1 + nl)});
                 }
             });
 
@@ -1115,7 +1115,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         priority = 3;
                     }
                 }
-                merged.push_back({idx, priority, static_cast<uint32_t>(pl + 1 + nl)});
+                merged.push_back({idx, priority, static_cast<uint32_t>(opl + 1 + nl)});
             }
         }
     } else {
@@ -1243,7 +1243,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                             priority = 3;
                         }
                     }
-                    uint32_t pLen = static_cast<uint32_t>(pl + 1 + nl);
+                    uint32_t pLen = static_cast<uint32_t>(opl + 1 + nl);
                     local.push_back({static_cast<uint32_t>(idx), priority, pLen});
                 }
             }
