@@ -1018,6 +1018,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 if (start >= end) return;
                 auto& local = threadResults[t];
                 std::vector<char> localPathBuf;
+                std::string lowerPathBuf;
                 const auto& regCache = ptcPtr[t];
                 for (size_t ci = start; ci < end; ci++) {
                     if ((ci & 1023) == 0 && genPtr->load(std::memory_order_relaxed) != capturedGen) return;
@@ -1037,16 +1038,15 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         pyl = pinyinPool.length(idx);
                     }
                     uint32_t pi = pIndices[idx];
-                    std::string lp = SearchEngine::lowerPathStr(pathPool, pi);
-                    const char* pd = lp.data();
-                    uint16_t pl = static_cast<uint16_t>(lp.size());
-                    const char* ond = origNamePool.data(idx);
-                    uint16_t onl = origNamePool.length(idx);
                     const char* opd = pathPool.data(pi);
                     uint16_t opl = pathPool.length(pi);
+                    lowerPathBuf.assign(opd, opl);
+                    me::simdToLowerAscii(lowerPathBuf.data(), opl);
+                    const char* ond = origNamePool.data(idx);
+                    uint16_t onl = origNamePool.length(idx);
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, pd, pl, pyd, pyl, ond, onl, opd, opl,
+                                  nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
                     uint8_t priority = 2;
                     if (!sTerm.empty()) {
@@ -1070,6 +1070,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             }
         } else {
             // Small candidate set — single-threaded with prefetch
+            std::string smallLowerPathBuf;
             const uint32_t* candidatesData = candidates.data();
             const auto* smallTypesPtr = types_.data();
             const auto* smallSizesPtr = sizes_.data();
@@ -1092,16 +1093,15 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     pyl = pinyinInitialsPool_.length(idx);
                 }
                 uint32_t pi = pathIndices_[idx];
-                std::string lp = lowerPathStr(pathPool_, pi);
-                const char* pd = lp.data();
-                uint16_t pl = static_cast<uint16_t>(lp.size());
-                const char* ond = origNamePool_.data(idx);
-                uint16_t onl = origNamePool_.length(idx);
                 const char* opd = pathPool_.data(pi);
                 uint16_t opl = pathPool_.length(pi);
+                smallLowerPathBuf.assign(opd, opl);
+                me::simdToLowerAscii(smallLowerPathBuf.data(), opl);
+                const char* ond = origNamePool_.data(idx);
+                uint16_t onl = origNamePool_.length(idx);
                 if (!evalNode(*ast, smallTypesPtr[idx], smallSizesPtr[idx],
                               static_cast<time_t>(smallModTimesPtr[idx]),
-                              nd, nl, pd, pl, pyd, pyl, ond, onl, opd, opl,
+                              nd, nl, smallLowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                               pathBuf, regexCache)) continue;
                 uint8_t priority = 2;
                 if (!scoringTerm.empty()) {
@@ -1155,6 +1155,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
             auto& local = threadResults[t];
             std::vector<char> localPathBuf;
+            std::string lowerPathBuf;
             const auto& regCache = ptcPtr[t];
 
             if (pureFilter) {
@@ -1218,17 +1219,16 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         pyl = pinyinPool.length(static_cast<uint32_t>(idx));
                     }
                     uint32_t pi = pIndices[idx];
-                    std::string lp = SearchEngine::lowerPathStr(pathPool, pi);
-                    const char* pd = lp.data();
-                    uint16_t pl = static_cast<uint16_t>(lp.size());
-                    const char* ond = origNamePool.data(static_cast<uint32_t>(idx));
-                    uint16_t onl = origNamePool.length(static_cast<uint32_t>(idx));
                     const char* opd = pathPool.data(pi);
                     uint16_t opl = pathPool.length(pi);
+                    lowerPathBuf.assign(opd, opl);
+                    me::simdToLowerAscii(lowerPathBuf.data(), opl);
+                    const char* ond = origNamePool.data(static_cast<uint32_t>(idx));
+                    uint16_t onl = origNamePool.length(static_cast<uint32_t>(idx));
 
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, pd, pl, pyd, pyl, ond, onl, opd, opl,
+                                  nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
 
                     uint8_t priority = 2;

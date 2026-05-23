@@ -151,7 +151,6 @@ struct ResultRow: View {
             Button(L10n.tr("Rename")) { startRename() }
             Divider()
             Button(L10n.tr("Copy File")) { copyFile(item) }
-            Button(L10n.tr("Copy Path")) { copyPath(item) }
             Button(L10n.tr("Copy Filename")) { copyFilename(item) }
             Divider()
             Button(L10n.tr("Move to Trash")) { trashFile(item) }

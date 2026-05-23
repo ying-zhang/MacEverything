@@ -56,7 +56,6 @@ struct ContentResultRow: View {
             Button(L10n.tr("Quick Look")) { quickLook() }
             Divider()
             Button(L10n.tr("Copy File")) { copyFile() }
-            Button(L10n.tr("Copy Path")) { copyPath() }
             Button(L10n.tr("Copy Filename")) { copyFilename() }
             Divider()
             Button(L10n.tr("Move to Trash")) { trashFile() }
