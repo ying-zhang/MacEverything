@@ -640,6 +640,11 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    func removeContentItem(id: String) {
+        contentResults.removeAll { $0.id == id }
+        totalMatches = max(0, totalMatches - 1)
+    }
+
     func removeItemFromResults(id: String) {
         displayItems.removeAll { $0.id == id }
         cachedItems.removeAll { $0.id == id }
@@ -651,11 +656,13 @@ class SearchViewModel: ObservableObject {
     }
 
     func updateItemName(oldID: String, newName: String) {
+        var newID: String?
         let updateIn = { (items: inout [FileItem]) in
             if let idx = items.firstIndex(where: { $0.id == oldID }) {
                 let old = items[idx]
-                let newID = (old.path as NSString).appendingPathComponent(newName)
-                items[idx] = FileItem(id: newID, index: old.index, name: newName,
+                let computedID = (old.path as NSString).appendingPathComponent(newName)
+                newID = computedID
+                items[idx] = FileItem(id: computedID, index: old.index, name: newName,
                                       path: old.path, type: old.type,
                                       size: old.size, modTime: old.modTime)
             }
@@ -664,7 +671,7 @@ class SearchViewModel: ObservableObject {
         updateIn(&cachedItems)
         updateIn(&sourceItems)
         if selectedItemID == oldID {
-            selectedItemID = (displayItems.first { $0.id != oldID }?.id) ?? nil
+            selectedItemID = newID
         }
     }
 
@@ -840,8 +847,14 @@ class SearchViewModel: ObservableObject {
 
     func submitSearch() {
         guard !searchText.isEmpty else { return }
-        if settings.snapshot.searchAsYouType, activateSelectedOrFirstResult() {
-            return
+        if settings.snapshot.searchAsYouType {
+            if settings.snapshot.enterKeyAction == .rename && selectedItemID != nil {
+                requestRenameForSelected()
+                return
+            }
+            if activateSelectedOrFirstResult() {
+                return
+            }
         }
         searchTask?.cancel()
         recentTask?.cancel()

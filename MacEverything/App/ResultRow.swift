@@ -230,12 +230,6 @@ struct ResultRow: View {
         NSWorkspace.shared.selectFile(fullPath, inFileViewerRootedAtPath: "")
     }
 
-    private func copyPath(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(fullPath, forType: .string)
-    }
-
     private var isActivelyRenaming: Bool {
         localRenaming || requestedRename
     }

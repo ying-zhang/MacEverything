@@ -212,7 +212,10 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(viewModel.contentResults) { item in
-                                ContentResultRow(item: item, hints: viewModel.highlightHints)
+                                ContentResultRow(item: item, hints: viewModel.highlightHints,
+                                    onDelete: {
+                                        viewModel.removeContentItem(id: item.id)
+                                    })
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 2)
                             }
