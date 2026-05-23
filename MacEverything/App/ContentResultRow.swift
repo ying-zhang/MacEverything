@@ -4,6 +4,7 @@ import AppKit
 struct ContentResultRow: View {
     let item: ContentFileItem
     let hints: [HighlightHint]
+    var onDelete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @State private var isHovered = false
 
@@ -100,10 +101,7 @@ struct ContentResultRow: View {
         NSWorkspace.shared.selectFile(item.filePath, inFileViewerRootedAtPath: "")
     }
 
-    private func copyPath() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(item.filePath, forType: .string)
-    }
+
 
     private func copyFile() {
         NSPasteboard.general.clearContents()
@@ -118,6 +116,7 @@ struct ContentResultRow: View {
     private func trashFile() {
         do {
             try FileManager.default.trashItem(at: URL(fileURLWithPath: item.filePath), resultingItemURL: nil)
+            onDelete?()
         } catch {
             NSSound.beep()
         }

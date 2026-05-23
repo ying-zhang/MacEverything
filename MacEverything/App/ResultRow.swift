@@ -62,6 +62,8 @@ struct ResultRow: View {
     let requestedRename: Bool
     let onSelect: () -> Void
     var onRenameComplete: (() -> Void)?
+    var onRenameSuccess: ((_ oldID: String, _ newName: String) -> Void)?
+    var onDelete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
@@ -228,12 +230,6 @@ struct ResultRow: View {
         NSWorkspace.shared.selectFile(fullPath, inFileViewerRootedAtPath: "")
     }
 
-    private func copyPath(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(fullPath, forType: .string)
-    }
-
     private var isActivelyRenaming: Bool {
         localRenaming || requestedRename
     }
@@ -253,10 +249,23 @@ struct ResultRow: View {
         onRenameComplete?()
         let newName = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !newName.isEmpty, newName != item.name else { return }
+        if newName.contains("/") || newName.contains("\0") {
+            NSSound.beep()
+            renameError = L10n.tr("Filename cannot contain / or null characters")
+            showRenameError = true
+            return
+        }
+        if newName.hasPrefix(".") {
+            let oldHasPrefix = item.name.hasPrefix(".")
+            if !oldHasPrefix {
+                // Allow but don't block — user may intentionally hide a file
+            }
+        }
         let oldPath = item.path + "/" + item.name
         let newPath = item.path + "/" + newName
         do {
             try FileManager.default.moveItem(atPath: oldPath, toPath: newPath)
+            onRenameSuccess?(item.id, newName)
         } catch {
             NSSound.beep()
             renameError = error.localizedDescription
@@ -280,6 +289,7 @@ struct ResultRow: View {
         let url = URL(fileURLWithPath: fullPath)
         do {
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            onDelete?()
         } catch {
             NSSound.beep()
         }
@@ -352,6 +362,7 @@ final class ResultColumnLayout: ObservableObject {
 }
 
 /// NSTextField wrapper that commits on focus loss and cancels on Escape.
+/// Uses a local mouse-down event monitor to detect clicks outside the field.
 private struct RenameTextField: NSViewRepresentable {
     @Binding var text: String
     var onCommit: () -> Void
@@ -367,9 +378,11 @@ private struct RenameTextField: NSViewRepresentable {
         field.focusRingType = .exterior
         field.delegate = context.coordinator
         field.stringValue = text
+        context.coordinator.field = field
         DispatchQueue.main.async {
             field.window?.makeFirstResponder(field)
             field.currentEditor()?.selectAll(nil)
+            context.coordinator.installClickMonitor()
         }
         return field
     }
@@ -378,10 +391,37 @@ private struct RenameTextField: NSViewRepresentable {
         context.coordinator.parent = self
     }
 
+    static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
+        coordinator.removeClickMonitor()
+    }
+
     class Coordinator: NSObject, NSTextFieldDelegate {
         var parent: RenameTextField
+        weak var field: NSTextField?
+        private var didEnd = false
+        private var clickMonitor: Any?
 
         init(_ parent: RenameTextField) { self.parent = parent }
+
+        func installClickMonitor() {
+            guard clickMonitor == nil else { return }
+            clickMonitor = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
+                guard let self, let field = self.field, !self.didEnd else { return event }
+                let locationInField = field.convert(event.locationInWindow, from: nil)
+                if !field.bounds.contains(locationInField) {
+                    self.parent.text = field.stringValue
+                    self.finish(commit: true)
+                }
+                return event
+            }
+        }
+
+        func removeClickMonitor() {
+            if let monitor = clickMonitor {
+                NSEvent.removeMonitor(monitor)
+                clickMonitor = nil
+            }
+        }
 
         func controlTextDidChange(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
@@ -391,12 +431,23 @@ private struct RenameTextField: NSViewRepresentable {
         func controlTextDidEndEditing(_ obj: Notification) {
             guard let field = obj.object as? NSTextField else { return }
             parent.text = field.stringValue
-            if let movement = obj.userInfo?["NSTextMovement"] as? Int,
-               movement == NSTextMovement.cancel.rawValue {
-                parent.onCancel()
-            } else {
+            let isCancel = (obj.userInfo?["NSTextMovement"] as? Int) == NSTextMovement.cancel.rawValue
+            finish(commit: !isCancel)
+        }
+
+        private func finish(commit: Bool) {
+            guard !didEnd else { return }
+            didEnd = true
+            removeClickMonitor()
+            if commit {
                 parent.onCommit()
+            } else {
+                parent.onCancel()
             }
+        }
+
+        deinit {
+            removeClickMonitor()
         }
     }
 }

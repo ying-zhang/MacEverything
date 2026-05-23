@@ -320,3 +320,4 @@
 "Names made only of letters, digits, or underscores" = "Names made only of letters, digits, or underscores";
 "Names containing whitespace" = "Names containing whitespace";
 "Names containing non-ASCII characters" = "Names containing non-ASCII characters";
+"Filename cannot contain / or null characters" = "Filename cannot contain / or null characters";

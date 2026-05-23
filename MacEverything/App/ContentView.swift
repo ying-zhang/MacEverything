@@ -45,6 +45,9 @@ struct ContentView: View {
                     },
                     onF2: {
                         viewModel.requestRenameForSelected()
+                    },
+                    onCmdDelete: {
+                        viewModel.deleteSelectedFile()
                     }
                 )
                 .frame(height: 36)
@@ -209,7 +212,10 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(viewModel.contentResults) { item in
-                                ContentResultRow(item: item, hints: viewModel.highlightHints)
+                                ContentResultRow(item: item, hints: viewModel.highlightHints,
+                                    onDelete: {
+                                        viewModel.removeContentItem(id: item.id)
+                                    })
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 2)
                             }
@@ -279,6 +285,12 @@ struct ContentView: View {
                                 },
                                 onRenameComplete: {
                                     viewModel.renameRequestedItemID = nil
+                                },
+                                onRenameSuccess: { oldID, newName in
+                                    viewModel.updateItemName(oldID: oldID, newName: newName)
+                                },
+                                onDelete: {
+                                    viewModel.removeItemFromResults(id: item.id)
                                 }
                             )
                                 .environmentObject(columnLayout)

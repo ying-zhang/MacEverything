@@ -169,6 +169,7 @@ struct HighlightedSearchField: NSViewRepresentable {
     var onTab: (() -> Bool)?
     var onSubmit: (() -> Void)?
     var onF2: (() -> Void)?
+    var onCmdDelete: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -208,6 +209,7 @@ struct HighlightedSearchField: NSViewRepresentable {
         textView.onTabKey = context.coordinator.handleTab
         textView.onSubmit = context.coordinator.handleSubmit
         textView.onF2 = context.coordinator.handleF2
+        textView.onCmdDelete = context.coordinator.handleCmdDelete
 
         // Placeholder
         textView.placeholderString = placeholder
@@ -295,6 +297,10 @@ struct HighlightedSearchField: NSViewRepresentable {
             parent.onF2?()
         }
 
+        func handleCmdDelete() {
+            parent.onCmdDelete?()
+        }
+
         func applyHighlighting(_ textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
             let fullRange = NSRange(location: 0, length: textStorage.length)
@@ -342,6 +348,8 @@ class HighlightedNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
     var onF2: (() -> Void)?
     var placeholderString: String = ""
+    var onCmdDelete: (() -> Void)?
+
     var ghostSuggestion: String? {
         didSet { needsDisplay = true }
     }
@@ -350,6 +358,11 @@ class HighlightedNSTextView: NSTextView {
         // F2 key - rename
         if event.keyCode == 120 {
             onF2?()
+            return
+        }
+        // Cmd+Backspace - delete selected file
+        if event.keyCode == 51 && event.modifierFlags.contains(.command) {
+            onCmdDelete?()
             return
         }
         // Handle Tab key for ghost suggestion
