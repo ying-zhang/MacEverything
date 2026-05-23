@@ -99,12 +99,14 @@ struct ResultRow: View {
                     .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
                 if isActivelyRenaming {
                     TextField("", text: $editingName)
-                    .textFieldStyle(.plain)
-                    .font(.subheadline)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .onSubmit { commitRename() }
-                    .onExitCommand { cancelRename() }
-                    .onAppear { editingName = item.name }
+                        .textFieldStyle(.roundedBorder)
+                        .font(.subheadline)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .onSubmit { commitRename() }
+                        .onExitCommand { cancelRename() }
+                        .onAppear {
+                            editingName = item.name
+                        }
                 } else {
                     highlighted.nameText.lineLimit(1)
                 }
