@@ -28,7 +28,6 @@ uint32_t SearchEngine::internPath(const std::string& path) {
     auto it = pathLookup_.find(path);
     if (it != pathLookup_.end()) return it->second;
     uint32_t pIdx = pathPool_.append(path);
-    lowerPathPool_.append(me::toLower(path));
     pathLookup_[path] = pIdx;
     lowerPathLookup_[me::toLower(path)] = pIdx;
     return pIdx;
@@ -87,7 +86,6 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
     m.namePoolBytes = poolBytes(namePool_);
     m.pinyinInitialsPoolBytes = poolBytes(pinyinInitialsPool_);
     m.pathPoolBytes = poolBytes(pathPool_);
-    m.lowerPathPoolBytes = poolBytes(lowerPathPool_);
     m.pathIndicesBytes = pathIndices_.capacity() * sizeof(uint32_t);
     m.typesBytes = types_.capacity() * sizeof(uint8_t);
     m.sizesBytes = sizes_.capacity() * sizeof(uint64_t);
@@ -119,15 +117,22 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
     m.extensionIndexEntries = extensionIndex_.size();
     m.extensionIndexApproxBytes = stringMapBytes(extensionIndex_);
     m.extensionIndexPostingBytes = postingBytes(extensionIndex_);
+    m.cjkBigramEntries = cjkBigramIndex_.size();
+    m.cjkBigramApproxBytes = cjkBigramIndex_.bucket_count() * sizeof(void*);
+    for (const auto& [_, list] : cjkBigramIndex_) {
+        m.cjkBigramApproxBytes += sizeof(uint32_t) + sizeof(list) + sizeof(void*);
+    }
+    m.cjkBigramPostingBytes = postingBytes(cjkBigramIndex_);
 
     m.totalApproxBytes =
         m.origNamePoolBytes + m.namePoolBytes + m.pinyinInitialsPoolBytes +
-        m.pathPoolBytes + m.lowerPathPoolBytes + m.pathIndicesBytes +
+        m.pathPoolBytes + m.pathIndicesBytes +
         m.typesBytes + m.sizesBytes + m.modTimesBytes + m.inodesBytes +
         m.devIdsBytes + m.pathIndexApproxBytes + m.pathLookupApproxBytes +
         m.lowerPathLookupApproxBytes + m.nameTrigramApproxBytes +
         m.pinyinTrigramApproxBytes + m.pathTrigramApproxBytes +
-        m.pathIdxToRecordsBytes + m.extensionIndexApproxBytes;
+        m.pathIdxToRecordsBytes + m.extensionIndexApproxBytes +
+        m.cjkBigramApproxBytes;
     return m;
 }
 
@@ -160,7 +165,7 @@ uint64_t SearchEngine::hashLowerFullPath(std::string_view lowerFullPath) {
 bool SearchEngine::lowerFullPathMatchesRecordUnlocked(uint32_t idx,
                                                       const std::string& lowerFullPath) const {
     if (idx >= types_.size() || types_[idx] == 0) return false;
-    auto path = lowerPathPool_.view(pathIndices_[idx]);
+    std::string path = lowerPathStr(pathPool_, pathIndices_[idx]);
     auto name = namePool_.view(idx);
     std::string full = makeFullPath(path, name);
     return full == lowerFullPath;
@@ -183,7 +188,7 @@ uint32_t SearchEngine::findIndexForLowerPathUnlocked(const std::string& lowerFul
     }
     for (uint32_t i = 0; i < types_.size(); i++) {
         if (types_[i] == 0) continue;
-        auto path = lowerPathPool_.view(pathIndices_[i]);
+        std::string path = lowerPathStr(pathPool_, pathIndices_[i]);
         auto name = namePool_.view(i);
         std::string full = makeFullPath(path, name);
         if (full == lowerFullPath) return i;
@@ -292,9 +297,8 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     }
     namePool_.loadBulk(tempLowerNames);
 
-    // Path deduplication: intern paths into pathPool_ + lowerPathPool_ + pathLookup_
+    // Path deduplication: intern paths into pathPool_ + pathLookup_
     pathPool_.clear();
-    lowerPathPool_.clear();
     pathLookup_.clear();
     lowerPathLookup_.clear();
     pathIndices_.resize(n);
@@ -319,7 +323,7 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
             pathThreads.emplace_back([this, &loweredPaths, start, end] {
                 for (size_t i = start; i < end; i++) {
                     uint32_t idx = static_cast<uint32_t>(i);
-                    loweredPaths[i] = makeFullPath(lowerPathPool_.view(pathIndices_[idx]),
+                    loweredPaths[i] = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]),
                                                    namePool_.view(idx));
                 }
             });
@@ -374,6 +378,7 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     }
     // Build extension index for fast ext: filter queries
     buildExtensionIndex();
+    cjkBigramIndex_ = buildCJKBigramIndexFromData(types_, namePool_);
     rebuildRecentCache();
 
     liveCount_.store(actualLive, std::memory_order_relaxed);
@@ -421,7 +426,7 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
 
     // Install pre-built path dictionaries (skip path dedup + internPath loop)
     pathPool_ = std::move(pathDict);
-    lowerPathPool_ = std::move(lowerPathDict);
+    (void)lowerPathDict; // lowerPathPool_ eliminated -- compute on-the-fly
     pathIndices_ = std::move(pathIndices);
 
     // Rebuild pathLookup_ and lowerPathLookup_ from pathPool_ entries
@@ -432,7 +437,7 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
     for (uint32_t i = 0; i < pathPool_.entryCount(); i++) {
         if (pathPool_.isLive(i)) {
             pathLookup_[pathPool_.str(i)] = i;
-            lowerPathLookup_[lowerPathPool_.str(i)] = i;
+            lowerPathLookup_[lowerPathStr(pathPool_, i)] = i;
         }
     }
 
@@ -452,7 +457,7 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
             pathThreads.emplace_back([this, &loweredPaths, start, end] {
                 for (size_t i = start; i < end; i++) {
                     uint32_t idx = static_cast<uint32_t>(i);
-                    loweredPaths[i] = makeFullPath(lowerPathPool_.view(pathIndices_[idx]),
+                    loweredPaths[i] = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]),
                                                    namePool_.view(idx));
                 }
             });
@@ -508,6 +513,7 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
         pathIdxToRecords_.clear();
     }
     buildExtensionIndex();
+    cjkBigramIndex_ = buildCJKBigramIndexFromData(types_, namePool_);
     rebuildRecentCache();
 
     liveCount_.store(actualLive, std::memory_order_relaxed);
@@ -555,6 +561,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
         removeTrigramsForRecord(oldIdx);
         removePinyinInitialsForRecord(oldIdx);
         removePathTrigramsForRecord(oldIdx);
+        removeCJKBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
         erasePathIndexUnlocked(lowerFull);
         tombstoneAt(oldIdx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -582,6 +589,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
     addPinyinInitialsForRecord(idx);
     addPathTrigramsForRecord(idx);
     addExtensionForRecord(idx);
+    addCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
 
     // Dirty page tracking
     if (idx / kRecordsPerPage >= dirtyPages_.size()) {
@@ -607,6 +615,7 @@ bool SearchEngine::removeByPathUnlocked(const std::string& fullPath) {
     removePinyinInitialsForRecord(idx);
     removePathTrigramsForRecord(idx);
     removeExtensionForRecord(idx);
+    removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
     erasePathIndexUnlocked(lowerFull);
     tombstoneAt(idx);
 
@@ -636,6 +645,7 @@ uint32_t SearchEngine::removeByPathPrefix(const std::string& pathPrefix) {
         removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
+        removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
         erasePathIndexUnlocked(lowerFullPath);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -645,7 +655,7 @@ uint32_t SearchEngine::removeByPathPrefix(const std::string& pathPrefix) {
 
     for (uint32_t idx = 0; idx < types_.size(); idx++) {
         if (types_[idx] == 0) continue;
-        std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[idx]), namePool_.view(idx));
+        std::string path = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]), namePool_.view(idx));
         if (path.size() >= lowerPrefix.size() &&
             path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
             (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
@@ -673,6 +683,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
+        removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
         erasePathIndexUnlocked(lowerFullPath);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -681,7 +692,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
 
     for (uint32_t idx = 0; idx < types_.size(); idx++) {
         if (types_[idx] == 0) continue;
-        std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[idx]), namePool_.view(idx));
+        std::string path = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]), namePool_.view(idx));
         if (path.size() >= lowerPrefix.size() &&
             path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
             (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
@@ -714,6 +725,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         addPinyinInitialsForRecord(newIdx);
         addPathTrigramsForRecord(newIdx);
         addExtensionForRecord(newIdx);
+        addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
         if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
             dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
         }
@@ -740,6 +752,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
         removePinyinInitialsForRecord(idx);
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
+        removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
         erasePathIndexUnlocked(lowerFull);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -769,6 +782,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
     addPinyinInitialsForRecord(newIdx);
     addPathTrigramsForRecord(newIdx);
     addExtensionForRecord(newIdx);
+    addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
     if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
         dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
     }
@@ -858,7 +872,6 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     std::vector<uint32_t> cdPathIndices;
     cdPathIndices.reserve(snapSize);
     StringPool cdPathPool;
-    StringPool cdLowerPathPool;
     std::unordered_map<std::string, uint32_t> cdPathLookup;
     std::unordered_map<std::string, uint32_t> cdLowerPathLookup;
     std::unordered_map<uint64_t, uint32_t> cdPathIndex;
@@ -877,14 +890,13 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         }
         uint32_t newIdx = static_cast<uint32_t>(cdTypes.size());
         remap[static_cast<uint32_t>(i)] = newIdx;
-        // Intern path into compacted pool (both original and lowered)
+        // Intern path into compacted pool
         uint32_t newPIdx;
         auto cdPlIt = cdPathLookup.find(origPath);
         if (cdPlIt != cdPathLookup.end()) {
             newPIdx = cdPlIt->second;
         } else {
             newPIdx = cdPathPool.append(origPath);
-            cdLowerPathPool.append(me::toLower(origPath));
             cdPathLookup[origPath] = newPIdx;
             cdLowerPathLookup[me::toLower(origPath)] = newPIdx;
         }
@@ -897,7 +909,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
                 // Compaction visits records in index order, so exact duplicate paths
                 // should keep the last record while true hash collisions go to overflow.
                 uint32_t existingIdx = existing->second;
-                std::string existingPath = makeFullPath(cdLowerPathPool.view(cdPathIndices[existingIdx]),
+                std::string existingPath = makeFullPath(lowerPathStr(cdPathPool, cdPathIndices[existingIdx]),
                                                         cdNamePool.view(existingIdx));
                 if (existingPath == fullPathLower) {
                     existing->second = newIdx;
@@ -905,7 +917,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
                     auto& collisions = cdPathIndexCollisions[hash];
                     bool replaced = false;
                     for (uint32_t& collisionIdx : collisions) {
-                        std::string collisionPath = makeFullPath(cdLowerPathPool.view(cdPathIndices[collisionIdx]),
+                        std::string collisionPath = makeFullPath(lowerPathStr(cdPathPool, cdPathIndices[collisionIdx]),
                                                                  cdNamePool.view(collisionIdx));
                         if (collisionPath == fullPathLower) {
                             collisionIdx = newIdx;
@@ -941,10 +953,11 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     std::unordered_map<Trigram, std::vector<uint32_t>> cdPathTrigramIndex;
     std::vector<std::vector<uint32_t>> cdPathIdxToRecords;
     if (options_.enablePathTrigramIndex) {
-        cdPathTrigramIndex = buildPathTrigramIndexFromData(cdLowerPathPool);
+        cdPathTrigramIndex = buildPathTrigramIndexFromData(cdPathPool);
         cdPathIdxToRecords = buildPathIdxToRecordsFromData(cdTypes, cdPathIndices, cdPathPool.entryCount());
     }
     auto cdExtensionIndex = buildExtensionIndexFromData(cdTypes, cdNamePool);
+    auto cdCJKBigramIndex = buildCJKBigramIndexFromData(cdTypes, cdNamePool);
     auto cdRecentCache = buildRecentCacheFromData(cdTypes, cdModTimes, kRecentCacheSize);
 
     LOG_INFO("SearchEngine", "COW compaction Phase 3: swapping data, compacted "
@@ -982,7 +995,6 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         pinyinInitialsPool_ = std::move(cdPinyinInitialsPool);
         pathIndices_ = std::move(cdPathIndices);
         pathPool_ = std::move(cdPathPool);
-        lowerPathPool_ = std::move(cdLowerPathPool);
         pathLookup_ = std::move(cdPathLookup);
         lowerPathLookup_ = std::move(cdLowerPathLookup);
         pathIndex_ = std::move(cdPathIndex);
@@ -992,6 +1004,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         pathTrigramIndex_ = std::move(cdPathTrigramIndex);
         pathIdxToRecords_ = std::move(cdPathIdxToRecords);
         extensionIndex_ = std::move(cdExtensionIndex);
+        cjkBigramIndex_ = std::move(cdCJKBigramIndex);
         recentCache_ = std::move(cdRecentCache);
 
         // Replay new records appended during Phase 2
@@ -1023,6 +1036,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             devIds_.push_back(oldDevIds[i]);
             addPathTrigramsForRecord(newIdx);
             addExtensionForRecord(newIdx);
+            addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
             cdLiveCount++;
             replayedAdds++;
         }
@@ -1033,12 +1047,13 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             for (const auto& [oldIdx, newIdx] : remap) {
                 if (oldIdx >= oldTypes.size() || oldTypes[oldIdx] != 0) continue;
                 if (newIdx >= types_.size() || types_[newIdx] == 0) continue;
-                std::string path = makeFullPath(lowerPathPool_.view(pathIndices_[newIdx]),
+                std::string path = makeFullPath(lowerPathStr(pathPool_, pathIndices_[newIdx]),
                                                 namePool_.view(newIdx));
                 removeTrigramsForRecord(newIdx);
                 removePinyinInitialsForRecord(newIdx);
                 removePathTrigramsForRecord(newIdx);
                 removeExtensionForRecord(newIdx);
+                removeCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
                 time_t oldMod = static_cast<time_t>(modTimes_[newIdx]);
                 erasePathIndexUnlocked(path);
                 tombstoneAt(newIdx);
@@ -1162,6 +1177,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
                 removePinyinInitialsForRecord(oldIdx);
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
+                removeCJKBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
                 erasePathIndexUnlocked(lowerFull);
                 tombstoneAt(oldIdx);
                 liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -1186,6 +1202,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             addPinyinInitialsForRecord(idx);
             addPathTrigramsForRecord(idx);
             addExtensionForRecord(idx);
+            addCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
             if (idx / kRecordsPerPage >= dirtyPages_.size()) {
                 dirtyPages_.resize(idx / kRecordsPerPage + 1, false);
             }
@@ -1200,6 +1217,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             removePinyinInitialsForRecord(idx);
             removePathTrigramsForRecord(idx);
             removeExtensionForRecord(idx);
+            removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
             erasePathIndexUnlocked(lowerFull);
             tombstoneAt(idx);
             liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -1213,6 +1231,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
                 removePinyinInitialsForRecord(oldIdx);
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
+                removeCJKBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
                 erasePathIndexUnlocked(lowerFull);
                 tombstoneAt(oldIdx);
                 liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -1237,6 +1256,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             addPinyinInitialsForRecord(newIdx);
             addPathTrigramsForRecord(newIdx);
             addExtensionForRecord(newIdx);
+            addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
             if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
                 dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
             }

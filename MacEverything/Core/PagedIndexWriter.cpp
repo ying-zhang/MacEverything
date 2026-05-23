@@ -411,7 +411,19 @@ bool PagedIndexWriter::flushDirtyPages(SearchEngine& engine, const IndexMetadata
 
     // Snapshot path dictionaries for v5 ptable
     pathDict_ = engine.pathPoolSnapshot();
-    lowerPathDict_ = engine.lowerPathPoolSnapshot();
+    {
+        // Generate lower path dict on-the-fly from pathPool (lowerPathPool_ eliminated)
+        StringPool lpd;
+        for (uint32_t i = 0; i < pathDict_.entryCount(); i++) {
+            if (pathDict_.isLive(i)) {
+                lpd.append(SearchEngine::lowerPathStr(pathDict_, i));
+            } else {
+                lpd.append("");
+                lpd.tombstone(i);
+            }
+        }
+        lowerPathDict_ = std::move(lpd);
+    }
 
     // Open pages file for appending (create if not exists)
     FILE* pf = fopen(pagesPath_.c_str(), "r+b");
@@ -491,7 +503,19 @@ bool PagedIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& me
 
     // Snapshot path dictionaries for v5 ptable
     pathDict_ = engine.pathPoolSnapshot();
-    lowerPathDict_ = engine.lowerPathPoolSnapshot();
+    {
+        // Generate lower path dict on-the-fly from pathPool (lowerPathPool_ eliminated)
+        StringPool lpd;
+        for (uint32_t i = 0; i < pathDict_.entryCount(); i++) {
+            if (pathDict_.isLive(i)) {
+                lpd.append(SearchEngine::lowerPathStr(pathDict_, i));
+            } else {
+                lpd.append("");
+                lpd.tombstone(i);
+            }
+        }
+        lowerPathDict_ = std::move(lpd);
+    }
 
     std::string tmpPages = pagesPath_ + ".tmp";
     FILE* pf = fopen(tmpPages.c_str(), "wb");

@@ -524,6 +524,30 @@ static std::string bestTrigramTerm(const QueryNode& node) {
     return {};
 }
 
+/// Collect ALL trigram-worthy TERM keys from an AND node (for multi-word intersection).
+static std::vector<std::string> allTrigramTerms(const QueryNode& node) {
+    std::vector<std::string> result;
+    if (node.type == QueryNodeType::TERM) {
+        auto k = termTrigramKey(node);
+        if (k.size() >= 3) result.push_back(std::move(k));
+        return result;
+    }
+    if (node.type == QueryNodeType::AND) {
+        for (auto& child : node.children) {
+            if (child->type == QueryNodeType::TERM) {
+                auto k = termTrigramKey(*child);
+                if (k.size() >= 3) result.push_back(std::move(k));
+            } else if (child->type == QueryNodeType::AND) {
+                auto sub = allTrigramTerms(*child);
+                result.insert(result.end(),
+                    std::make_move_iterator(sub.begin()),
+                    std::make_move_iterator(sub.end()));
+            }
+        }
+    }
+    return result;
+}
+
 /// Extract literal atoms from a regex pattern using RE2's FilteredRE2.
 /// Returns lowercased, deduplicated atoms (min length 3) that RE2's own
 /// AST parser determines are useful for pre-filtering.
@@ -708,13 +732,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
     // --- Trigram pre-filtering: competitive selection among name, regex, and path trigrams ---
     std::string trigramKey = bestTrigramTerm(*ast);
+    auto allTermKeys = allTrigramTerms(*ast);
     std::vector<uint32_t> candidates;
     bool useTrigramIndex = false;
 
     // Stage 1: Plain TERM trigram over both filename and path.
-    // A normal TERM is evaluated against filename first, then full path, so a
-    // pre-filter that only uses nameTrigramIndex_ can drop valid path matches
-    // such as "ying pdf" for /Users/ying/xx/xx.pdf.
+    // For multi-word AND queries, intersect candidates of ALL terms for tighter filtering.
     std::vector<uint32_t> nameCands;
     bool nameOk = false;
     bool stage1AllFound = false;
@@ -727,12 +750,38 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         bool anyCovered = false;
         bool stageTooMany = false;
         if (!nameTrigramIndex_.empty()) {
-            bool nameAllFound = false;
-            auto nameOnlyCands = intersectPostingLists(nameTrigramIndex_, trigramKey, nameAllFound);
-            if (nameAllFound) {
-                anyCovered = true;
-                unionSortedInto(nameCands, nameOnlyCands);
-                stageTooMany = nameCands.size() > candidateThreshold;
+            if (allTermKeys.size() > 1) {
+                // Multi-word: intersect candidates of each term independently
+                bool allOk = true;
+                std::vector<uint32_t> intersected;
+                for (size_t ti = 0; ti < allTermKeys.size() && allOk; ti++) {
+                    bool found = false;
+                    auto termCands = intersectPostingLists(nameTrigramIndex_, allTermKeys[ti], found);
+                    if (!found) { allOk = false; break; }
+                    if (ti == 0) {
+                        intersected = std::move(termCands);
+                    } else {
+                        std::vector<uint32_t> isect;
+                        isect.reserve(std::min(intersected.size(), termCands.size()));
+                        std::set_intersection(intersected.begin(), intersected.end(),
+                                              termCands.begin(), termCands.end(),
+                                              std::back_inserter(isect));
+                        intersected = std::move(isect);
+                    }
+                }
+                if (allOk && !intersected.empty()) {
+                    anyCovered = true;
+                    unionSortedInto(nameCands, intersected);
+                    stageTooMany = nameCands.size() > candidateThreshold;
+                }
+            } else {
+                bool nameAllFound = false;
+                auto nameOnlyCands = intersectPostingLists(nameTrigramIndex_, trigramKey, nameAllFound);
+                if (nameAllFound) {
+                    anyCovered = true;
+                    unionSortedInto(nameCands, nameOnlyCands);
+                    stageTooMany = nameCands.size() > candidateThreshold;
+                }
             }
         }
 
@@ -794,6 +843,39 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             << " rawCands=" << stage1RawCandCount
             << " threshold=" << totalSize / 10
             << " totalSize=" << totalSize);
+    }
+
+    // Stage 1b: CJK bigram index — for queries containing CJK characters
+    if (!nameOk && !cjkBigramIndex_.empty()) {
+        auto cjkBigrams = extractCJKBigrams(trigramKey.data(), static_cast<uint16_t>(trigramKey.size()));
+        if (!cjkBigrams.empty()) {
+            // Intersect CJK bigram posting lists
+            std::vector<const std::vector<uint32_t>*> postings;
+            bool cjkAllFound = true;
+            for (uint32_t bg : cjkBigrams) {
+                auto it = cjkBigramIndex_.find(bg);
+                if (it == cjkBigramIndex_.end()) { cjkAllFound = false; break; }
+                postings.push_back(&it->second);
+            }
+            if (cjkAllFound && !postings.empty()) {
+                std::sort(postings.begin(), postings.end(),
+                    [](const auto* a, const auto* b) { return a->size() < b->size(); });
+                std::vector<uint32_t> cjkCands(postings[0]->begin(), postings[0]->end());
+                for (size_t i = 1; i < postings.size() && !cjkCands.empty(); i++) {
+                    std::vector<uint32_t> isect;
+                    isect.reserve(std::min(cjkCands.size(), postings[i]->size()));
+                    std::set_intersection(cjkCands.begin(), cjkCands.end(),
+                                          postings[i]->begin(), postings[i]->end(),
+                                          std::back_inserter(isect));
+                    cjkCands = std::move(isect);
+                }
+                if (!cjkCands.empty() && cjkCands.size() <= totalSize / 4) {
+                    nameCands = std::move(cjkCands);
+                    nameOk = true;
+                    stage1AllFound = true;
+                }
+            }
+        }
     }
 
     // Stage 2: Regex trigram (only if name failed)
@@ -922,7 +1004,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             const auto& namePool = namePool_;
             const auto& pinyinPool = pinyinInitialsPool_;
             const auto& origNamePool = origNamePool_;
-            const auto& lowerPathPool = lowerPathPool_;
             const auto& pathPool = pathPool_;
             const auto& pIndices = pathIndices_;
             // Per-thread RE2 clones to avoid DFA mutex contention
@@ -956,8 +1037,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         pyl = pinyinPool.length(idx);
                     }
                     uint32_t pi = pIndices[idx];
-                    const char* pd = lowerPathPool.data(pi);
-                    uint16_t pl = lowerPathPool.length(pi);
+                    std::string lp = SearchEngine::lowerPathStr(pathPool, pi);
+                    const char* pd = lp.data();
+                    uint16_t pl = static_cast<uint16_t>(lp.size());
                     const char* ond = origNamePool.data(idx);
                     uint16_t onl = origNamePool.length(idx);
                     const char* opd = pathPool.data(pi);
@@ -1010,8 +1092,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     pyl = pinyinInitialsPool_.length(idx);
                 }
                 uint32_t pi = pathIndices_[idx];
-                const char* pd = lowerPathPool_.data(pi);
-                uint16_t pl = lowerPathPool_.length(pi);
+                std::string lp = lowerPathStr(pathPool_, pi);
+                const char* pd = lp.data();
+                uint16_t pl = static_cast<uint16_t>(lp.size());
                 const char* ond = origNamePool_.data(idx);
                 uint16_t onl = origNamePool_.length(idx);
                 const char* opd = pathPool_.data(pi);
@@ -1057,7 +1140,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         const auto& namePool = namePool_;
         const auto& pinyinPool = pinyinInitialsPool_;
         const auto& origNamePool = origNamePool_;
-        const auto& lowerPathPool = lowerPathPool_;
         const auto& pathPool = pathPool_;
         const auto& pIndices = pathIndices_;
         // Per-thread RE2 clones to avoid DFA mutex contention
@@ -1136,8 +1218,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         pyl = pinyinPool.length(static_cast<uint32_t>(idx));
                     }
                     uint32_t pi = pIndices[idx];
-                    const char* pd = lowerPathPool.data(pi);
-                    uint16_t pl = lowerPathPool.length(pi);
+                    std::string lp = SearchEngine::lowerPathStr(pathPool, pi);
+                    const char* pd = lp.data();
+                    uint16_t pl = static_cast<uint16_t>(lp.size());
                     const char* ond = origNamePool.data(static_cast<uint32_t>(idx));
                     uint16_t onl = origNamePool.length(static_cast<uint32_t>(idx));
                     const char* opd = pathPool.data(pi);

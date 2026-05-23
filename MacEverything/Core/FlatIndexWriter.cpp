@@ -223,68 +223,62 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
         fillSection(2, kSectionPathPool, offset, size, crc);
     }
 
-    // Section 4: LOWER_PATH_POOL
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
-        ok = ok && writeStringPoolSection(f, snap.lowerPathPool, size, crc);
-        fillSection(3, kSectionLowerPathPool, offset, size, crc);
-    }
+    // kSectionLowerPathPool (4) is no longer written — computed on-the-fly
 
-    // Section 5: PATH_INDICES
+    // Section 4: PATH_INDICES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeArraySection(f, snap.pathIndices, size, crc);
-        fillSection(4, kSectionPathIndices, offset, size, crc);
+        fillSection(3, kSectionPathIndices, offset, size, crc);
     }
 
-    // Section 6: TYPES
+    // Section 5: TYPES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeArraySection(f, snap.types, size, crc);
-        fillSection(5, kSectionTypes, offset, size, crc);
+        fillSection(4, kSectionTypes, offset, size, crc);
     }
 
-    // Section 7: SIZES
+    // Section 6: SIZES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeArraySection(f, snap.sizes, size, crc);
-        fillSection(6, kSectionSizes, offset, size, crc);
+        fillSection(5, kSectionSizes, offset, size, crc);
     }
 
-    // Section 8: MOD_TIMES
+    // Section 7: MOD_TIMES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeArraySection(f, snap.modTimes, size, crc);
-        fillSection(7, kSectionModTimes, offset, size, crc);
+        fillSection(6, kSectionModTimes, offset, size, crc);
     }
 
-    // Section 9: INODES
+    // Section 8: INODES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeArraySection(f, snap.inodes, size, crc);
-        fillSection(8, kSectionInodes, offset, size, crc);
+        fillSection(7, kSectionInodes, offset, size, crc);
     }
 
-    // Section 10: DEV_IDS
+    // Section 9: DEV_IDS
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeArraySection(f, snap.devIds, size, crc);
-        fillSection(9, kSectionDevIds, offset, size, crc);
+        fillSection(8, kSectionDevIds, offset, size, crc);
     }
 
-    // Section 11: METADATA_KV
+    // Section 10: METADATA_KV
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
         uint32_t size, crc;
         ok = ok && writeMetadataSection(f, meta, size, crc);
-        fillSection(10, kSectionMetadataKV, offset, size, crc);
+        fillSection(9, kSectionMetadataKV, offset, size, crc);
     }
 
     if (!ok) {
@@ -374,11 +368,12 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     }
 
     // Build section lookup (sectionId -> index in sections array)
-    uint32_t sectionIdx[kSectionCount + 1];
+    // Use kSectionCountLegacy to support legacy files that include kSectionLowerPathPool
+    uint32_t sectionIdx[kSectionCountLegacy + 1];
     memset(sectionIdx, 0xFF, sizeof(sectionIdx));
     for (uint32_t i = 0; i < header.sectionCount; i++) {
         uint32_t id = sections[i].sectionId;
-        if (id <= kSectionCount) sectionIdx[id] = i;
+        if (id <= kSectionCountLegacy) sectionIdx[id] = i;
     }
 
     // Helper: read a section from file, verify CRC, return raw bytes
@@ -472,11 +467,12 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     };
 
     // Read StringPool sections (with move semantics)
-    StringPool origNamePool, namePool, pathPool, lowerPathPool;
+    StringPool origNamePool, namePool, pathPool;
     if (!readStringPoolDirect(kSectionNamesOrig, origNamePool, "NAMES_ORIG")) { fclose(f); return false; }
     if (!readStringPoolDirect(kSectionNamesLower, namePool, "NAMES_LOWER")) { fclose(f); return false; }
     if (!readStringPoolDirect(kSectionPathPool, pathPool, "PATH_POOL")) { fclose(f); return false; }
-    if (!readStringPoolDirect(kSectionLowerPathPool, lowerPathPool, "LOWER_PATH_POOL")) { fclose(f); return false; }
+    // Legacy: skip kSectionLowerPathPool if present (computed on-the-fly now)
+    // No error if missing — new v6 files don't include it.
 
     uint32_t n = origNamePool.entryCount();
 
@@ -518,7 +514,6 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
         std::move(namePool),
         std::move(pathIndices),
         std::move(pathPool),
-        std::move(lowerPathPool),
         std::move(types),
         std::move(sizes),
         std::move(modTimes),

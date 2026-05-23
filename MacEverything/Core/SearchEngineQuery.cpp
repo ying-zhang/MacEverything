@@ -202,7 +202,7 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
                 if (std::memcmp(nd, dirName.data(), nl) != 0) continue;
                 // Check path constraints
                 if (!pq.pathSegments.empty()) {
-                    std::string dirPath = lowerPathPool_.str(pathIndices_[idx]);
+                    std::string dirPath = lowerPathStr(pathPool_, pathIndices_[idx]);
                     if (!pathSegmentsMatch(dirPath, pq.pathSegments)) continue;
                 }
                 dirIndices.push_back(idx);
@@ -216,7 +216,7 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
                 if (nl != dirName.size()) continue;
                 if (std::memcmp(nd, dirName.data(), nl) != 0) continue;
                 if (!pq.pathSegments.empty()) {
-                    std::string dirPath = lowerPathPool_.str(pathIndices_[i]);
+                    std::string dirPath = lowerPathStr(pathPool_, pathIndices_[i]);
                     if (!pathSegmentsMatch(dirPath, pq.pathSegments)) continue;
                 }
                 dirIndices.push_back(static_cast<uint32_t>(i));
@@ -231,7 +231,7 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
             if (nl != dirName.size()) continue;
             if (std::memcmp(nd, dirName.data(), nl) != 0) continue;
             if (!pq.pathSegments.empty()) {
-                std::string dirPath = lowerPathPool_.str(pathIndices_[i]);
+                std::string dirPath = lowerPathStr(pathPool_, pathIndices_[i]);
                 if (!pathSegmentsMatch(dirPath, pq.pathSegments)) continue;
             }
             dirIndices.push_back(static_cast<uint32_t>(i));

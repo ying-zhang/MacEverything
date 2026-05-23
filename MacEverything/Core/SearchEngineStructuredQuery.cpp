@@ -48,7 +48,7 @@ bool SearchEngine::pathSegmentsMatch(std::string_view dirPath,
     if (segments.empty()) return true;
 
     // Split dirPath into components by '/'
-    // dirPath comes from lowerPathPool_ which is already lowercase — no lowering needed
+    // dirPath is already lowercase (computed on-the-fly from pathPool_)
     std::vector<std::string_view> components;
     size_t start = 0;
     for (size_t i = 0; i <= dirPath.size(); i++) {
@@ -112,8 +112,7 @@ void SearchEngine::treeWalkDown(uint32_t dirIdx, const ParsedQuery& pq,
                                 size_t totalSize, const QueryCancelCtx& cancel,
                                 std::vector<Match>& merged) const {
     // Build the full lowered directory path for this dir record
-    auto lpView = lowerPathPool_.view(pathIndices_[dirIdx]);
-    std::string fullDirPath(lpView);
+    std::string fullDirPath = lowerPathStr(pathPool_, pathIndices_[dirIdx]);
     if (!fullDirPath.empty() && fullDirPath.back() != '/') fullDirPath += '/';
     fullDirPath += std::string(namePool_.data(dirIdx), namePool_.length(dirIdx));
 
@@ -278,9 +277,9 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
                 usedTrigram = true;
                 for (uint32_t pi : candidatePaths) {
                     if (cancel.cancelled()) return;
-                    if (!lowerPathPool_.isLive(pi)) continue;
-                    std::string_view lpv(lowerPathPool_.data(pi), lowerPathPool_.length(pi));
-                    if (!pathSegmentsMatch(lpv, pq.pathSegments)) continue;
+                    if (!pathPool_.isLive(pi)) continue;
+                    std::string lp = lowerPathStr(pathPool_, pi);
+                    if (!pathSegmentsMatch(lp, pq.pathSegments)) continue;
                     emitRecordsForPath(pi);
                 }
             }
@@ -288,12 +287,12 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
 
         if (!usedTrigram) {
             // Linear scan all paths (no usable trigrams)
-            uint32_t pathCount = lowerPathPool_.entryCount();
+            uint32_t pathCount = pathPool_.entryCount();
             for (uint32_t pi = 0; pi < pathCount; pi++) {
                 if (cancel.cancelled()) return;
-                if (!lowerPathPool_.isLive(pi)) continue;
-                std::string_view lpv(lowerPathPool_.data(pi), lowerPathPool_.length(pi));
-                if (!pathSegmentsMatch(lpv, pq.pathSegments)) continue;
+                if (!pathPool_.isLive(pi)) continue;
+                std::string lp = lowerPathStr(pathPool_, pi);
+                if (!pathSegmentsMatch(lp, pq.pathSegments)) continue;
                 emitRecordsForPath(pi);
             }
         }
@@ -376,7 +375,7 @@ bool SearchEngine::queryStructuredNameAnchor(const ParsedQuery& pq,
         if (!namePatternMatches(pq, nameData, nameLen, types_[idx])) continue;
 
         if (!pq.pathSegments.empty()) {
-            if (!pathSegmentsMatch(lowerPathPool_.view(pathIndices_[idx]), pq.pathSegments)) continue;
+            if (!pathSegmentsMatch(lowerPathStr(pathPool_, pathIndices_[idx]), pq.pathSegments)) continue;
         }
 
         uint8_t priority = namePriority(nameData, nameLen, namePattern.data(), namePattern.size());
@@ -423,7 +422,7 @@ bool SearchEngine::queryStructuredPathAnchor(const ParsedQuery& pq,
 
         // Verify ancestor segments [0..anchorIdx-1] against this record's path
         if (anchorIdx > 0) {
-            std::string_view dirPath = lowerPathPool_.view(pathIndices_[idx]);
+            std::string dirPath = lowerPathStr(pathPool_, pathIndices_[idx]);
             std::vector<PathSegment> ancestorSegs(
                 pq.pathSegments.begin(),
                 pq.pathSegments.begin() + static_cast<int>(anchorIdx));

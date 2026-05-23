@@ -40,7 +40,7 @@ public:
     static constexpr uint32_t kSectionNamesOrig     = 1;
     static constexpr uint32_t kSectionNamesLower     = 2;
     static constexpr uint32_t kSectionPathPool       = 3;
-    static constexpr uint32_t kSectionLowerPathPool  = 4;
+    static constexpr uint32_t kSectionLowerPathPool  = 4;  // legacy: read for backward compat, no longer written
     static constexpr uint32_t kSectionPathIndices    = 5;
     static constexpr uint32_t kSectionTypes          = 6;
     static constexpr uint32_t kSectionSizes          = 7;
@@ -48,7 +48,8 @@ public:
     static constexpr uint32_t kSectionInodes         = 9;
     static constexpr uint32_t kSectionDevIds         = 10;
     static constexpr uint32_t kSectionMetadataKV     = 11;
-    static constexpr uint32_t kSectionCount          = 11;
+    static constexpr uint32_t kSectionCount          = 10;  // excludes legacy kSectionLowerPathPool
+    static constexpr uint32_t kSectionCountLegacy    = 11;  // v6 files written before lowerPathPool removal
 
 private:
     std::string path_;
