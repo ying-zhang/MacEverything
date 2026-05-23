@@ -59,10 +59,17 @@ struct ResultRow: View {
     let item: FileItem
     let hints: [HighlightHint]
     let isSelected: Bool
+    let requestedRename: Bool
     let onSelect: () -> Void
+    var onRenameComplete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
+    @State private var localRenaming = false
+    @State private var editingName = ""
+    @State private var lastSelectTime: Date?
+    @State private var renameError: String?
+    @State private var showRenameError = false
 
     var body: some View {
         let dense = settings.resultDensity == .compact
@@ -90,7 +97,17 @@ struct ResultRow: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
-                highlighted.nameText.lineLimit(1)
+                if isActivelyRenaming {
+                    TextField("", text: $editingName)
+                    .textFieldStyle(.plain)
+                    .font(.subheadline)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .onSubmit { commitRename() }
+                    .onExitCommand { cancelRename() }
+                    .onAppear { editingName = item.name }
+                } else {
+                    highlighted.nameText.lineLimit(1)
+                }
             }
             .frame(width: widths.name, alignment: .leading)
 
@@ -130,14 +147,21 @@ struct ResultRow: View {
         .contextMenu {
             Button(L10n.tr("Open")) { openFile(item) }
             Button(L10n.tr("Reveal in Finder")) { revealInFinder(item) }
+            Button(L10n.tr("Quick Look")) { quickLook(item) }
+            Button(L10n.tr("Rename")) { startRename() }
             Divider()
-            Button(L10n.tr("Copy Path")) { copyPath(item) }
+            Button(L10n.tr("Copy File")) { copyFile(item) }
+            Button(L10n.tr("Copy Filename")) { copyFilename(item) }
+            Divider()
+            Button(L10n.tr("Move to Trash")) { trashFile(item) }
+            Button(L10n.tr("Open in Terminal")) { openInTerminal(item) }
         }
         .onDrag {
             let fullPath = item.path + "/" + item.name
             return NSItemProvider(object: NSURL(fileURLWithPath: fullPath))
         }
         .onTapGesture(count: 2) {
+            cancelRename()
             onSelect()
             if NSEvent.modifierFlags.contains(.command) {
                 revealInFinder(item)
@@ -146,10 +170,28 @@ struct ResultRow: View {
             }
         }
         .onTapGesture(count: 1) {
-            onSelect()
             if NSEvent.modifierFlags.contains(.command) {
+                onSelect()
                 revealInFinder(item)
+                return
             }
+            if isSelected, let last = lastSelectTime, Date().timeIntervalSince(last) > 0.5 {
+                startRename()
+            } else {
+                cancelRename()
+                onSelect()
+            }
+            lastSelectTime = Date()
+        }
+        .onChange(of: requestedRename) {
+            if requestedRename {
+                startRename()
+            }
+        }
+        .alert(L10n.tr("Rename Failed"), isPresented: $showRenameError) {
+            Button("OK") {}
+        } message: {
+            Text(renameError ?? "")
         }
     }
 
@@ -194,6 +236,75 @@ struct ResultRow: View {
         let fullPath = item.path + "/" + item.name
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(fullPath, forType: .string)
+    }
+
+    private var isActivelyRenaming: Bool {
+        localRenaming || requestedRename
+    }
+
+    private func startRename() {
+        editingName = item.name
+        localRenaming = true
+    }
+
+    private func cancelRename() {
+        localRenaming = false
+        onRenameComplete?()
+    }
+
+    private func commitRename() {
+        localRenaming = false
+        onRenameComplete?()
+        let newName = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !newName.isEmpty, newName != item.name else { return }
+        let oldPath = item.path + "/" + item.name
+        let newPath = item.path + "/" + newName
+        do {
+            try FileManager.default.moveItem(atPath: oldPath, toPath: newPath)
+        } catch {
+            NSSound.beep()
+            renameError = error.localizedDescription
+            showRenameError = true
+        }
+    }
+
+    private func copyFile(_ item: FileItem) {
+        let fullPath = item.path + "/" + item.name
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([NSURL(fileURLWithPath: fullPath)])
+    }
+
+    private func copyFilename(_ item: FileItem) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(item.name, forType: .string)
+    }
+
+    private func trashFile(_ item: FileItem) {
+        let fullPath = item.path + "/" + item.name
+        let url = URL(fileURLWithPath: fullPath)
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func openInTerminal(_ item: FileItem) {
+        let dirPath = item.path
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Terminal", dirPath]
+        try? process.run()
+    }
+
+    private func quickLook(_ item: FileItem) {
+        let fullPath = item.path + "/" + item.name
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
+        process.arguments = ["-p", fullPath]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
     }
 }
 

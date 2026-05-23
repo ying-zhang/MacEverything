@@ -6,6 +6,16 @@ import Foundation
 /// in `text` and renders matched segments in bold + `highlightColor`.
 /// For glob-style keywords containing `*` or `?`, highlights the literal
 /// (non-wildcard) segments extracted from the pattern.
+private func remapRanges(_ ranges: [Range<String.Index>], from source: String, to target: String) -> [Range<String.Index>] {
+    ranges.map { range in
+        let lo = source.distance(from: source.startIndex, to: range.lowerBound)
+        let hi = source.distance(from: source.startIndex, to: range.upperBound)
+        let tLo = target.index(target.startIndex, offsetBy: lo)
+        let tHi = target.index(target.startIndex, offsetBy: hi)
+        return tLo..<tHi
+    }
+}
+
 func highlightMatches(in text: String, keyword: String,
                       font: Font, color: Color,
                       highlightColor: Color = .accentColor) -> Text {
@@ -22,7 +32,7 @@ func highlightMatches(in text: String, keyword: String,
         if literals.isEmpty {
             return Text(text).font(font).foregroundColor(color)
         }
-        let ranges = findAllLiteralRanges(in: lowerText, literals: literals)
+        let ranges = remapRanges(findAllLiteralRanges(in: lowerText, literals: literals), from: lowerText, to: text)
         return buildHighlightedText(text: text, ranges: ranges, font: font, color: color, highlightColor: highlightColor)
     }
 
@@ -34,7 +44,6 @@ func highlightMatches(in text: String, keyword: String,
 
     let ranges: [Range<String.Index>]
     if words.count == 1 {
-        // Single keyword — simple forward scan
         var singleRanges: [Range<String.Index>] = []
         var searchStart = lowerText.startIndex
         while searchStart < lowerText.endIndex,
@@ -42,10 +51,9 @@ func highlightMatches(in text: String, keyword: String,
             singleRanges.append(range)
             searchStart = range.upperBound
         }
-        ranges = singleRanges
+        ranges = remapRanges(singleRanges, from: lowerText, to: text)
     } else {
-        // Multiple keywords — find all matches for each, merge ranges
-        ranges = findAllLiteralRanges(in: lowerText, literals: words)
+        ranges = remapRanges(findAllLiteralRanges(in: lowerText, literals: words), from: lowerText, to: text)
     }
 
     return buildHighlightedText(text: text, ranges: ranges, font: font, color: color, highlightColor: highlightColor)
@@ -237,7 +245,11 @@ func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String
         var start = searchText.startIndex
         while start < searchText.endIndex,
               let range = searchText.range(of: searchKey, range: start..<searchText.endIndex) {
-            ranges.append(range)
+            let lo = searchText.distance(from: searchText.startIndex, to: range.lowerBound)
+            let hi = searchText.distance(from: searchText.startIndex, to: range.upperBound)
+            let tLo = text.index(text.startIndex, offsetBy: lo)
+            let tHi = text.index(text.startIndex, offsetBy: hi)
+            ranges.append(tLo..<tHi)
             start = range.upperBound
         }
         if !hint.caseSensitive && isAsciiAlphaNumericQuery(searchKey) {
@@ -248,7 +260,15 @@ func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String
     case .glob:
         let literals = extractGlobLiterals(searchKey)
         if literals.isEmpty { return [] }
-        return findAllLiteralRanges(in: searchText, literals: literals)
+        let rawRanges = findAllLiteralRanges(in: searchText, literals: literals)
+        if hint.caseSensitive { return rawRanges }
+        return rawRanges.map { range in
+            let lo = searchText.distance(from: searchText.startIndex, to: range.lowerBound)
+            let hi = searchText.distance(from: searchText.startIndex, to: range.upperBound)
+            let tLo = text.index(text.startIndex, offsetBy: lo)
+            let tHi = text.index(text.startIndex, offsetBy: hi)
+            return tLo..<tHi
+        }
 
     case .regex:
         var options: NSRegularExpression.Options = []

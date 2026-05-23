@@ -12,6 +12,7 @@
 "Content indexing %d/%d" = "内容索引 %d/%d";
 "%d matches" = "%d 个匹配";
 "More than 10000 results" = "结果超过10000项";
+"More than %d results" = "结果超过%d项";
 "Indexing files... %d items scanned" = "正在索引文件... 已扫描 %d 项";
 "Content index is building..." = "正在构建内容索引...";
 "Indexed %d / %d files" = "已索引 %d / %d 个文件";
@@ -25,6 +26,7 @@
 "Loading more results..." = "正在加载更多结果...";
 "Showing %d of %d results" = "正在显示 %d / %d 个结果";
 "Result %d, total results limited to 10000; add search terms." = "第%d项结果，总结果已限为10000项；建议增加搜索条件。";
+"Result %d, total results limited to %d; add search terms." = "第%d项结果，总结果已限为%d项；建议增加搜索条件。";
 "Show MacEverything" = "显示 MacEverything";
 "Hide MacEverything" = "隐藏 MacEverything";
 "New Search" = "新建搜索";
@@ -52,7 +54,16 @@
 "Open Settings" = "打开设置";
 "Open" = "打开";
 "Reveal in Finder" = "在访达中显示";
+"Quick Look" = "预览";
+"Rename" = "改名";
+"Rename Failed" = "改名失败";
+"Copy File" = "拷贝";
 "Copy Path" = "复制路径";
+"Copy Filename" = "复制文件名";
+"Move to Trash" = "删除到废纸篓";
+"Open in Terminal" = "在终端打开所在目录";
+"Enter Key Action" = "Enter键操作";
+"Open File" = "打开文件";
 "Content Indexing" = "内容索引";
 "Indexed Files: %d" = "已索引文件：%d";
 "Max File Size" = "最大文件大小";

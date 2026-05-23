@@ -12,6 +12,7 @@
 "Content indexing %d/%d" = "Content indexing %d/%d";
 "%d matches" = "%d matches";
 "More than 10000 results" = "More than 10000 results";
+"More than %d results" = "More than %d results";
 "Indexing files... %d items scanned" = "Indexing files... %d items scanned";
 "Content index is building..." = "Content index is building...";
 "Indexed %d / %d files" = "Indexed %d / %d files";
@@ -25,6 +26,7 @@
 "Loading more results..." = "Loading more results...";
 "Showing %d of %d results" = "Showing %d of %d results";
 "Result %d, total results limited to 10000; add search terms." = "Result %d, total results limited to 10000; add search terms.";
+"Result %d, total results limited to %d; add search terms." = "Result %d, total results limited to %d; add search terms.";
 "Show MacEverything" = "Show MacEverything";
 "Hide MacEverything" = "Hide MacEverything";
 "New Search" = "New Search";
@@ -52,7 +54,16 @@
 "Open Settings" = "Open Settings";
 "Open" = "Open";
 "Reveal in Finder" = "Reveal in Finder";
+"Quick Look" = "Quick Look";
+"Rename" = "Rename";
+"Rename Failed" = "Rename Failed";
+"Copy File" = "Copy File";
 "Copy Path" = "Copy Path";
+"Copy Filename" = "Copy Filename";
+"Move to Trash" = "Move to Trash";
+"Open in Terminal" = "Open in Terminal";
+"Enter Key Action" = "Enter Key Action";
+"Open File" = "Open File";
 "Content Indexing" = "Content Indexing";
 "Indexed Files: %d" = "Indexed Files: %d";
 "Max File Size" = "Max File Size";

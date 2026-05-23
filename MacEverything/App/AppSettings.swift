@@ -64,6 +64,20 @@ enum ResultDensity: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum EnterKeyAction: String, CaseIterable, Codable, Identifiable {
+    case openFile
+    case rename
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .openFile: return L10n.tr("Open File")
+        case .rename: return L10n.tr("Rename")
+        }
+    }
+}
+
 struct AppSettingsSnapshot {
     var indexRoots: [String]
     var excludedPaths: [String]
@@ -102,6 +116,7 @@ struct AppSettingsSnapshot {
     var automaticMaintenanceEnabled: Bool
     var enablePinyinInitials: Bool
     var enablePathSearchAcceleration: Bool
+    var enterKeyAction: EnterKeyAction
 }
 
 @MainActor
@@ -147,6 +162,7 @@ final class AppSettings: ObservableObject {
         static let lowMemoryMode = "settings.lowMemoryMode"
         static let enablePinyinInitials = "settings.enablePinyinInitials"
         static let enablePathSearchAcceleration = "settings.enablePathSearchAcceleration"
+        static let enterKeyAction = "settings.enterKeyAction"
         static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
@@ -210,6 +226,7 @@ final class AppSettings: ObservableObject {
     @Published var automaticMaintenanceEnabled: Bool { didSet { save(automaticMaintenanceEnabled, Key.automaticMaintenanceEnabled) } }
     @Published var enablePinyinInitials: Bool { didSet { save(enablePinyinInitials, Key.enablePinyinInitials) } }
     @Published var enablePathSearchAcceleration: Bool { didSet { save(enablePathSearchAcceleration, Key.enablePathSearchAcceleration) } }
+    @Published var enterKeyAction: EnterKeyAction { didSet { save(enterKeyAction.rawValue, Key.enterKeyAction) } }
     @Published var hideDockIcon: Bool { didSet { save(hideDockIcon, Key.hideDockIcon) } }
 
     private let defaults = UserDefaults.standard
@@ -256,6 +273,7 @@ final class AppSettings: ObservableObject {
         let oldLowMemoryMode = defaults.object(forKey: Key.lowMemoryMode) as? Bool ?? false
         enablePinyinInitials = defaults.object(forKey: Key.enablePinyinInitials) as? Bool ?? !oldLowMemoryMode
         enablePathSearchAcceleration = defaults.object(forKey: Key.enablePathSearchAcceleration) as? Bool ?? !oldLowMemoryMode
+        enterKeyAction = EnterKeyAction(rawValue: defaults.string(forKey: Key.enterKeyAction) ?? "") ?? .openFile
         hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
 
         migrateSettingsIfNeeded()
@@ -299,7 +317,8 @@ final class AppSettings: ObservableObject {
             hideDockIcon: hideDockIcon,
             automaticMaintenanceEnabled: automaticMaintenanceEnabled,
             enablePinyinInitials: enablePinyinInitials,
-            enablePathSearchAcceleration: enablePathSearchAcceleration
+            enablePathSearchAcceleration: enablePathSearchAcceleration,
+            enterKeyAction: enterKeyAction
         )
     }
 

@@ -42,6 +42,9 @@ struct ContentView: View {
                     },
                     onSubmit: {
                         viewModel.submitSearch()
+                    },
+                    onF2: {
+                        viewModel.requestRenameForSelected()
                     }
                 )
                 .frame(height: 36)
@@ -270,8 +273,12 @@ struct ContentView: View {
                                 item: item,
                                 hints: viewModel.highlightHints,
                                 isSelected: viewModel.selectedItemID == item.id,
+                                requestedRename: viewModel.renameRequestedItemID == item.id,
                                 onSelect: {
                                     viewModel.select(item)
+                                },
+                                onRenameComplete: {
+                                    viewModel.renameRequestedItemID = nil
                                 }
                             )
                                 .environmentObject(columnLayout)

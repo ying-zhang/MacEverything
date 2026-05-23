@@ -275,6 +275,7 @@ class SearchViewModel: ObservableObject {
     @Published var contentResults: [ContentFileItem] = []
     @Published var ghostSuggestion: String? = nil
     @Published var selectedItemID: String? = nil
+    @Published var renameRequestedItemID: String? = nil
 
     @Published var highlightHints: [HighlightHint] = []
 
@@ -620,6 +621,36 @@ class SearchViewModel: ObservableObject {
             selectedItemID = first.id
         }
         return true
+    }
+
+    func requestRenameForSelected() {
+        guard let id = selectedItemID else { return }
+        renameRequestedItemID = id
+    }
+
+    func deleteSelectedFile() {
+        guard let id = selectedItemID,
+              let item = displayItems.first(where: { $0.id == id }) else { return }
+        let fullPath = item.path + "/" + item.name
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: fullPath), resultingItemURL: nil)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    func copySelectedFile() {
+        guard let id = selectedItemID,
+              let item = displayItems.first(where: { $0.id == id }) else { return }
+        let fullPath = item.path + "/" + item.name
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([NSURL(fileURLWithPath: fullPath)])
+    }
+
+    func selectedFileURL() -> URL? {
+        guard let id = selectedItemID,
+              let item = displayItems.first(where: { $0.id == id }) else { return nil }
+        return URL(fileURLWithPath: item.path + "/" + item.name)
     }
 
     private func applySortedResults(pageSize: Int) {
