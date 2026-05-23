@@ -62,6 +62,7 @@ struct ResultRow: View {
     let requestedRename: Bool
     let onSelect: () -> Void
     var onRenameComplete: (() -> Void)?
+    var onRenameSuccess: ((_ oldID: String, _ newName: String) -> Void)?
     var onDelete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
@@ -254,10 +255,23 @@ struct ResultRow: View {
         onRenameComplete?()
         let newName = editingName.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !newName.isEmpty, newName != item.name else { return }
+        if newName.contains("/") || newName.contains("\0") {
+            NSSound.beep()
+            renameError = L10n.tr("Filename cannot contain / or null characters")
+            showRenameError = true
+            return
+        }
+        if newName.hasPrefix(".") {
+            let oldHasPrefix = item.name.hasPrefix(".")
+            if !oldHasPrefix {
+                // Allow but don't block — user may intentionally hide a file
+            }
+        }
         let oldPath = item.path + "/" + item.name
         let newPath = item.path + "/" + newName
         do {
             try FileManager.default.moveItem(atPath: oldPath, toPath: newPath)
+            onRenameSuccess?(item.id, newName)
         } catch {
             NSSound.beep()
             renameError = error.localizedDescription

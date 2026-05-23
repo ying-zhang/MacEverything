@@ -650,6 +650,24 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    func updateItemName(oldID: String, newName: String) {
+        let updateIn = { (items: inout [FileItem]) in
+            if let idx = items.firstIndex(where: { $0.id == oldID }) {
+                let old = items[idx]
+                let newID = (old.path as NSString).appendingPathComponent(newName)
+                items[idx] = FileItem(id: newID, index: old.index, name: newName,
+                                      path: old.path, type: old.type,
+                                      size: old.size, modTime: old.modTime)
+            }
+        }
+        updateIn(&displayItems)
+        updateIn(&cachedItems)
+        updateIn(&sourceItems)
+        if selectedItemID == oldID {
+            selectedItemID = (displayItems.first { $0.id != oldID }?.id) ?? nil
+        }
+    }
+
     func copySelectedFile() {
         guard let id = selectedItemID,
               let item = displayItems.first(where: { $0.id == id }) else { return }

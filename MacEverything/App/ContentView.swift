@@ -23,10 +23,8 @@ struct ContentView: View {
 
             // Search bar (Alfred-style)
             HStack(spacing: 12) {
-                Image("StatusBarIcon")
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 26, height: 26)
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 26, weight: .medium))
                     .foregroundColor(.blue)
                 HighlightedSearchField(
                     text: $viewModel.searchText,
@@ -284,6 +282,9 @@ struct ContentView: View {
                                 },
                                 onRenameComplete: {
                                     viewModel.renameRequestedItemID = nil
+                                },
+                                onRenameSuccess: { oldID, newName in
+                                    viewModel.updateItemName(oldID: oldID, newName: newName)
                                 },
                                 onDelete: {
                                     viewModel.removeItemFromResults(id: item.id)

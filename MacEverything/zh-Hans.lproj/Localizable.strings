@@ -320,3 +320,4 @@
 "Names made only of letters, digits, or underscores" = "仅由字母、数字或下划线组成的名称";
 "Names containing whitespace" = "包含空白字符的名称";
 "Names containing non-ASCII characters" = "包含非 ASCII 字符的名称";
+"Filename cannot contain / or null characters" = "文件名不能包含 / 或空字符";
