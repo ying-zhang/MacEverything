@@ -548,7 +548,6 @@ std::string HttpServer::handleMemory() {
     field(json, "namePool", m.namePoolBytes);
     field(json, "pinyinInitialsPool", m.pinyinInitialsPoolBytes);
     field(json, "pathPool", m.pathPoolBytes);
-    field(json, "lowerPathPool", m.lowerPathPoolBytes);
     field(json, "pathIndices", m.pathIndicesBytes);
     field(json, "types", m.typesBytes);
     field(json, "sizes", m.sizesBytes);

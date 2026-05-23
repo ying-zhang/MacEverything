@@ -12,7 +12,6 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
                                   StringPool&& namePool,
                                   std::vector<uint32_t>&& pathIndices,
                                   StringPool&& pathPool,
-                                  StringPool&& lowerPathPool,
                                   std::vector<uint8_t>&& types,
                                   std::vector<uint64_t>&& sizes,
                                   std::vector<int64_t>&& modTimes,
@@ -29,7 +28,6 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     pinyinInitialsTrigramIndex_.clear();
     pathIndices_ = std::move(pathIndices);
     pathPool_ = std::move(pathPool);
-    lowerPathPool_ = std::move(lowerPathPool);
     types_ = std::move(types);
     sizes_ = std::move(sizes);
     modTimes_ = std::move(modTimes);
@@ -44,12 +42,12 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     for (uint32_t i = 0; i < pathPool_.entryCount(); i++) {
         if (pathPool_.isLive(i)) {
             pathLookup_[pathPool_.str(i)] = i;
-            lowerPathLookup_[lowerPathPool_.str(i)] = i;
+            lowerPathLookup_[lowerPathStr(pathPool_, i)] = i;
         }
     }
 
     // Build pathIndex_ (lowercase full path -> record index)
-    // Parallelize full-path construction using string_view to avoid allocations
+    // Parallelize full-path construction
     unsigned numThreads = std::thread::hardware_concurrency();
     if (numThreads < 1) numThreads = 1;
     if (numThreads > 32) numThreads = 32;
@@ -65,7 +63,7 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
             pathThreads.emplace_back([this, &loweredPaths, start, end] {
                 for (size_t i = start; i < end; i++) {
                     uint32_t idx = static_cast<uint32_t>(i);
-                    loweredPaths[i] = makeFullPath(lowerPathPool_.view(pathIndices_[idx]),
+                    loweredPaths[i] = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]),
                                                    namePool_.view(idx));
                 }
             });
@@ -133,7 +131,7 @@ void SearchEngine::completePhase2() {
     std::vector<int64_t> snapModTimes;
     StringPool snapNamePool;
     StringPool snapOrigNamePool;
-    StringPool snapLowerPathPool;
+    StringPool snapPathPool;
     std::vector<uint32_t> snapPathIndices;
     uint32_t snapPathPoolSize;
     uint32_t snapSize;
@@ -143,7 +141,7 @@ void SearchEngine::completePhase2() {
         snapModTimes = modTimes_;
         snapNamePool = namePool_;
         if (options_.enablePinyinInitials) snapOrigNamePool = origNamePool_;
-        snapLowerPathPool = lowerPathPool_;
+        snapPathPool = pathPool_;
         snapPathIndices = pathIndices_;
         snapPathPoolSize = pathPool_.entryCount();
         snapSize = static_cast<uint32_t>(types_.size());
@@ -160,11 +158,12 @@ void SearchEngine::completePhase2() {
     std::unordered_map<Trigram, std::vector<uint32_t>> pathTrigramIndex;
     std::vector<std::vector<uint32_t>> pathIdxToRecords;
     if (options_.enablePathTrigramIndex) {
-        pathTrigramIndex = buildPathTrigramIndexFromData(snapLowerPathPool);
+        pathTrigramIndex = buildPathTrigramIndexFromData(snapPathPool);
         pathIdxToRecords = buildPathIdxToRecordsFromData(snapTypes, snapPathIndices, snapPathPoolSize);
     }
     auto recentCache = buildRecentCacheFromData(snapTypes, snapModTimes, kRecentCacheSize);
     auto extensionIndex = buildExtensionIndexFromData(snapTypes, snapNamePool);
+    auto cjkBigramIndex = buildCJKBigramIndexFromData(snapTypes, snapNamePool);
 
     LOG_INFO("SearchEngine", "Phase 2: indices built, swapping under lock...");
 
@@ -179,6 +178,7 @@ void SearchEngine::completePhase2() {
         pathIdxToRecords_ = std::move(pathIdxToRecords);
         recentCache_ = std::move(recentCache);
         extensionIndex_ = std::move(extensionIndex);
+        cjkBigramIndex_ = std::move(cjkBigramIndex);
 
         // Replay records added during Phase 2 build
         uint32_t currentSize = static_cast<uint32_t>(types_.size());
@@ -196,6 +196,7 @@ void SearchEngine::completePhase2() {
             addPinyinInitialsForRecord(i);
             addPathTrigramsForRecord(i);
             addExtensionForRecord(i);
+            addCJKBigramsForRecord(i, namePool_.data(i), namePool_.length(i));
             addToRecentCache(i, static_cast<time_t>(modTimes_[i]));
             replayCount++;
         }
@@ -226,7 +227,6 @@ SearchEngine::V6Snapshot SearchEngine::snapshotForV6() const {
     snap.namePool = namePool_;
     snap.pathIndices = pathIndices_;
     snap.pathPool = pathPool_;
-    snap.lowerPathPool = lowerPathPool_;
     snap.types = types_;
     snap.sizes = sizes_;
     snap.modTimes = modTimes_;

@@ -59,9 +59,11 @@ inline void runStringPoolTests() {
         CHECK(result.compacted.entryCount() == 2);
         CHECK(result.compacted.str(0) == "alpha");
         CHECK(result.compacted.str(1) == "gamma");
-        CHECK(result.remap.size() == 2);
-        CHECK(result.remap.at(0) == 0);
-        CHECK(result.remap.at(2) == 1);
+        CHECK(result.remap.size() == 4);
+        CHECK(result.remap[0] == 0);
+        CHECK(result.remap[1] == UINT32_MAX);
+        CHECK(result.remap[2] == 1);
+        CHECK(result.remap[3] == UINT32_MAX);
         CHECK(result.compacted.rawSize() == 10); // "alpha" + "gamma"
         std::cout << "  50c: Compact                     PASS\n";
     }

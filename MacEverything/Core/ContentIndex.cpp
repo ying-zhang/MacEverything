@@ -1,6 +1,7 @@
 #include "ContentIndex.h"
 #include "Logger.h"
 #include "StringUtils.h"
+#include "SIMDSearch.h"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -159,11 +160,9 @@ std::string ContentIndex::generateSnippet(const std::string& path,
     size_t maxRead = std::min(static_cast<size_t>(fileSize), size_t(1024 * 1024));
     size_t overlapSize = keyword.size() > 1 ? keyword.size() - 1 : 0;
 
-    // Pre-compute lowercase keyword once
-    std::string lowerKey(keyword.size(), '\0');
-    for (size_t i = 0; i < keyword.size(); i++) {
-        lowerKey[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(keyword[i])));
-    }
+    // Pre-compute lowercase keyword once (SIMD for ASCII)
+    std::string lowerKey(keyword);
+    me::simdToLowerAscii(lowerKey.data(), lowerKey.size());
 
     std::string chunk(kChunkSize, '\0');
     std::string lowerChunk(kChunkSize, '\0');
@@ -180,14 +179,13 @@ std::string ContentIndex::generateSnippet(const std::string& path,
         if (bytesRead == 0) break;
         chunk.resize(bytesRead);
 
-        // Lowercase the chunk
+        // Lowercase the chunk using SIMD (ASCII fast-path; non-ASCII bytes pass through)
         lowerChunk.resize(bytesRead);
-        for (size_t i = 0; i < bytesRead; i++) {
-            lowerChunk[i] = static_cast<char>(std::tolower(static_cast<unsigned char>(chunk[i])));
-        }
+        std::memcpy(lowerChunk.data(), chunk.data(), bytesRead);
+        me::simdToLowerAscii(lowerChunk.data(), bytesRead);
 
-        size_t pos = lowerChunk.find(lowerKey);
-        if (pos != std::string::npos) {
+        size_t pos = me::simdFind(lowerChunk.data(), bytesRead, lowerKey.data(), lowerKey.size());
+        if (pos < bytesRead) {
             globalMatchPos = fileOffset + pos;
             matchContent = std::move(chunk);
             matchContentOffset = fileOffset;

@@ -130,7 +130,6 @@ public:
         size_t namePoolBytes = 0;
         size_t pinyinInitialsPoolBytes = 0;
         size_t pathPoolBytes = 0;
-        size_t lowerPathPoolBytes = 0;
         size_t pathIndicesBytes = 0;
         size_t typesBytes = 0;
         size_t sizesBytes = 0;
@@ -156,6 +155,9 @@ public:
         size_t extensionIndexEntries = 0;
         size_t extensionIndexApproxBytes = 0;
         size_t extensionIndexPostingBytes = 0;
+        size_t cjkBigramEntries = 0;
+        size_t cjkBigramApproxBytes = 0;
+        size_t cjkBigramPostingBytes = 0;
         size_t totalApproxBytes = 0;
     };
 
@@ -178,7 +180,6 @@ public:
                        StringPool&& namePool,
                        std::vector<uint32_t>&& pathIndices,
                        StringPool&& pathPool,
-                       StringPool&& lowerPathPool,
                        std::vector<uint8_t>&& types,
                        std::vector<uint64_t>&& sizes,
                        std::vector<int64_t>&& modTimes,
@@ -198,7 +199,6 @@ public:
         StringPool namePool;      // lowercase names
         std::vector<uint32_t> pathIndices;
         StringPool pathPool;
-        StringPool lowerPathPool;
         std::vector<uint8_t> types;
         std::vector<uint64_t> sizes;
         std::vector<int64_t> modTimes;
@@ -334,6 +334,16 @@ public:
     /// Build the full path from a record's path and name components.
     static std::string makeFullPath(std::string_view path, std::string_view name);
 
+    /// Compute lowercase path on-the-fly from pathPool_ (replaces lowerPathPool_).
+    /// Uses SIMD ASCII lowering for speed; equivalent to me::toLower() for
+    /// filesystem paths where only ASCII A-Z case matters.
+    static inline std::string lowerPathStr(const StringPool& pool, uint32_t pathIdx) {
+        auto v = pool.view(pathIdx);
+        std::string result(v.data(), v.size());
+        me::simdToLowerAscii(result.data(), result.size());
+        return result;
+    }
+
     /// Resolve a record's path via pathPool_. Thread-safe (acquires shared_lock).
     /// Returns by value to prevent dangling references during concurrent compaction.
     std::string resolveRecordPath(uint32_t index) const {
@@ -409,12 +419,6 @@ public:
         return pathPool_;
     }
 
-    /// Thread-safe copy of lowerPathPool_ for serialization.
-    StringPool lowerPathPoolSnapshot() const {
-        std::shared_lock lock(mutex_);
-        return lowerPathPool_;
-    }
-
     /// Thread-safe snapshot of PathTable. Reconstructs from pathPool_ for compatibility.
     PathTable pathTableSnapshot() const {
         std::shared_lock lock(mutex_);
@@ -435,7 +439,6 @@ private:
     StringPool pinyinInitialsPool_;        // per-record Chinese pinyin initials search keys
     std::vector<uint32_t> pathIndices_;    // per-record index into pathPool_
     StringPool pathPool_;                  // contiguous directory paths (deduplicated)
-    StringPool lowerPathPool_;             // parallel to pathPool_, stores pre-lowered paths
 
     // SoA columnar arrays — the canonical per-record storage
     std::vector<uint8_t>  types_;          // 1=file, 2=directory, 0=tombstone
@@ -461,7 +464,10 @@ private:
     // Extension index: extension string -> sorted record indices (files only)
     std::unordered_map<std::string, std::vector<uint32_t>> extensionIndex_;
 
-    /// Intern a directory path into pathPool_ and lowerPathPool_. Returns pathPool_ index.
+    // CJK character-level bigram index: packed bigram key -> sorted record indices
+    std::unordered_map<uint32_t, std::vector<uint32_t>> cjkBigramIndex_;
+
+    /// Intern a directory path into pathPool_. Returns pathPool_ index.
     /// Deduplicates via pathLookup_. Must be called under unique_lock.
     uint32_t internPath(const std::string& path);
 
@@ -638,9 +644,17 @@ private:
         buildExtensionIndexFromData(const std::vector<uint8_t>& types,
                                     const StringPool& namePool);
 
-    /// Build path trigram index from pre-lowered StringPool (used by COW compaction)
+    /// CJK character-level bigram index helpers
+    static bool isCJKCodepoint(uint32_t cp);
+    static std::vector<uint32_t> extractCJKBigrams(const char* data, uint16_t len);
+    void addCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
+    void removeCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
+    static std::unordered_map<uint32_t, std::vector<uint32_t>> buildCJKBigramIndexFromData(
+        const std::vector<uint8_t>& types, const StringPool& namePool);
+
+    /// Build path trigram index from pathPool (lowercases on-the-fly)
     static std::unordered_map<Trigram, std::vector<uint32_t>>
-        buildPathTrigramIndexFromData(const StringPool& lowerPathPool);
+        buildPathTrigramIndexFromData(const StringPool& pathPool);
 
     /// Build pathIdx -> record indices mapping from standalone data (used by COW compaction)
     static std::vector<std::vector<uint32_t>>

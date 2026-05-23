@@ -618,7 +618,6 @@ class SearchViewModel: ObservableObject {
             openFile(selected)
         } else {
             selectedItemID = first.id
-            openFile(first)
         }
         return true
     }

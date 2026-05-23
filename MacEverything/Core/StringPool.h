@@ -151,11 +151,12 @@ private:
 /// Result of compaction — defined outside class so StringPool is complete.
 struct StringPool::CompactResult {
     StringPool compacted;
-    std::unordered_map<uint32_t, uint32_t> remap; // old index -> new index
+    std::vector<uint32_t> remap; // remap[oldIdx] = newIdx, UINT32_MAX if not live
 };
 
 inline StringPool::CompactResult StringPool::compact(const std::vector<bool>& liveMask) const {
     CompactResult result;
+    result.remap.assign(entries_.size(), UINT32_MAX);
     size_t liveBytes = 0;
     size_t liveCount = 0;
     for (uint32_t i = 0; i < entries_.size(); i++) {
