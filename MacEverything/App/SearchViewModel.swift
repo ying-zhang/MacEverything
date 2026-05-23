@@ -634,8 +634,19 @@ class SearchViewModel: ObservableObject {
         let fullPath = item.path + "/" + item.name
         do {
             try FileManager.default.trashItem(at: URL(fileURLWithPath: fullPath), resultingItemURL: nil)
+            removeItemFromResults(id: id)
         } catch {
             NSSound.beep()
+        }
+    }
+
+    func removeItemFromResults(id: String) {
+        displayItems.removeAll { $0.id == id }
+        cachedItems.removeAll { $0.id == id }
+        sourceItems.removeAll { $0.id == id }
+        totalMatches = max(0, totalMatches - 1)
+        if selectedItemID == id {
+            selectedItemID = nil
         }
     }
 

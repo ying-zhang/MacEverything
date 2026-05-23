@@ -23,8 +23,10 @@ struct ContentView: View {
 
             // Search bar (Alfred-style)
             HStack(spacing: 12) {
-                Image(systemName: "magnifyingglass")
-                    .font(.system(size: 26, weight: .medium))
+                Image("StatusBarIcon")
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 26, height: 26)
                     .foregroundColor(.blue)
                 HighlightedSearchField(
                     text: $viewModel.searchText,
@@ -45,6 +47,9 @@ struct ContentView: View {
                     },
                     onF2: {
                         viewModel.requestRenameForSelected()
+                    },
+                    onCmdDelete: {
+                        viewModel.deleteSelectedFile()
                     }
                 )
                 .frame(height: 36)
@@ -279,6 +284,9 @@ struct ContentView: View {
                                 },
                                 onRenameComplete: {
                                     viewModel.renameRequestedItemID = nil
+                                },
+                                onDelete: {
+                                    viewModel.removeItemFromResults(id: item.id)
                                 }
                             )
                                 .environmentObject(columnLayout)

@@ -62,6 +62,7 @@ struct ResultRow: View {
     let requestedRename: Bool
     let onSelect: () -> Void
     var onRenameComplete: (() -> Void)?
+    var onDelete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
@@ -280,6 +281,7 @@ struct ResultRow: View {
         let url = URL(fileURLWithPath: fullPath)
         do {
             try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            onDelete?()
         } catch {
             NSSound.beep()
         }
