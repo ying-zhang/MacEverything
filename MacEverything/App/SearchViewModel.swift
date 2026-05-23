@@ -698,12 +698,20 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    private static let fileTypeDirectory: UInt8 = 2
+
     private func sorted(_ items: [FileItem]) -> [FileItem] {
         let snapshot = settings.snapshot
         guard snapshot.sortField != .relevance else { return items }
 
         let ascending = snapshot.sortAscending
+        let groupByType = snapshot.sortField != .path
         return items.sorted { lhs, rhs in
+            if groupByType {
+                let lhsIsDir = lhs.type == Self.fileTypeDirectory
+                let rhsIsDir = rhs.type == Self.fileTypeDirectory
+                if lhsIsDir != rhsIsDir { return lhsIsDir }
+            }
             let result: ComparisonResult
             switch snapshot.sortField {
             case .relevance:
