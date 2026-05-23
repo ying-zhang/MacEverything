@@ -162,7 +162,7 @@ std::string ContentIndex::generateSnippet(const std::string& path,
 
     // Pre-compute lowercase keyword once (SIMD for ASCII)
     std::string lowerKey(keyword);
-    simdToLowerAscii(lowerKey.data(), lowerKey.size());
+    me::simdToLowerAscii(lowerKey.data(), lowerKey.size());
 
     std::string chunk(kChunkSize, '\0');
     std::string lowerChunk(kChunkSize, '\0');
@@ -182,9 +182,9 @@ std::string ContentIndex::generateSnippet(const std::string& path,
         // Lowercase the chunk using SIMD (ASCII fast-path; non-ASCII bytes pass through)
         lowerChunk.resize(bytesRead);
         std::memcpy(lowerChunk.data(), chunk.data(), bytesRead);
-        simdToLowerAscii(lowerChunk.data(), bytesRead);
+        me::simdToLowerAscii(lowerChunk.data(), bytesRead);
 
-        size_t pos = simdFind(lowerChunk.data(), bytesRead, lowerKey.data(), lowerKey.size());
+        size_t pos = me::simdFind(lowerChunk.data(), bytesRead, lowerKey.data(), lowerKey.size());
         if (pos < bytesRead) {
             globalMatchPos = fileOffset + pos;
             matchContent = std::move(chunk);
