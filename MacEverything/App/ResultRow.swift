@@ -98,15 +98,9 @@ struct ResultRow: View {
                     .aspectRatio(contentMode: .fit)
                     .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
                 if isActivelyRenaming {
-                    TextField("", text: $editingName)
-                        .textFieldStyle(.roundedBorder)
-                        .font(.subheadline)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .onSubmit { commitRename() }
-                        .onExitCommand { cancelRename() }
-                        .onAppear {
-                            editingName = item.name
-                        }
+                    RenameTextField(text: $editingName,
+                                    onCommit: { commitRename() },
+                                    onCancel: { cancelRename() })
                 } else {
                     highlighted.nameText.lineLimit(1)
                 }
@@ -354,5 +348,55 @@ final class ResultColumnLayout: ObservableObject {
             size: sizeWidth,
             modified: modifiedWidth
         )
+    }
+}
+
+/// NSTextField wrapper that commits on focus loss and cancels on Escape.
+private struct RenameTextField: NSViewRepresentable {
+    @Binding var text: String
+    var onCommit: () -> Void
+    var onCancel: () -> Void
+
+    func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField()
+        field.isBordered = true
+        field.bezelStyle = .roundedBezel
+        field.font = .systemFont(ofSize: NSFont.systemFontSize(for: .small))
+        field.focusRingType = .exterior
+        field.delegate = context.coordinator
+        field.stringValue = text
+        DispatchQueue.main.async {
+            field.window?.makeFirstResponder(field)
+            field.currentEditor()?.selectAll(nil)
+        }
+        return field
+    }
+
+    func updateNSView(_ field: NSTextField, context: Context) {
+        context.coordinator.parent = self
+    }
+
+    class Coordinator: NSObject, NSTextFieldDelegate {
+        var parent: RenameTextField
+
+        init(_ parent: RenameTextField) { self.parent = parent }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            parent.text = field.stringValue
+        }
+
+        func controlTextDidEndEditing(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            parent.text = field.stringValue
+            if let movement = obj.userInfo?["NSTextMovement"] as? Int,
+               movement == NSTextMovement.cancel.rawValue {
+                parent.onCancel()
+            } else {
+                parent.onCommit()
+            }
+        }
     }
 }
