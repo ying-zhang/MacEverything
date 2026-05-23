@@ -335,6 +335,14 @@ struct GeneralSettingsView: View {
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
+
+            Picker(L10n.tr("Enter Key Action"), selection: $settings.enterKeyAction) {
+                ForEach(EnterKeyAction.allCases) { action in
+                    Text(action.title).tag(action)
+                }
+            }
+            .pickerStyle(.segmented)
+
             Toggle(L10n.tr("Pinyin Initials Search"), isOn: $settings.enablePinyinInitials)
             Toggle(L10n.tr("Accelerate Path Search"), isOn: $settings.enablePathSearchAcceleration)
             Text(L10n.tr("Disabling Accelerate Path Search can reduce memory usage."))

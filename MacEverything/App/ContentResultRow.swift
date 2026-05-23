@@ -53,8 +53,14 @@ struct ContentResultRow: View {
         .contextMenu {
             Button(L10n.tr("Open")) { openFile() }
             Button(L10n.tr("Reveal in Finder")) { revealInFinder() }
+            Button(L10n.tr("Quick Look")) { quickLook() }
             Divider()
+            Button(L10n.tr("Copy File")) { copyFile() }
             Button(L10n.tr("Copy Path")) { copyPath() }
+            Button(L10n.tr("Copy Filename")) { copyFilename() }
+            Divider()
+            Button(L10n.tr("Move to Trash")) { trashFile() }
+            Button(L10n.tr("Open in Terminal")) { openInTerminal() }
         }
         .onDrag {
             return NSItemProvider(object: NSURL(fileURLWithPath: item.filePath))
@@ -98,5 +104,40 @@ struct ContentResultRow: View {
     private func copyPath() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(item.filePath, forType: .string)
+    }
+
+    private func copyFile() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([NSURL(fileURLWithPath: item.filePath)])
+    }
+
+    private func copyFilename() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(item.fileName, forType: .string)
+    }
+
+    private func trashFile() {
+        do {
+            try FileManager.default.trashItem(at: URL(fileURLWithPath: item.filePath), resultingItemURL: nil)
+        } catch {
+            NSSound.beep()
+        }
+    }
+
+    private func openInTerminal() {
+        let dirPath = (item.filePath as NSString).deletingLastPathComponent
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        process.arguments = ["-a", "Terminal", dirPath]
+        try? process.run()
+    }
+
+    private func quickLook() {
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
+        process.arguments = ["-p", item.filePath]
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
+        try? process.run()
     }
 }
