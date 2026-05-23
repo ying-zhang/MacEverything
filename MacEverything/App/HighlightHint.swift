@@ -1,7 +1,7 @@
 import Foundation
 
 /// Match mode for highlight hints, mirroring C++ MatchMode enum values.
-enum HighlightMatchMode: UInt8 {
+enum HighlightMatchMode: UInt8, Equatable {
     case substring = 0
     case glob = 1
     case regex = 2
@@ -10,14 +10,14 @@ enum HighlightMatchMode: UInt8 {
 }
 
 /// Which field the hint applies to, mirroring C++ HintField enum values.
-enum HighlightField: UInt8 {
+enum HighlightField: UInt8, Equatable {
     case name = 0
     case path = 1
     case any = 2
 }
 
 /// A structured highlight hint extracted from the C++ query AST.
-struct HighlightHint {
+struct HighlightHint: Equatable {
     let text: String
     let field: HighlightField
     let matchMode: HighlightMatchMode

@@ -400,7 +400,6 @@ final class AppSettings: ObservableObject {
             "\(home)/.npm",
             "\(home)/.cargo",
             "\(home)/.rustup",
-            "\(home)/.Trash",
             "/Library/Caches",
             "/System",
             "/private/var",
@@ -428,7 +427,6 @@ final class AppSettings: ObservableObject {
     }
 }
 
-@MainActor
 func normalizedPaths(_ paths: [String]) -> [String] {
     var seen = Set<String>()
     var result: [String] = []
@@ -442,14 +440,12 @@ func normalizedPaths(_ paths: [String]) -> [String] {
     return result
 }
 
-@MainActor
 func sortedSettingsList(_ values: [String]) -> [String] {
     values.sorted { lhs, rhs in
         lhs.localizedStandardCompare(rhs) == .orderedAscending
     }
 }
 
-@MainActor
 func normalizedExistingPaths(_ paths: [String]) -> [String] {
     normalizedPaths(paths).filter { FileManager.default.fileExists(atPath: $0) }
 }

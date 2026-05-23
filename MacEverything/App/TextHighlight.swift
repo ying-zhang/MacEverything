@@ -48,33 +48,7 @@ func highlightMatches(in text: String, keyword: String,
         ranges = findAllLiteralRanges(in: lowerText, literals: words)
     }
 
-    if ranges.isEmpty {
-        return Text(text).font(font).foregroundColor(color)
-    }
-
-    // Build attributed Text by segments
-    var result = Text("")
-    var currentIndex = text.startIndex
-
-    for range in ranges {
-        // Non-matched segment before this match
-        if currentIndex < range.lowerBound {
-            result = result + Text(text[currentIndex..<range.lowerBound])
-                .font(font).foregroundColor(color)
-        }
-        // Matched segment (use original case from text)
-        result = result + Text(text[range])
-            .font(font).foregroundColor(highlightColor).bold()
-        currentIndex = range.upperBound
-    }
-
-    // Remaining text after last match
-    if currentIndex < text.endIndex {
-        result = result + Text(text[currentIndex..<text.endIndex])
-            .font(font).foregroundColor(color)
-    }
-
-    return result
+    return buildHighlightedText(text: text, ranges: ranges, font: font, color: color, highlightColor: highlightColor)
 }
 
 /// Cross-boundary highlight: matches keyword against `path + "/" + name` (the full path),
@@ -140,8 +114,12 @@ func highlightCrossMatches(path: String, name: String, keyword: String,
         // but the separator is not displayed in either path or name — path ends before "/",
         // name starts after "/". We clip to each component.)
         if matchEnd <= separatorIndex {
-            // Entirely within path portion
-            pathRanges.append(matchStart..<matchEnd)
+            // Entirely within path portion — remap to path's own indices
+            let offset = fullPath.distance(from: fullPath.startIndex, to: matchStart)
+            let length = fullPath.distance(from: matchStart, to: matchEnd)
+            let pStart = path.index(path.startIndex, offsetBy: offset)
+            let pEnd = path.index(pStart, offsetBy: length)
+            pathRanges.append(pStart..<pEnd)
         } else if matchStart >= nameStartInFull {
             // Entirely within name portion — remap to name's own indices
             let offset = fullPath.distance(from: nameStartInFull, to: matchStart)
@@ -151,9 +129,10 @@ func highlightCrossMatches(path: String, name: String, keyword: String,
             nameRanges.append(nameStart..<nameEnd)
         } else {
             // Cross-boundary: split into path part and name part
-            // Path part: matchStart ..< separatorIndex (clip at path end)
             if matchStart < separatorIndex {
-                pathRanges.append(matchStart..<separatorIndex)
+                let offset = fullPath.distance(from: fullPath.startIndex, to: matchStart)
+                let pStart = path.index(path.startIndex, offsetBy: offset)
+                pathRanges.append(pStart..<path.endIndex)
             }
             // Name part: 0 ..< (matchEnd - nameStartInFull)
             if matchEnd > nameStartInFull {
@@ -370,9 +349,14 @@ private func mandarinInitialMapping(for text: String) -> (key: String, sourceRan
     return (key, sourceRanges)
 }
 
+private var pinyinCache: [Character: Character?] = [:]
+
 private func mandarinInitial(for character: String) -> Character? {
+    let char = character.first!
+    if let cached = pinyinCache[char] { return cached }
     let mutable = NSMutableString(string: character)
     guard CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false) else {
+        pinyinCache[char] = .some(nil)
         return nil
     }
     CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
@@ -380,12 +364,17 @@ private func mandarinInitial(for character: String) -> Character? {
         guard scalar.value < 128 else { continue }
         let value = UInt8(scalar.value)
         if value >= 65 && value <= 90 {
-            return Character(UnicodeScalar(value + 32))
+            let result = Character(UnicodeScalar(value + 32))
+            pinyinCache[char] = result
+            return result
         }
         if value >= 97 && value <= 122 {
-            return Character(scalar)
+            let result = Character(scalar)
+            pinyinCache[char] = result
+            return result
         }
     }
+    pinyinCache[char] = .some(nil)
     return nil
 }
 
@@ -438,8 +427,7 @@ func computeHighlightRanges(in text: String, hints: [HighlightHint]) -> [Range<S
 /// Merge overlapping/adjacent ranges, sorted by start position.
 private func mergeRanges(_ ranges: [Range<String.Index>], in text: String) -> [Range<String.Index>] {
     guard !ranges.isEmpty else { return [] }
-    let sorted = ranges.sorted { text.distance(from: text.startIndex, to: $0.lowerBound)
-                                < text.distance(from: text.startIndex, to: $1.lowerBound) }
+    let sorted = ranges.sorted { $0.lowerBound < $1.lowerBound }
     var merged: [Range<String.Index>] = [sorted[0]]
     for range in sorted.dropFirst() {
         let last = merged[merged.count - 1]
@@ -522,7 +510,11 @@ private func mapFullPathRanges(_ fullRanges: [Range<String.Index>],
 
     for range in fullRanges {
         if range.upperBound <= separatorIndex {
-            pathRanges.append(range)
+            let offset = fullPath.distance(from: fullPath.startIndex, to: range.lowerBound)
+            let length = fullPath.distance(from: range.lowerBound, to: range.upperBound)
+            let pStart = path.index(path.startIndex, offsetBy: offset)
+            let pEnd = path.index(pStart, offsetBy: length)
+            pathRanges.append(pStart..<pEnd)
         } else if range.lowerBound >= nameStartInFull {
             let offset = fullPath.distance(from: nameStartInFull, to: range.lowerBound)
             let length = fullPath.distance(from: range.lowerBound, to: range.upperBound)
@@ -531,7 +523,9 @@ private func mapFullPathRanges(_ fullRanges: [Range<String.Index>],
             nameRanges.append(nStart..<nEnd)
         } else {
             if range.lowerBound < separatorIndex {
-                pathRanges.append(range.lowerBound..<separatorIndex)
+                let offset = fullPath.distance(from: fullPath.startIndex, to: range.lowerBound)
+                let pStart = path.index(path.startIndex, offsetBy: offset)
+                pathRanges.append(pStart..<path.endIndex)
             }
             if range.upperBound > nameStartInFull {
                 let nameLen = fullPath.distance(from: nameStartInFull, to: range.upperBound)

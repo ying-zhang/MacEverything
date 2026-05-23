@@ -65,7 +65,12 @@ final class SearchHistoryStore {
 
     private func load() {
         guard let data = UserDefaults.standard.data(forKey: Self.defaultsKey) else { return }
-        entries = (try? JSONDecoder().decode([Entry].self, from: data)) ?? []
+        do {
+            entries = try JSONDecoder().decode([Entry].self, from: data)
+        } catch {
+            AppLogger.warn("SearchHistory", "Failed to decode search history: \(error)")
+            entries = []
+        }
     }
 
     private func save() {

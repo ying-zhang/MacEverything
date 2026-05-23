@@ -135,7 +135,7 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(L10n.tr("Rebuild Index Now")) {
-                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                    NotificationCenter.default.post(name: .rebuildIndex, object: nil)
                 }
             }
 
@@ -172,7 +172,7 @@ struct GeneralSettingsView: View {
                     .foregroundColor(.secondary)
                 Spacer()
                 Button(L10n.tr("Rebuild Index Now")) {
-                    NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                    NotificationCenter.default.post(name: .rebuildIndex, object: nil)
                 }
             }
         }
@@ -286,35 +286,41 @@ struct GeneralSettingsView: View {
     }
 
     private func refreshContentIndexInfo() {
-        let fileManager = FileManager.default
-        mainIndexBaseBytes = fileSize(atPath: SearchViewModel.v6Path, fileManager: fileManager)
-        mainIndexWalBytes = fileSize(atPath: SearchViewModel.walPath, fileManager: fileManager)
-        mainIndexLegacyBytes =
-            fileSize(atPath: SearchViewModel.cachePath, fileManager: fileManager) +
-            fileSize(atPath: SearchViewModel.pagesPath, fileManager: fileManager) +
-            fileSize(atPath: SearchViewModel.ptablePath, fileManager: fileManager)
-        mainIndexStorageBytes = mainIndexBaseBytes + mainIndexWalBytes + mainIndexLegacyBytes
+        let bridge = self.bridge
+        Task.detached {
+            let fileManager = FileManager.default
+            let v6 = fileSize(atPath: SearchViewModel.v6Path, fileManager: fileManager)
+            let wal = fileSize(atPath: SearchViewModel.walPath, fileManager: fileManager)
+            let legacy =
+                fileSize(atPath: SearchViewModel.cachePath, fileManager: fileManager) +
+                fileSize(atPath: SearchViewModel.pagesPath, fileManager: fileManager) +
+                fileSize(atPath: SearchViewModel.ptablePath, fileManager: fileManager)
+            let contentBase = fileSize(atPath: SearchViewModel.contentIndexPath, fileManager: fileManager)
+            let contentWal = fileSize(atPath: SearchViewModel.contentWalPath, fileManager: fileManager)
+            let indexedCount = bridge.contentIndexedFileCount()
 
-        let baseBytes = fileSize(atPath: SearchViewModel.contentIndexPath, fileManager: fileManager)
-        let walBytes = fileSize(atPath: SearchViewModel.contentWalPath, fileManager: fileManager)
-        contentIndexedCount = bridge.contentIndexedFileCount()
-        contentIndexBaseBytes = baseBytes
-        contentIndexWalBytes = walBytes
-        contentIndexStorageBytes = baseBytes + walBytes
+            await MainActor.run {
+                mainIndexBaseBytes = v6
+                mainIndexWalBytes = wal
+                mainIndexLegacyBytes = legacy
+                mainIndexStorageBytes = v6 + wal + legacy
+                contentIndexedCount = indexedCount
+                contentIndexBaseBytes = contentBase
+                contentIndexWalBytes = contentWal
+                contentIndexStorageBytes = contentBase + contentWal
+            }
+        }
     }
 
     private var bridge: MacSearchBridge {
         MacSearchBridge.shared()
     }
 
-    private func fileSize(atPath path: String, fileManager: FileManager) -> UInt64 {
-        guard let attrs = try? fileManager.attributesOfItem(atPath: path),
-              let size = attrs[.size] as? NSNumber else { return 0 }
-        return size.uint64Value
-    }
+    // fileSize is a nonisolated free function below
+
 
     private func formattedBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
 
     private func scheduleContentIndexInfoRefresh() {
@@ -505,7 +511,7 @@ struct GeneralSettingsView: View {
         SettingsSection(title: L10n.tr("Maintenance")) {
             Toggle(L10n.tr("Automatic index maintenance"), isOn: $settings.automaticMaintenanceEnabled)
             Button(L10n.tr("Rebuild Index")) {
-                NotificationCenter.default.post(name: Notification.Name("rebuildIndex"), object: nil)
+                NotificationCenter.default.post(name: .rebuildIndex, object: nil)
             }
         }
     }
@@ -727,4 +733,10 @@ private struct BoundedIntegerControl: View {
         value = min(max(parsed, range.lowerBound), range.upperBound)
         text = String(value)
     }
+}
+
+private func fileSize(atPath path: String, fileManager: FileManager) -> UInt64 {
+    guard let attrs = try? fileManager.attributesOfItem(atPath: path),
+          let size = attrs[.size] as? NSNumber else { return 0 }
+    return size.uint64Value
 }

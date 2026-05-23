@@ -220,11 +220,31 @@ class ShortcutRecorderNSView: NSView {
             return
         }
 
+        if Self.isReservedShortcut(keyCode: UInt32(event.keyCode), modifiers: carbonModifiers) {
+            NSSound.beep()
+            return
+        }
+
         onKeyCombo?(UInt32(event.keyCode), carbonModifiers)
     }
 
     override func flagsChanged(with event: NSEvent) {
         // Ignore pure modifier key presses
+    }
+
+    private static func isReservedShortcut(keyCode: UInt32, modifiers: UInt32) -> Bool {
+        let cmdOnly = UInt32(cmdKey)
+        let cmdShift = UInt32(cmdKey) | UInt32(shiftKey)
+        let reserved: [(UInt32, UInt32)] = [
+            (UInt32(kVK_ANSI_Q), cmdOnly),     // Cmd+Q
+            (UInt32(kVK_ANSI_W), cmdOnly),     // Cmd+W
+            (UInt32(kVK_Tab), cmdOnly),         // Cmd+Tab
+            (UInt32(kVK_Space), cmdOnly),       // Cmd+Space (Spotlight)
+            (UInt32(kVK_ANSI_H), cmdOnly),     // Cmd+H
+            (UInt32(kVK_ANSI_M), cmdOnly),     // Cmd+M
+            (UInt32(kVK_ANSI_Q), cmdShift),    // Cmd+Shift+Q (logout)
+        ]
+        return reserved.contains { $0.0 == keyCode && $0.1 == modifiers }
     }
 }
 

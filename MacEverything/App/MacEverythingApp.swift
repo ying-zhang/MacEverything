@@ -3,8 +3,8 @@ import SwiftUI
 @main
 struct MacEverythingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
-    @ObservedObject private var appSettings = AppSettings.shared
-    @ObservedObject private var searchOptions = SearchOptions.shared
+    @StateObject private var appSettings = AppSettings.shared
+    @StateObject private var searchOptions = SearchOptions.shared
 
     var body: some Scene {
         WindowGroup("MacEverything", id: "search") {
@@ -89,7 +89,8 @@ extension Notification.Name {
     static let searchServiceDidRefresh = Notification.Name("searchServiceDidRefresh")
 }
 
-class GeneralSettingsWindowController {
+@MainActor
+class GeneralSettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = GeneralSettingsWindowController()
     private var window: NSWindow?
 
@@ -105,13 +106,19 @@ class GeneralSettingsWindowController {
         win.title = L10n.tr("Settings")
         win.styleMask = [.titled, .closable, .resizable]
         win.minSize = NSSize(width: 620, height: 520)
+        win.delegate = self
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
     }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
+    }
 }
 
-class ShortcutSettingsWindowController {
+@MainActor
+class ShortcutSettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = ShortcutSettingsWindowController()
     private var window: NSWindow?
 
@@ -126,13 +133,19 @@ class ShortcutSettingsWindowController {
         let win = NSWindow(contentViewController: hostingController)
         win.title = L10n.tr("Shortcut Settings")
         win.styleMask = [.titled, .closable]
+        win.delegate = self
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
     }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
+    }
 }
 
-class ContentSettingsWindowController {
+@MainActor
+class ContentSettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = ContentSettingsWindowController()
     private var window: NSWindow?
 
@@ -148,13 +161,19 @@ class ContentSettingsWindowController {
         win.title = L10n.tr("Content Settings")
         win.styleMask = [.titled, .closable, .resizable]
         win.minSize = NSSize(width: 420, height: 440)
+        win.delegate = self
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
     }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
+    }
 }
 
-class SearchSyntaxHelpWindowController {
+@MainActor
+class SearchSyntaxHelpWindowController: NSObject, NSWindowDelegate {
     static let shared = SearchSyntaxHelpWindowController()
     private var window: NSWindow?
 
@@ -171,14 +190,19 @@ class SearchSyntaxHelpWindowController {
         win.styleMask = [.titled, .closable, .resizable]
         win.setContentSize(NSSize(width: 580, height: 720))
         win.minSize = NSSize(width: 450, height: 400)
+        win.delegate = self
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
     }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
+    }
 }
 
 @MainActor
-class RegexHelpWindowController {
+class RegexHelpWindowController: NSObject, NSWindowDelegate {
     static let shared = RegexHelpWindowController()
     private static let firstUseKey = "help.regex.firstUseShown"
     private var window: NSWindow?
@@ -202,8 +226,13 @@ class RegexHelpWindowController {
         win.styleMask = [.titled, .closable, .resizable]
         win.setContentSize(NSSize(width: 620, height: 640))
         win.minSize = NSSize(width: 480, height: 360)
+        win.delegate = self
         win.center()
         win.makeKeyAndOrderFront(nil)
         window = win
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        window = nil
     }
 }

@@ -125,7 +125,7 @@ struct ContentView: View {
                         Text("·")
                             .foregroundColor(.secondary)
                         if viewModel.resultLimitReached {
-                            Text(L10n.tr("More than 10000 results"))
+                            Text(L10n.tr("More than %d results", Int(settings.snapshot.maxResults)))
                                 .foregroundColor(.secondary)
                                 .accessibilityIdentifier("matchCount")
                         } else {
@@ -206,7 +206,7 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(viewModel.contentResults) { item in
-                                ContentResultRow(item: item, keyword: viewModel.contentKeyword)
+                                ContentResultRow(item: item, hints: viewModel.highlightHints)
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 2)
                             }
@@ -304,7 +304,7 @@ struct ContentView: View {
                     HStack {
                         Spacer()
                         Text(viewModel.resultLimitReached
-                             ? L10n.tr("Result %d, total results limited to 10000; add search terms.", viewModel.displayItems.count)
+                             ? L10n.tr("Result %d, total results limited to %d; add search terms.", viewModel.displayItems.count, Int(settings.snapshot.maxResults))
                              : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
                             .font(.callout)
                             .foregroundColor(.secondary)
@@ -344,21 +344,24 @@ struct ContentView: View {
     }
 
     private func formattedIndexMemory(_ bytes: UInt64) -> String {
-        let mib = Double(bytes) / 1_048_576.0
-        if mib >= 1024 {
-            return String(format: "%.1fGB", mib / 1024.0)
-        }
-        return String(format: "%.0fMB", mib)
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
     }
 }
 
 private struct WindowReader: NSViewRepresentable {
     var onWindowChange: (NSWindow) -> Void
 
+    final class Coordinator {
+        weak var lastWindow: NSWindow?
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView(frame: .zero)
         DispatchQueue.main.async {
-            if let window = view.window {
+            if let window = view.window, context.coordinator.lastWindow !== window {
+                context.coordinator.lastWindow = window
                 onWindowChange(window)
             }
         }
@@ -367,7 +370,8 @@ private struct WindowReader: NSViewRepresentable {
 
     func updateNSView(_ nsView: NSView, context: Context) {
         DispatchQueue.main.async {
-            if let window = nsView.window {
+            if let window = nsView.window, context.coordinator.lastWindow !== window {
+                context.coordinator.lastWindow = window
                 onWindowChange(window)
             }
         }
@@ -470,6 +474,7 @@ private struct ColumnResizeHandle: ViewModifier {
     @Binding var width: CGFloat
     let range: ClosedRange<CGFloat>
     @State private var dragStartWidth: CGFloat?
+    @State private var isCursorPushed = false
 
     func body(content: Content) -> some View {
         content.overlay(alignment: .trailing) {
@@ -489,10 +494,12 @@ private struct ColumnResizeHandle: ViewModifier {
                         }
                 )
                 .onHover { hovering in
-                    if hovering {
+                    if hovering, !isCursorPushed {
                         NSCursor.resizeLeftRight.push()
-                    } else {
+                        isCursorPushed = true
+                    } else if !hovering, isCursorPushed {
                         NSCursor.pop()
+                        isCursorPushed = false
                     }
                 }
         }
