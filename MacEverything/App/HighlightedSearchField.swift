@@ -170,6 +170,8 @@ struct HighlightedSearchField: NSViewRepresentable {
     var onSubmit: (() -> Void)?
     var onF2: (() -> Void)?
     var onCmdDelete: (() -> Void)?
+    var onArrowDown: (() -> Bool)?
+    var onEscape: (() -> Void)?
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -210,6 +212,8 @@ struct HighlightedSearchField: NSViewRepresentable {
         textView.onSubmit = context.coordinator.handleSubmit
         textView.onF2 = context.coordinator.handleF2
         textView.onCmdDelete = context.coordinator.handleCmdDelete
+        textView.onArrowDown = context.coordinator.handleArrowDown
+        textView.onEscape = context.coordinator.handleEscape
 
         // Placeholder
         textView.placeholderString = placeholder
@@ -224,19 +228,13 @@ struct HighlightedSearchField: NSViewRepresentable {
         guard let textView = scrollView.documentView as? HighlightedNSTextView else { return }
         context.coordinator.parent = self
 
-        // Update text if externally changed (e.g., clear button, ghost suggestion accept)
+        // Update text if externally changed (e.g., clear button, ghost suggestion accept, character forwarding)
         if textView.string != text {
             context.coordinator.isUpdatingFromSwiftUI = true
             textView.string = text
             context.coordinator.applyHighlighting(textView)
             let newLen = textView.string.count
-            let clampedRanges = textView.selectedRanges.map { rangeValue -> NSValue in
-                let r = rangeValue.rangeValue
-                let start = min(r.location, newLen)
-                let len = min(r.length, newLen - start)
-                return NSValue(range: NSRange(location: start, length: len))
-            }
-            textView.selectedRanges = clampedRanges
+            textView.selectedRanges = [NSValue(range: NSRange(location: newLen, length: 0))]
             context.coordinator.isUpdatingFromSwiftUI = false
         }
 
@@ -301,6 +299,14 @@ struct HighlightedSearchField: NSViewRepresentable {
             parent.onCmdDelete?()
         }
 
+        func handleArrowDown() -> Bool {
+            parent.onArrowDown?() ?? false
+        }
+
+        func handleEscape() {
+            parent.onEscape?()
+        }
+
         func applyHighlighting(_ textView: NSTextView) {
             guard let textStorage = textView.textStorage else { return }
             let fullRange = NSRange(location: 0, length: textStorage.length)
@@ -349,6 +355,8 @@ class HighlightedNSTextView: NSTextView {
     var onF2: (() -> Void)?
     var placeholderString: String = ""
     var onCmdDelete: (() -> Void)?
+    var onArrowDown: (() -> Bool)?
+    var onEscape: (() -> Void)?
 
     var ghostSuggestion: String? {
         didSet { needsDisplay = true }
@@ -373,6 +381,17 @@ class HighlightedNSTextView: NSTextView {
         }
         if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
             onSubmit?()
+            return
+        }
+        // Down arrow - move focus to result list
+        if event.keyCode == 125 { // Down arrow
+            if onArrowDown?() == true {
+                return
+            }
+        }
+        // ESC - layered dismiss
+        if event.keyCode == 53 { // Escape
+            onEscape?()
             return
         }
         super.keyDown(with: event)

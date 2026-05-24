@@ -391,6 +391,8 @@ class SearchViewModel: ObservableObject {
             sourceItems = []
             cachedItems = []
             loadedCount = 0
+            displayItems = []
+            showingRecent = false
             isContentSearch = false
             contentResults = []
             contentKeyword = "" // H-9: reset cached keyword
@@ -399,21 +401,15 @@ class SearchViewModel: ObservableObject {
             // Cancel any in-flight queries for this GUI session
             bridge.cancelSession(sessionId)
             if service.scanComplete {
-                // Slight delay so the stale query's dispatch_apply threads
-                // detect the generation change and exit before we compete for the thread pool
-                recentTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
-                    guard !Task.isCancelled, let self else { return }
-                    if self.settings.snapshot.startupDisplayMode == .recent {
+                if settings.snapshot.startupDisplayMode == .recent {
+                    // Slight delay so the stale query's dispatch_apply threads
+                    // detect the generation change and exit before we compete for the thread pool
+                    recentTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
+                        guard !Task.isCancelled, let self else { return }
                         self.loadRecentFiles()
-                    } else {
-                        self.displayItems = []
-                        self.showingRecent = false
                     }
                 }
-            } else {
-                displayItems = []
-                showingRecent = false
             }
             return
         }
@@ -612,6 +608,39 @@ class SearchViewModel: ObservableObject {
         selectedItemID = item.id
     }
 
+    func selectNext() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        if let currentID = selectedItemID,
+           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
+            let nextIdx = min(idx + 1, displayItems.count - 1)
+            selectedItemID = displayItems[nextIdx].id
+        } else {
+            selectedItemID = displayItems.first?.id
+        }
+        return true
+    }
+
+    func selectPrevious() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        if let currentID = selectedItemID,
+           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
+            if idx == 0 { return false }
+            selectedItemID = displayItems[idx - 1].id
+        } else {
+            selectedItemID = displayItems.last?.id
+        }
+        return true
+    }
+
+    func openSelectedOrFirst() {
+        if let selectedItemID,
+           let selected = displayItems.first(where: { $0.id == selectedItemID }) {
+            openFile(selected)
+        } else if let first = displayItems.first {
+            openFile(first)
+        }
+    }
+
     func activateSelectedOrFirstResult() -> Bool {
         guard let first = displayItems.first else { return false }
         if let selectedItemID,
@@ -756,16 +785,22 @@ class SearchViewModel: ObservableObject {
             }
         }
         service.onWindowFocusChanged(focused)
-        if focused {
-            refreshForServiceUpdate()
-        }
     }
 
     func refreshForServiceUpdate() {
         guard service.scanComplete else { return }
         if !searchText.isEmpty && !isContentSearch {
+            searchTask?.cancel()
+            recentTask?.cancel()
+            searchGeneration &+= 1
+            bridge.cancelSession(sessionId)
+            updateHighlightHints()
             performSearch(searchText)
         } else if isContentSearch && !contentKeyword.isEmpty {
+            searchTask?.cancel()
+            recentTask?.cancel()
+            searchGeneration &+= 1
+            updateHighlightHints()
             performContentSearch(contentKeyword)
         } else if showingRecent && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()

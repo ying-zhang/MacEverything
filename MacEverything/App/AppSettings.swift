@@ -366,7 +366,15 @@ final class AppSettings: ObservableObject {
             enablePathSearchAcceleration = false
         }
 
-        defaults.set(3, forKey: Key.settingsSchemaVersion)
+        if version < 4 {
+            excludedPaths = normalizedPaths(excludedPaths + Self.defaultInteropExcludedPaths())
+            if contentSearchUsesIndexExclusions {
+                contentSearchExcludedPaths = excludedPaths
+                contentExcludedPaths = excludedPaths
+            }
+        }
+
+        defaults.set(4, forKey: Key.settingsSchemaVersion)
     }
 
     private func save(_ value: Bool, _ key: String) {
@@ -412,7 +420,7 @@ final class AppSettings: ObservableObject {
 
     private static func defaultExcludedPaths() -> [String] {
         let home = FileManager.default.homeDirectoryForCurrentUser.path
-        return [
+        return normalizedPaths([
             "\(home)/Library",
             "\(home)/.Trash",
             "\(home)/.cache",
@@ -423,6 +431,14 @@ final class AppSettings: ObservableObject {
             "/System",
             "/private/var",
             "/Volumes"
+        ] + defaultInteropExcludedPaths())
+    }
+
+    private static func defaultInteropExcludedPaths() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return [
+            "\(home)/.machunt",
+            "\(home)/Library/Caches/com.dacj4n.machunt"
         ]
     }
 

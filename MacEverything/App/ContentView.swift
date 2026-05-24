@@ -1,4 +1,5 @@
 import SwiftUI
+import Quartz
 
 struct ContentView: View {
     @StateObject private var viewModel = SearchViewModel()
@@ -9,6 +10,7 @@ struct ContentView: View {
     @State private var scrollViewID = 0
     @State private var hostWindow: NSWindow?
     @FocusState private var isSearchFieldFocused: Bool
+    @State private var resultListFocused = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -48,6 +50,14 @@ struct ContentView: View {
                     },
                     onCmdDelete: {
                         viewModel.deleteSelectedFile()
+                    },
+                    onArrowDown: {
+                        guard !viewModel.isContentSearch, !viewModel.displayItems.isEmpty else { return false }
+                        resultListFocused = true
+                        return true
+                    },
+                    onEscape: {
+                        handleEscape()
                     }
                 )
                 .frame(height: 36)
@@ -272,52 +282,78 @@ struct ContentView: View {
                         .padding(.horizontal, 8)
                 }
 
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(viewModel.displayItems) { item in
-                            ResultRow(
-                                item: item,
-                                hints: viewModel.highlightHints,
-                                isSelected: viewModel.selectedItemID == item.id,
-                                requestedRename: viewModel.renameRequestedItemID == item.id,
-                                onSelect: {
-                                    viewModel.select(item)
-                                },
-                                onRenameComplete: {
-                                    viewModel.renameRequestedItemID = nil
-                                },
-                                onRenameSuccess: { oldID, newName in
-                                    viewModel.updateItemName(oldID: oldID, newName: newName)
-                                },
-                                onDelete: {
-                                    viewModel.removeItemFromResults(id: item.id)
-                                }
-                            )
-                                .environmentObject(columnLayout)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .id(item.id)
-                        }
-                        if viewModel.hasMoreResults {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(L10n.tr("Loading more results..."))
-                                    .font(.callout)
-                                    .foregroundColor(.secondary)
-                                Spacer()
+                ScrollViewReader { scrollProxy in
+                    ScrollView {
+                        LazyVStack(spacing: 0) {
+                            ForEach(viewModel.displayItems) { item in
+                                ResultRow(
+                                    item: item,
+                                    hints: viewModel.highlightHints,
+                                    isSelected: viewModel.selectedItemID == item.id,
+                                    requestedRename: viewModel.renameRequestedItemID == item.id,
+                                    onSelect: {
+                                        viewModel.select(item)
+                                    },
+                                    onRenameComplete: {
+                                        viewModel.renameRequestedItemID = nil
+                                    },
+                                    onRenameSuccess: { oldID, newName in
+                                        viewModel.updateItemName(oldID: oldID, newName: newName)
+                                    },
+                                    onDelete: {
+                                        viewModel.removeItemFromResults(id: item.id)
+                                    }
+                                )
+                                    .environmentObject(columnLayout)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 2)
+                                    .id(item.id)
                             }
-                            .padding(.vertical, 8)
-                            .onAppear {
-                                viewModel.loadMore()
+                            if viewModel.hasMoreResults {
+                                HStack {
+                                    Spacer()
+                                    ProgressView()
+                                        .controlSize(.small)
+                                    Text(L10n.tr("Loading more results..."))
+                                        .font(.callout)
+                                        .foregroundColor(.secondary)
+                                    Spacer()
+                                }
+                                .padding(.vertical, 8)
+                                .onAppear {
+                                    viewModel.loadMore()
+                                }
                             }
                         }
                     }
+                    .id(scrollViewID)
+                    .accessibilityIdentifier("fileResultsList")
+                    .animation(.easeInOut(duration: 0.25), value: viewModel.showingRecent)
+                    .background(
+                        ResultListKeyHandler(
+                            viewModel: viewModel,
+                            wantsFocus: $resultListFocused,
+                            onReturnFocusToSearch: {
+                                resultListFocused = false
+                                isSearchFieldFocused = true
+                            },
+                            onEscape: {
+                                handleEscape()
+                            },
+                            onForwardCharacter: { chars in
+                                resultListFocused = false
+                                viewModel.searchText += chars
+                                isSearchFieldFocused = true
+                            }
+                        )
+                        .frame(width: 0, height: 0)
+                    )
+                    .onChange(of: viewModel.selectedItemID) {
+                        if let id = viewModel.selectedItemID {
+                            scrollProxy.scrollTo(id, anchor: .center)
+                        }
+                    }
                 }
-                .id(scrollViewID)
-                .accessibilityIdentifier("fileResultsList")
-                .animation(.easeInOut(duration: 0.25), value: viewModel.showingRecent)
 
                 if viewModel.totalMatches > 0 {
                     HStack {
@@ -346,6 +382,7 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(true)
+            resultListFocused = false
             isSearchFieldFocused = true
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
@@ -364,6 +401,27 @@ struct ContentView: View {
 
     private func formattedIndexMemory(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+    }
+
+    private func handleEscape() {
+        if QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible {
+            QLPreviewPanel.shared().orderOut(nil)
+            if resultListFocused {
+                resultListFocused = false
+                isSearchFieldFocused = true
+            }
+            return
+        }
+        if resultListFocused {
+            resultListFocused = false
+            isSearchFieldFocused = true
+            return
+        }
+        if !viewModel.searchText.isEmpty {
+            viewModel.searchText = ""
+            return
+        }
+        NSApp.hide(nil)
     }
 }
 
