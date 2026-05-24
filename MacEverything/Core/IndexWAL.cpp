@@ -42,10 +42,9 @@ uint32_t IndexWAL::crc32(const void* data, size_t len) {
 #else
 // Software fallback: slicing-by-4 CRC32
 
-static const uint32_t (*getCRC32Tables())[256] {
-    static uint32_t tables[4][256];
-    static bool initialized = false;
-    if (!initialized) {
+static const std::array<std::array<uint32_t, 256>, 4>& getCRC32Tables() {
+    static const auto tables = [] {
+        std::array<std::array<uint32_t, 256>, 4> tables{};
         // Build base table
         for (uint32_t i = 0; i < 256; i++) {
             uint32_t c = i;
@@ -59,8 +58,8 @@ static const uint32_t (*getCRC32Tables())[256] {
             tables[2][i] = (tables[1][i] >> 8) ^ tables[0][tables[1][i] & 0xFF];
             tables[3][i] = (tables[2][i] >> 8) ^ tables[0][tables[2][i] & 0xFF];
         }
-        initialized = true;
-    }
+        return tables;
+    }();
     return tables;
 }
 
@@ -236,9 +235,7 @@ std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath) {
         uint32_t computedCRC = crc32(rawBuf.data(), rawBuf.size());
         if (computedCRC != storedCRC) {
             LOG_ERROR("IndexWAL", "CRC mismatch at offset " << startPos
-                      << ", recovered " << entries.size() << " entries"
-                      << ", truncating WAL to last valid entry");
-            ftruncate(fileno(f), startPos);
+                      << ", recovered " << entries.size() << " entries");
             break;
         }
 

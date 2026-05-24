@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#安装"><img src="https://img.shields.io/badge/macOS-13%2B-blue?logo=apple" alt="macOS 13+" /></a>
+  <a href="#安装"><img src="https://img.shields.io/badge/macOS-14%2B-blue?logo=apple" alt="macOS 14+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" /></a>
   <a href="#测试体系"><img src="https://img.shields.io/badge/tests-79%20modules-brightgreen" alt="79 test modules" /></a>
   <a href="#ai-工具集成-mcp"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet" alt="MCP Compatible" /></a>
@@ -165,7 +165,7 @@ curl "http://localhost:19860/api/memory"                          # 内存拆分
 
 #### 从源码构建
 
-**环境要求：** macOS 13+，Xcode 15+（完整 Xcode，不只是 Command Line Tools），Homebrew，RE2
+**环境要求：** macOS 14+，Xcode 15+（完整 Xcode，不只是 Command Line Tools），Homebrew，RE2
 
 ```bash
 brew install re2

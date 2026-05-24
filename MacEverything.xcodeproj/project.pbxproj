@@ -230,7 +230,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\"\n";
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\" \"MacEverythingMCP\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -637,20 +637,21 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.maceverything.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				RE2_DEPENDENCY_ROOT = "$(SRCROOT)/third_party/re2";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "MacEverything/MacEverything-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/MacEverything/Core",
 					"$(SRCROOT)/MacEverything/Bridge",
-					"$(SRCROOT)/third_party/re2/include",
+					"$(RE2_DEPENDENCY_ROOT)/include",
 					"/opt/homebrew/opt/re2/include",
 					"/opt/homebrew/opt/abseil/include",
 					"/usr/local/opt/re2/include",
 					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
-					"$(SRCROOT)/third_party/re2/lib",
+					"$(RE2_DEPENDENCY_ROOT)/lib",
 					"/opt/homebrew/opt/re2/lib",
 					"/opt/homebrew/opt/abseil/lib",
 					"/usr/local/opt/re2/lib",
@@ -676,20 +677,21 @@
 				);
 				PRODUCT_BUNDLE_IDENTIFIER = com.maceverything.app;
 				PRODUCT_NAME = "$(TARGET_NAME)";
+				RE2_DEPENDENCY_ROOT = "$(SRCROOT)/third_party/re2";
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_OBJC_BRIDGING_HEADER = "MacEverything/MacEverything-Bridging-Header.h";
 				SWIFT_VERSION = 5.0;
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/MacEverything/Core",
 					"$(SRCROOT)/MacEverything/Bridge",
-					"$(SRCROOT)/third_party/re2/include",
+					"$(RE2_DEPENDENCY_ROOT)/include",
 					"/opt/homebrew/opt/re2/include",
 					"/opt/homebrew/opt/abseil/include",
 					"/usr/local/opt/re2/include",
 					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
-					"$(SRCROOT)/third_party/re2/lib",
+					"$(RE2_DEPENDENCY_ROOT)/lib",
 					"/opt/homebrew/opt/re2/lib",
 					"/opt/homebrew/opt/abseil/lib",
 					"/usr/local/opt/re2/lib",

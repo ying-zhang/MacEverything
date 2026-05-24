@@ -12,6 +12,8 @@
 #include <sstream>
 #include <string>
 #include <vector>
+#include <cerrno>
+#include <climits>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -104,6 +106,29 @@ static std::string jsonGetString(const std::string& json, const std::string& key
     return "";
 }
 
+static bool jsonTryGetString(const std::string& json, const std::string& key, std::string& out) {
+    std::string needle = "\"" + key + "\"";
+    auto pos = json.find(needle);
+    if (pos == std::string::npos) return false;
+
+    pos = json.find(':', pos + needle.size());
+    if (pos == std::string::npos) return false;
+
+    pos = json.find_first_not_of(" \t\r\n", pos + 1);
+    if (pos == std::string::npos || json[pos] != '"') return false;
+
+    size_t start = pos + 1;
+    size_t end = start;
+    while (end < json.size()) {
+        if (json[end] == '\\') { end += 2; continue; }
+        if (json[end] == '"') break;
+        end++;
+    }
+    if (end >= json.size()) return false;
+    out = json.substr(start, end - start);
+    return true;
+}
+
 /// Extract an integer or number value for a given key.
 /// Returns -1 if not found.
 static long jsonGetNumber(const std::string& json, const std::string& key) {
@@ -124,7 +149,11 @@ static long jsonGetNumber(const std::string& json, const std::string& key) {
         numStr += json[pos++];
     }
     if (numStr.empty() || numStr == "-") return -1;
-    return std::stol(numStr);
+    char* end = nullptr;
+    errno = 0;
+    long value = std::strtol(numStr.c_str(), &end, 10);
+    if (errno != 0 || end == numStr.c_str() || *end != '\0') return -1;
+    return value;
 }
 
 /// Extract the raw JSON value for a given key (object, array, string, number, bool, null).
@@ -197,6 +226,42 @@ static std::string jsonGetId(const std::string& json) {
     return jsonGetRaw(json, "id");
 }
 
+static std::vector<std::string> splitTopLevelArray(const std::string& json) {
+    std::vector<std::string> items;
+    size_t first = json.find_first_not_of(" \t\r\n");
+    if (first == std::string::npos || json[first] != '[') return items;
+
+    int depth = 0;
+    bool inStr = false;
+    size_t itemStart = std::string::npos;
+    for (size_t i = first; i < json.size(); ++i) {
+        char ch = json[i];
+        if (inStr) {
+            if (ch == '\\') {
+                ++i;
+            } else if (ch == '"') {
+                inStr = false;
+            }
+            continue;
+        }
+        if (ch == '"') {
+            inStr = true;
+        } else if (ch == '{' || ch == '[') {
+            if (depth == 1 && itemStart == std::string::npos) itemStart = i;
+            depth++;
+        } else if (ch == '}' || ch == ']') {
+            depth--;
+            if (depth == 1 && itemStart != std::string::npos) {
+                items.push_back(json.substr(itemStart, i - itemStart + 1));
+                itemStart = std::string::npos;
+            } else if (depth <= 0) {
+                break;
+            }
+        }
+    }
+    return items;
+}
+
 // ═══════════════════════════════════════════════════════
 //  HTTP client
 // ═══════════════════════════════════════════════════════
@@ -260,7 +325,14 @@ static HttpResponse httpGet(const std::string& path) {
         auto sp1 = raw.find(' ');
         auto sp2 = raw.find(' ', sp1 + 1);
         if (sp1 != std::string::npos && sp2 != std::string::npos) {
-            resp.statusCode = std::stoi(raw.substr(sp1 + 1, sp2 - sp1 - 1));
+            std::string code = raw.substr(sp1 + 1, sp2 - sp1 - 1);
+            char* end = nullptr;
+            errno = 0;
+            long parsed = std::strtol(code.c_str(), &end, 10);
+            if (errno == 0 && end != code.c_str() && *end == '\0' &&
+                parsed >= 100 && parsed <= 999) {
+                resp.statusCode = static_cast<int>(parsed);
+            }
         }
     }
 
@@ -409,10 +481,14 @@ static void handleRequest(const std::string& json) {
     }
 
     if (method == "tools/call") {
-        std::string toolName = jsonGetString(json, "name");
+        std::string params = jsonGetRaw(json, "params");
+        std::string toolName;
+        if (params.empty() || !jsonTryGetString(params, "name", toolName)) {
+            sendError(id, -32602, "Invalid params: missing tool name");
+            return;
+        }
 
         // Extract "arguments" from within "params"
-        std::string params = jsonGetRaw(json, "params");
         std::string args = params.empty() ? "{}" : jsonGetRaw(params, "arguments");
         if (args.empty()) args = "{}";
 
@@ -503,10 +579,15 @@ int main(int argc, char* argv[]) {
         if (first == std::string::npos) continue;
 
         if (line[first] == '[') {
-            // Batch — not commonly used, respond with parse error for simplicity
-            // MCP spec says implementations MUST support receiving batches
-            // but we can process them one at a time
-            fprintf(stderr, "[MCP] Batch requests not supported, ignoring\n");
+            auto batch = splitTopLevelArray(line);
+            if (batch.empty()) {
+                sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
+                            "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
+                continue;
+            }
+            for (const auto& item : batch) {
+                handleRequest(item);
+            }
             continue;
         }
 

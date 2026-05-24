@@ -1,6 +1,14 @@
 #include "FileSystemWatcher.h"
 #include "Logger.h"
 #include <cstring>
+#include <algorithm>
+
+static std::string normalizeExclusionPath(std::string path) {
+    while (path.size() > 1 && path.back() == '/') {
+        path.pop_back();
+    }
+    return path;
+}
 
 FileSystemWatcher::~FileSystemWatcher() {
     stop();
@@ -35,6 +43,11 @@ void FileSystemWatcher::start(const std::vector<std::string>& rootPaths,
 }
 
 void FileSystemWatcher::setExclusionPaths(std::vector<std::string> paths) {
+    for (auto& path : paths) {
+        path = normalizeExclusionPath(std::move(path));
+    }
+    paths.erase(std::remove(paths.begin(), paths.end(), std::string{}), paths.end());
+    std::lock_guard<std::mutex> lock(stateMutex_);
     exclusionPaths_ = std::move(paths);
 }
 
@@ -83,9 +96,14 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
     CFRelease(pathsToWatch);
     if (!stream_) return;
 
-    if (!exclusionPaths_.empty()) {
+    std::vector<std::string> exclusionsSnapshot;
+    {
+        std::lock_guard<std::mutex> lock(stateMutex_);
+        exclusionsSnapshot = exclusionPaths_;
+    }
+    if (!exclusionsSnapshot.empty()) {
         CFMutableArrayRef exclusions = CFArrayCreateMutable(kCFAllocatorDefault, 0, &kCFTypeArrayCallBacks);
-        for (const auto& p : exclusionPaths_) {
+        for (const auto& p : exclusionsSnapshot) {
             CFStringRef cfp = CFStringCreateWithCString(kCFAllocatorDefault, p.c_str(), kCFStringEncodingUTF8);
             CFArrayAppendValue(exclusions, cfp);
             CFRelease(cfp);
@@ -95,6 +113,8 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
     }
 
     queue_ = dispatch_queue_create("com.maceverything.fswatcher", DISPATCH_QUEUE_SERIAL);
+    queueKey_ = this;
+    dispatch_queue_set_specific(queue_, queueKey_, queueKey_, nullptr);
     FSEventStreamSetDispatchQueue(stream_, queue_);
     FSEventStreamStart(stream_);
     LOG_INFO("FSWatcher", "[" << label_ << "] Started watching "
@@ -114,12 +134,18 @@ void FileSystemWatcher::stop() {
         // C3 fix: Drain any in-flight callback on the serial queue, then null
         // the std::function captures on the queue thread to avoid a data race
         // (fseventsCallback reads these fields on the same queue).
-        dispatch_sync(queue_, ^{
+        if (dispatch_get_specific(queueKey_) == queueKey_) {
             callback_ = nullptr;
             onReplayDone_ = nullptr;
-        });
+        } else {
+            dispatch_sync(queue_, ^{
+                callback_ = nullptr;
+                onReplayDone_ = nullptr;
+            });
+        }
         dispatch_release(queue_);
         queue_ = nullptr;
+        queueKey_ = nullptr;
     } else {
         callback_ = nullptr;
         onReplayDone_ = nullptr;
@@ -179,10 +205,16 @@ void FileSystemWatcher::fseventsCallback(
         if (pathStr.find("/private/var/folders/") != std::string::npos &&
             pathStr.find("/com.apple.") != std::string::npos) continue;
 
+        std::vector<std::string> exclusions;
+        {
+            std::lock_guard<std::mutex> lock(watcher->stateMutex_);
+            exclusions = watcher->exclusionPaths_;
+        }
+
         // Skip events from app's own excluded directories
         // (path is inside an exclusion directory)
         bool excluded = false;
-        for (const auto& ep : watcher->exclusionPaths_) {
+        for (const auto& ep : exclusions) {
             if (pathStr.size() >= ep.size() && pathStr.compare(0, ep.size(), ep) == 0
                 && (pathStr.size() == ep.size() || pathStr[ep.size()] == '/')) {
                 excluded = true;
@@ -198,7 +230,7 @@ void FileSystemWatcher::fseventsCallback(
         // ".../Library/Caches/com.maceverything.app").
         if (flags & kFSEventStreamEventFlagMustScanSubDirs) {
             bool isExcludedAncestor = false;
-            for (const auto& ep : watcher->exclusionPaths_) {
+            for (const auto& ep : exclusions) {
                 if (ep.size() > pathStr.size() &&
                     ep.compare(0, pathStr.size(), pathStr) == 0) {
                     isExcludedAncestor = true;

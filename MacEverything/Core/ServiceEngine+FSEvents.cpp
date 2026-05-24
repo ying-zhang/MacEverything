@@ -203,6 +203,7 @@ void ServiceEngine::stopMonitoring() {
         std::lock_guard<std::mutex> lock(pendingRescanMutex_);
         if (rescanDebounceTimer_) {
             dispatch_source_cancel(rescanDebounceTimer_);
+            dispatch_release(rescanDebounceTimer_);
             rescanDebounceTimer_ = nullptr;
         }
         pendingRescanPaths_.clear();
@@ -234,6 +235,7 @@ void ServiceEngine::scheduleRescanForPaths(const std::vector<std::string>& paths
 
     if (rescanDebounceTimer_) {
         dispatch_source_cancel(rescanDebounceTimer_);
+        dispatch_release(rescanDebounceTimer_);
         rescanDebounceTimer_ = nullptr;
     }
 
@@ -268,6 +270,7 @@ void ServiceEngine::flushPendingRescans() {
 
         if (rescanDebounceTimer_) {
             dispatch_source_cancel(rescanDebounceTimer_);
+            dispatch_release(rescanDebounceTimer_);
             rescanDebounceTimer_ = nullptr;
         }
     }

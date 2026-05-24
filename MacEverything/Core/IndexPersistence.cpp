@@ -20,6 +20,7 @@ IndexPersistence::IndexPersistence(std::shared_ptr<SearchEngine> engine,
 {}
 
 IndexPersistence::~IndexPersistence() {
+    alive_->store(false, std::memory_order_release);
     stopTimer();
     if (engine_) engine_->detachWAL();
     {
@@ -348,6 +349,7 @@ void IndexPersistence::rescheduleTimer(double intervalSec) {
 
 void IndexPersistence::startAutoCompaction(double intervalSec, std::shared_ptr<FileSystemWatcher> watcher) {
     stopTimer();
+    alive_ = std::make_shared<std::atomic<bool>>(true);
 
     currentIntervalSec_ = intervalSec;
     timerQueue_ = dispatch_queue_create("com.maceverything.index.compaction", DISPATCH_QUEUE_SERIAL);
@@ -360,7 +362,9 @@ void IndexPersistence::startAutoCompaction(double intervalSec, std::shared_ptr<F
                               30 * NSEC_PER_SEC);
 
     auto* self = this;
+    auto alive = alive_;
     dispatch_source_set_event_handler(timer_, ^{
+        if (!alive->load(std::memory_order_acquire)) return;
         uint64_t eventId = watcher ? watcher->getLastEventId() : 0;
         self->flush(eventId);
         double newInterval = self->computeAdaptiveInterval();

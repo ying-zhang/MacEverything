@@ -852,7 +852,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             // Intersect CJK bigram posting lists
             std::vector<const std::vector<uint32_t>*> postings;
             bool cjkAllFound = true;
-            for (uint32_t bg : cjkBigrams) {
+            for (uint64_t bg : cjkBigrams) {
                 auto it = cjkBigramIndex_.find(bg);
                 if (it == cjkBigramIndex_.end()) { cjkAllFound = false; break; }
                 postings.push_back(&it->second);

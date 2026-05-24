@@ -12,6 +12,8 @@
 #include <chrono>
 #include <algorithm>
 #include <cstdlib>
+#include <cerrno>
+#include <thread>
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -154,6 +156,13 @@ void HttpServer::stop() {
     if (acceptThread_.joinable()) {
         acceptThread_.join();
     }
+    {
+        std::lock_guard<std::mutex> lock(connectionThreadsMutex_);
+        for (auto& thread : connectionThreads_) {
+            if (thread.joinable()) thread.join();
+        }
+        connectionThreads_.clear();
+    }
 
     LOG_INFO("HttpServer", "Stopped");
 }
@@ -190,7 +199,10 @@ void HttpServer::acceptLoop() {
         int clientFd = ::accept(serverFd_, nullptr, nullptr);
         if (clientFd < 0) continue;
 
-        handleConnection(clientFd);
+        std::lock_guard<std::mutex> lock(connectionThreadsMutex_);
+        connectionThreads_.emplace_back([this, clientFd] {
+            handleConnection(clientFd);
+        });
     }
 }
 
@@ -218,14 +230,22 @@ void HttpServer::handleConnection(int clientFd) {
         while (valStart < raw.size() && raw[valStart] == ' ') ++valStart;
         size_t valEnd = raw.find("\r\n", valStart);
         if (valEnd != std::string::npos) {
-            size_t contentLength = std::stoul(raw.substr(valStart, valEnd - valStart));
+            std::string cl = raw.substr(valStart, valEnd - valStart);
+            char* end = nullptr;
+            errno = 0;
+            unsigned long parsed = std::strtoul(cl.c_str(), &end, 10);
+            if (errno != 0 || end == cl.c_str() || *end != '\0' || parsed > 65536UL) {
+                std::string response = errorResponse(413, "Invalid or too large Content-Length");
+                ::send(clientFd, response.data(), response.size(), 0);
+                ::close(clientFd);
+                return;
+            }
+            size_t contentLength = static_cast<size_t>(parsed);
             size_t headerEnd = raw.find("\r\n\r\n");
             if (headerEnd != std::string::npos) {
                 size_t bodyStart = headerEnd + 4;
                 size_t bodyHave = raw.size() - bodyStart;
-                // Read remaining body bytes if needed (up to 64KB limit)
-                size_t needed = (contentLength > 65536) ? 0 : contentLength;
-                while (bodyHave < needed) {
+                while (bodyHave < contentLength) {
                     char extra[4096];
                     ssize_t m = ::recv(clientFd, extra, sizeof(extra), 0);
                     if (m <= 0) break;

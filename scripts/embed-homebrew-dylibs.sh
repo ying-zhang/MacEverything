@@ -25,6 +25,8 @@ fi
 
 declare -a QUEUE=()
 for candidate in \
+  "${RE2_DEPENDENCY_ROOT:-}/lib/libre2"*.dylib \
+  "${RE2_DEPENDENCY_ROOT:-}/lib/libabsl"*.dylib \
   "${SRCROOT:-}/third_party/re2/lib/libre2"*.dylib \
   "${SRCROOT:-}/third_party/re2/lib/libabsl"*.dylib \
   /opt/homebrew/opt/re2/lib/libre2*.dylib \
@@ -44,6 +46,7 @@ COPIED_NAMES=""
 is_embeddable_dependency() {
   local dep="$1"
   [[ "$dep" == "$FRAMEWORKS_DIR"/* ]] ||
+    [[ -n "${RE2_DEPENDENCY_ROOT:-}" && "$dep" == "$RE2_DEPENDENCY_ROOT/lib/"* ]] ||
     [[ -n "${SRCROOT:-}" && "$dep" == "$SRCROOT/third_party/re2/lib/"* ]] ||
     [[ "$dep" == /opt/homebrew/* || "$dep" == /usr/local/* ]]
 }
@@ -89,15 +92,15 @@ rewrite_binary_references() {
       install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$path"
     fi
   done < <(otool -L "$path" | awk 'NR > 1 { print $1 }')
-
-  codesign --force --sign - "$path" >/dev/null
 }
 
 rewrite_dylib_references() {
   local dylib
-  for dylib in "$FRAMEWORKS_DIR"/*.dylib; do
+  for dylib in "$FRAMEWORKS_DIR"/*.dylib "$APP_PATH/Contents/MacOS"/*.dylib; do
     [[ -f "$dylib" ]] || continue
-    install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib"
+    if [[ "$dylib" == "$FRAMEWORKS_DIR/"* ]]; then
+      install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib"
+    fi
 
     while IFS= read -r dep; do
       if is_embeddable_dependency "$dep"; then
@@ -114,6 +117,11 @@ for binary in "${BINARIES[@]}"; do
   rewrite_binary_references "$binary"
 done
 rewrite_dylib_references
+for binary in "${BINARIES[@]}"; do
+  path="$APP_PATH/Contents/MacOS/$binary"
+  [[ -f "$path" ]] || continue
+  codesign --force --sign - "$path" >/dev/null
+done
 
 echo "Embedded Homebrew dylibs in $FRAMEWORKS_DIR:"
 find "$FRAMEWORKS_DIR" -maxdepth 1 -name '*.dylib' -print | sort

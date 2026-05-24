@@ -464,8 +464,8 @@ private:
     // Extension index: extension string -> sorted record indices (files only)
     std::unordered_map<std::string, std::vector<uint32_t>> extensionIndex_;
 
-    // CJK character-level bigram index: packed bigram key -> sorted record indices
-    std::unordered_map<uint32_t, std::vector<uint32_t>> cjkBigramIndex_;
+    // CJK character-level bigram index: packed codepoint pair -> sorted record indices
+    std::unordered_map<uint64_t, std::vector<uint32_t>> cjkBigramIndex_;
 
     /// Intern a directory path into pathPool_. Returns pathPool_ index.
     /// Deduplicates via pathLookup_. Must be called under unique_lock.
@@ -646,10 +646,10 @@ private:
 
     /// CJK character-level bigram index helpers
     static bool isCJKCodepoint(uint32_t cp);
-    static std::vector<uint32_t> extractCJKBigrams(const char* data, uint16_t len);
+    static std::vector<uint64_t> extractCJKBigrams(const char* data, uint16_t len);
     void addCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     void removeCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
-    static std::unordered_map<uint32_t, std::vector<uint32_t>> buildCJKBigramIndexFromData(
+    static std::unordered_map<uint64_t, std::vector<uint32_t>> buildCJKBigramIndexFromData(
         const std::vector<uint8_t>& types, const StringPool& namePool);
 
     /// Build path trigram index from pathPool (lowercases on-the-fly)

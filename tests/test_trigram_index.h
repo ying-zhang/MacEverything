@@ -147,6 +147,22 @@ static void runTrigramIndexTests() {
         check(res.empty(), "No-match 'xyz_nowhere': trigram index returns empty");
     }
 
+    // -- Test 6b: CJK Extension B bigrams do not collide with BMP CJK bigrams --
+    std::cout << "\n  --- CJK bigram wide codepoint keys ---\n";
+    {
+        SearchEngine engine;
+        std::vector<FileRecord> records;
+        records.push_back({"𠀀一.txt", "/tmp", 1, 100, 1000});
+        records.push_back({"一一.txt", "/tmp", 1, 200, 2000});
+        engine.loadRecords(std::move(records));
+
+        auto res = engine.query("𠀀一");
+        check(res.size() == 1, "CJK Extension B query matches only exact wide-codepoint bigram");
+        if (res.size() == 1) {
+            check(engine.getRecord(res[0]).name == "𠀀一.txt", "CJK Extension B query returns correct file");
+        }
+    }
+
     // -- Test 7: Trigram search performance comparison --
     std::cout << "\n  --- Trigram search performance ---\n";
     if (gSkipPerformanceTests) {
