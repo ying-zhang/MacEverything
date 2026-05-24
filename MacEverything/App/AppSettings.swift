@@ -19,6 +19,7 @@ enum StartupDisplayMode: String, CaseIterable, Codable, Identifiable {
 enum SortField: String, CaseIterable, Codable, Identifiable {
     case relevance
     case name
+    case ext
     case path
     case size
     case modified
@@ -29,6 +30,7 @@ enum SortField: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .relevance: return L10n.tr("Relevance")
         case .name: return L10n.tr("Name")
+        case .ext: return L10n.tr("Extension")
         case .path: return L10n.tr("Path")
         case .size: return L10n.tr("Size")
         case .modified: return L10n.tr("Modified Date")
@@ -87,6 +89,7 @@ struct AppSettingsSnapshot {
     var indexAppBundleContents: Bool
     var refreshMode: RefreshMode
     var startupDisplayMode: StartupDisplayMode
+    var autoResetQuickFilterOnEmptyResults: Bool
     var searchAsYouType: Bool
     var defaultRegex: Bool
     var defaultCaseSensitive: Bool
@@ -106,6 +109,7 @@ struct AppSettingsSnapshot {
     var searchHistoryEnabled: Bool
     var searchHistoryLimit: Int
     var showPath: Bool
+    var showExtension: Bool
     var showSize: Bool
     var showModifiedDate: Bool
     var showContentSnippets: Bool
@@ -132,6 +136,7 @@ final class AppSettings: ObservableObject {
         static let indexAppBundleContents = "settings.indexAppBundleContents"
         static let refreshMode = "settings.refreshMode"
         static let startupDisplayMode = "settings.startupDisplayMode"
+        static let autoResetQuickFilterOnEmptyResults = "settings.autoResetQuickFilterOnEmptyResults"
         static let searchAsYouType = "settings.searchAsYouType"
         static let defaultRegex = "settings.defaultRegex"
         static let defaultCaseSensitive = "settings.defaultCaseSensitive"
@@ -151,6 +156,7 @@ final class AppSettings: ObservableObject {
         static let searchHistoryEnabled = "settings.searchHistoryEnabled"
         static let searchHistoryLimit = "settings.searchHistoryLimit"
         static let showPath = "settings.showPath"
+        static let showExtension = "settings.showExtension"
         static let showSize = "settings.showSize"
         static let showModifiedDate = "settings.showModifiedDate"
         static let showContentSnippets = "settings.showContentSnippets"
@@ -174,6 +180,7 @@ final class AppSettings: ObservableObject {
     @Published var indexAppBundleContents: Bool { didSet { save(indexAppBundleContents, Key.indexAppBundleContents) } }
     @Published var refreshMode: RefreshMode { didSet { save(refreshMode.rawValue, Key.refreshMode) } }
     @Published var startupDisplayMode: StartupDisplayMode { didSet { save(startupDisplayMode.rawValue, Key.startupDisplayMode) } }
+    @Published var autoResetQuickFilterOnEmptyResults: Bool { didSet { save(autoResetQuickFilterOnEmptyResults, Key.autoResetQuickFilterOnEmptyResults) } }
     @Published var searchAsYouType: Bool { didSet { save(searchAsYouType, Key.searchAsYouType) } }
     @Published var defaultRegex: Bool { didSet { save(defaultRegex, Key.defaultRegex) } }
     @Published var defaultCaseSensitive: Bool { didSet { save(defaultCaseSensitive, Key.defaultCaseSensitive) } }
@@ -211,6 +218,7 @@ final class AppSettings: ObservableObject {
         }
     }
     @Published var showPath: Bool { didSet { save(showPath, Key.showPath) } }
+    @Published var showExtension: Bool { didSet { save(showExtension, Key.showExtension) } }
     @Published var showSize: Bool { didSet { save(showSize, Key.showSize) } }
     @Published var showModifiedDate: Bool { didSet { save(showModifiedDate, Key.showModifiedDate) } }
     @Published var showContentSnippets: Bool { didSet { save(showContentSnippets, Key.showContentSnippets) } }
@@ -244,6 +252,7 @@ final class AppSettings: ObservableObject {
         indexAppBundleContents = defaults.object(forKey: Key.indexAppBundleContents) as? Bool ?? false
         refreshMode = RefreshMode(rawValue: defaults.string(forKey: Key.refreshMode) ?? "") ?? .realtime
         startupDisplayMode = StartupDisplayMode(rawValue: defaults.string(forKey: Key.startupDisplayMode) ?? "") ?? .recent
+        autoResetQuickFilterOnEmptyResults = defaults.object(forKey: Key.autoResetQuickFilterOnEmptyResults) as? Bool ?? true
         searchAsYouType = defaults.object(forKey: Key.searchAsYouType) as? Bool ?? true
         defaultRegex = defaults.object(forKey: Key.defaultRegex) as? Bool ?? false
         defaultCaseSensitive = defaults.object(forKey: Key.defaultCaseSensitive) as? Bool ?? false
@@ -263,6 +272,7 @@ final class AppSettings: ObservableObject {
         searchHistoryEnabled = defaults.object(forKey: Key.searchHistoryEnabled) as? Bool ?? true
         searchHistoryLimit = defaults.object(forKey: Key.searchHistoryLimit) as? Int ?? 200
         showPath = defaults.object(forKey: Key.showPath) as? Bool ?? true
+        showExtension = defaults.object(forKey: Key.showExtension) as? Bool ?? true
         showSize = defaults.object(forKey: Key.showSize) as? Bool ?? true
         showModifiedDate = defaults.object(forKey: Key.showModifiedDate) as? Bool ?? false
         showContentSnippets = defaults.object(forKey: Key.showContentSnippets) as? Bool ?? true
@@ -289,6 +299,7 @@ final class AppSettings: ObservableObject {
             indexAppBundleContents: indexAppBundleContents,
             refreshMode: refreshMode,
             startupDisplayMode: startupDisplayMode,
+            autoResetQuickFilterOnEmptyResults: autoResetQuickFilterOnEmptyResults,
             searchAsYouType: searchAsYouType,
             defaultRegex: defaultRegex,
             defaultCaseSensitive: defaultCaseSensitive,
@@ -308,6 +319,7 @@ final class AppSettings: ObservableObject {
             searchHistoryEnabled: searchHistoryEnabled,
             searchHistoryLimit: clamped(searchHistoryLimit, 0, 5000),
             showPath: showPath,
+            showExtension: showExtension,
             showSize: showSize,
             showModifiedDate: showModifiedDate,
             showContentSnippets: showContentSnippets,

@@ -334,6 +334,8 @@ struct GeneralSettingsView: View {
             }
             .pickerStyle(.segmented)
 
+            Toggle(L10n.tr("Reset quick filter when no results are found"), isOn: $settings.autoResetQuickFilterOnEmptyResults)
+
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
 
             Picker(L10n.tr("Enter Key Action"), selection: $settings.enterKeyAction) {
@@ -414,6 +416,7 @@ struct GeneralSettingsView: View {
     private var resultsSection: some View {
         SettingsSection(title: L10n.tr("Results View")) {
             Toggle(L10n.tr("Show path"), isOn: $settings.showPath)
+            Toggle(L10n.tr("Show extension"), isOn: $settings.showExtension)
             Toggle(L10n.tr("Show size"), isOn: $settings.showSize)
             Toggle(L10n.tr("Show modified date"), isOn: $settings.showModifiedDate)
             Toggle(L10n.tr("Show content snippets"), isOn: $settings.showContentSnippets)

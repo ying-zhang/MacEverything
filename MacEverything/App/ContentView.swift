@@ -11,6 +11,7 @@ struct ContentView: View {
     @State private var hostWindow: NSWindow?
     @FocusState private var isSearchFieldFocused: Bool
     @State private var resultListFocused = false
+    @State private var showPathFilter = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -100,6 +101,16 @@ struct ContentView: View {
             )
             .padding(.horizontal, 8)
             .padding(.top, 8)
+
+            if !viewModel.isContentSearch {
+                QuickFilterBar(
+                    quickFilter: $viewModel.quickFilter,
+                    pathFilter: $viewModel.pathFilter,
+                    showPathFilter: $showPathFilter
+                )
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
+            }
 
             Divider()
 
@@ -289,10 +300,13 @@ struct ContentView: View {
                                 ResultRow(
                                     item: item,
                                     hints: viewModel.highlightHints,
-                                    isSelected: viewModel.selectedItemID == item.id,
+                                    isSelected: viewModel.selectedItemIDs.contains(item.id),
                                     requestedRename: viewModel.renameRequestedItemID == item.id,
-                                    onSelect: {
-                                        viewModel.select(item)
+                                    selectedItems: viewModel.selectedItemsInDisplayOrder(),
+                                    onSelect: { extending, toggling in
+                                        viewModel.select(item, extending: extending, toggling: toggling)
+                                        resultListFocused = true
+                                        isSearchFieldFocused = false
                                     },
                                     onRenameComplete: {
                                         viewModel.renameRequestedItemID = nil
@@ -300,8 +314,10 @@ struct ContentView: View {
                                     onRenameSuccess: { oldID, newName in
                                         viewModel.updateItemName(oldID: oldID, newName: newName)
                                     },
-                                    onDelete: {
-                                        viewModel.removeItemFromResults(id: item.id)
+                                    onDeleteItems: { ids in
+                                        for id in ids {
+                                            viewModel.removeItemFromResults(id: id)
+                                        }
                                     }
                                 )
                                     .environmentObject(columnLayout)
@@ -379,6 +395,12 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .searchServiceDidRefresh)) { _ in
             viewModel.refreshForServiceUpdate()
+        }
+        .onChange(of: viewModel.quickFilter) {
+            viewModel.onQuickFilterChanged()
+        }
+        .onChange(of: viewModel.pathFilter) {
+            viewModel.onPathFilterChanged()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(true)
@@ -464,6 +486,7 @@ private struct ResultHeaderView: View {
         GeometryReader { proxy in
             let widths = columnLayout.resolvedWidths(
                 showPath: settings.showPath,
+                showExtension: settings.showExtension,
                 showSize: settings.showSize,
                 showModifiedDate: settings.showModifiedDate,
                 availableWidth: proxy.size.width
@@ -479,6 +502,13 @@ private struct ResultHeaderView: View {
                     columnButton(L10n.tr("Path"), field: .path, width: widths.path)
                         .resizableColumn(width: $columnLayout.pathWidth,
                                          range: ResultColumnLayout.pathWidthRange)
+                }
+
+                if settings.showExtension {
+                    columnSeparator
+                    columnButton(L10n.tr("Ext"), field: .ext, width: widths.ext)
+                        .resizableColumn(width: $columnLayout.extWidth,
+                                         range: ResultColumnLayout.extWidthRange)
                 }
 
                 if settings.showSize {
@@ -544,6 +574,74 @@ private struct ResultHeaderView: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct QuickFilterBar: View {
+    @Binding var quickFilter: QuickFilter
+    @Binding var pathFilter: String
+    @Binding var showPathFilter: Bool
+
+    var body: some View {
+        GeometryReader { proxy in
+            let showExpandedPathFilter = proxy.size.width >= 820 || showPathFilter || !pathFilter.isEmpty
+
+            HStack(spacing: 8) {
+                Text(L10n.tr("Quick filter"))
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
+                Picker("", selection: $quickFilter) {
+                    ForEach(QuickFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help(L10n.tr("Quick filters"))
+
+                Button {
+                    showPathFilter.toggle()
+                } label: {
+                    Image(systemName: showExpandedPathFilter ? "folder.fill" : "folder")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.tr("Path filter"))
+
+                if showExpandedPathFilter {
+                    HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundColor(.secondary)
+                        TextField(L10n.tr("Filter by path..."), text: $pathFilter)
+                            .textFieldStyle(.plain)
+                        if !pathFilter.isEmpty {
+                            Button {
+                                pathFilter = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.7))
+                    )
+                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 360)
+                }
+            }
+        }
+        .frame(height: 30)
     }
 }
 

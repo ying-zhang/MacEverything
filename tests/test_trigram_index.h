@@ -149,7 +149,9 @@ static void runTrigramIndexTests() {
 
     // -- Test 7: Trigram search performance comparison --
     std::cout << "\n  --- Trigram search performance ---\n";
-    {
+    if (gSkipPerformanceTests) {
+        std::cout << "    [SKIP] Trigram performance benchmark skipped in --fast mode\n";
+    } else {
         SearchEngine engine;
         std::vector<FileRecord> records;
         // Build 100k records with varied names
@@ -266,7 +268,9 @@ static void runTrigramIndexTests() {
 
     // -- Test 10: removeByPathPrefix benchmark (single-pass vs old double-lookup) --
     std::cout << "\n  --- removeByPathPrefix benchmark ---\n";
-    {
+    if (gSkipPerformanceTests) {
+        std::cout << "    [SKIP] removeByPathPrefix benchmark skipped in --fast mode\n";
+    } else {
         // Build a large dataset: 50K records under 10 different prefixes
         const int recordsPerPrefix = 5000;
         const int numPrefixes = 10;
@@ -424,32 +428,36 @@ static void runTrigramIndexTests() {
         std::cout << "    '*data*': " << res5.size() << " results, path=" << timing5.searchPath
                   << ", candidates=" << timing5.candidates << "\n";
 
-        // Performance: glob with trigram should be much faster than without
-        auto t0 = std::chrono::steady_clock::now();
-        for (int run = 0; run < 100; run++) {
-            auto res = engine.query("*.cpp", 100, true);
-            (void)res;
-        }
-        auto t1 = std::chrono::steady_clock::now();
-        double trigramGlobTime = std::chrono::duration<double>(t1 - t0).count() * 1000;
+        if (gSkipPerformanceTests) {
+            std::cout << "    [SKIP] Compiled glob performance comparison skipped in --fast mode\n";
+        } else {
+            // Performance: glob with trigram should be much faster than without
+            auto t0 = std::chrono::steady_clock::now();
+            for (int run = 0; run < 100; run++) {
+                auto res = engine.query("*.cpp", 100, true);
+                (void)res;
+            }
+            auto t1 = std::chrono::steady_clock::now();
+            double trigramGlobTime = std::chrono::duration<double>(t1 - t0).count() * 1000;
 
-        t0 = std::chrono::steady_clock::now();
-        for (int run = 0; run < 100; run++) {
-            auto res = engine.query("*.cpp", 100, false);  // force no-trigram
-            (void)res;
-        }
-        t1 = std::chrono::steady_clock::now();
-        double linearGlobTime = std::chrono::duration<double>(t1 - t0).count() * 1000;
+            t0 = std::chrono::steady_clock::now();
+            for (int run = 0; run < 100; run++) {
+                auto res = engine.query("*.cpp", 100, false);  // force no-trigram
+                (void)res;
+            }
+            t1 = std::chrono::steady_clock::now();
+            double linearGlobTime = std::chrono::duration<double>(t1 - t0).count() * 1000;
 
-        std::cout << "    100x '*.cpp' (trigram glob): " << std::fixed << std::setprecision(2)
-                  << trigramGlobTime << "ms (" << trigramGlobTime / 100 << "ms/query)\n";
-        std::cout << "    100x '*.cpp' (linear glob):  " << std::fixed << std::setprecision(2)
-                  << linearGlobTime << "ms (" << linearGlobTime / 100 << "ms/query)\n";
-        if (trigramGlobTime < linearGlobTime) {
-            std::cout << "    Glob trigram speedup: " << std::fixed << std::setprecision(1)
-                      << linearGlobTime / trigramGlobTime << "x\n";
+            std::cout << "    100x '*.cpp' (trigram glob): " << std::fixed << std::setprecision(2)
+                      << trigramGlobTime << "ms (" << trigramGlobTime / 100 << "ms/query)\n";
+            std::cout << "    100x '*.cpp' (linear glob):  " << std::fixed << std::setprecision(2)
+                      << linearGlobTime << "ms (" << linearGlobTime / 100 << "ms/query)\n";
+            if (trigramGlobTime < linearGlobTime) {
+                std::cout << "    Glob trigram speedup: " << std::fixed << std::setprecision(1)
+                          << linearGlobTime / trigramGlobTime << "x\n";
+            }
+            check(trigramGlobTime > 0 && linearGlobTime > 0, "Compiled glob + trigram benchmark produced timing data");
         }
-        check(trigramGlobTime > 0 && linearGlobTime > 0, "Compiled glob + trigram benchmark produced timing data");
     }
 
     // -- Test 13: Multi-segment glob + trigram pre-filtering --
@@ -573,7 +581,9 @@ static void runTrigramIndexTests() {
         }
 
         // Performance: multi-segment trigram should be faster than linear for selective patterns
-        {
+        if (gSkipPerformanceTests) {
+            std::cout << "    [SKIP] Multi-segment glob performance comparison skipped in --fast mode\n";
+        } else {
             auto t0 = std::chrono::steady_clock::now();
             for (int run = 0; run < 100; run++) {
                 auto res = engine.query("*source*.cpp", 100, true);

@@ -84,6 +84,11 @@ static void runMutationTests() {
 
     // ── Mutation performance ──
     std::cout << "\n  --- Mutation Performance ---\n";
+    if (gSkipPerformanceTests) {
+        std::cout << "    [SKIP] Mutation performance benchmark skipped in --fast mode\n\n";
+        return;
+    }
+
     SearchEngine perfEngine;
     {
         std::vector<FileRecord> bulk;

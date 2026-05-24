@@ -1,7 +1,7 @@
 // MacEverything — Full Test Suite + Performance Report
 // Compile: clang++ -std=c++20 -O2 -framework CoreServices MacEverything/Core/*.cpp test_all.cpp -o test_all
 // Run:     ./test_all [root_path]            (all tests, default root: /)
-//          ./test_all --fast                 (fast unit tests only: 3, 3b-3e, 5, 7-14, 15)
+//          ./test_all --fast                 (local fast tests; skips benchmarks/stress tests)
 //          ./test_all --slow [root_path]     (slow integration tests: 1, 4, 6)
 //          ./test_all --part 3 --part 3b     (specific parts)
 
@@ -130,7 +130,7 @@ namespace fs = std::filesystem;
 
 static void printUsage(const char* prog) {
     std::cout << "Usage: " << prog << " [options] [root_path]\n";
-    std::cout << "  --fast             Run fast unit tests only (3, 3b-3e, 5, 7-7f, 8-22)\n";
+    std::cout << "  --fast             Run local fast tests, skipping benchmarks/stress/latency tests\n";
     std::cout << "  --slow             Run slow integration tests only (1, 4, 6)\n";
     std::cout << "  --bench            Run performance benchmarks only (44, 46)\n";
     std::cout << "  --part <id>        Run specific part (can be repeated)\n";
@@ -204,7 +204,8 @@ int main(int argc, char* argv[]) {
             return 0;
         } else if (arg == "--fast") {
             explicitSelection = true;
-            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "5", "7", "7b", "7c", "7d", "7e", "7f", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77"});
+            gSkipPerformanceTests = true;
+            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77"});
         } else if (arg == "--bench") {
             explicitSelection = true;
             selectedParts.insert({"44", "46"});

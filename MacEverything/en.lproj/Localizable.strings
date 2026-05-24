@@ -54,6 +54,7 @@
 "Open Settings" = "Open Settings";
 "Open" = "Open";
 "Reveal in Finder" = "Reveal in Finder";
+"Open in Finder" = "Open in Finder";
 "Quick Look" = "Quick Look";
 "Rename" = "Rename";
 "Rename Failed" = "Rename Failed";
@@ -143,6 +144,7 @@
 "Search Defaults" = "Search Defaults";
 "Search Options" = "Search Options";
 "Startup Results" = "Startup Results";
+"Reset quick filter when no results are found" = "Reset quick filter when no results are found";
 "Empty List" = "Empty List";
 "Recent Changes" = "Recent Changes";
 "Search as you type" = "Search as you type";
@@ -161,6 +163,8 @@
 "Sort Results By" = "Sort Results By";
 "Relevance" = "Relevance";
 "Name" = "Name";
+"Extension" = "Extension";
+"Ext" = "Ext";
 "Path" = "Path";
 "Size" = "Size";
 "Modified Date" = "Modified Date";
@@ -171,6 +175,7 @@
 "Clear Search History" = "Clear Search History";
 "Results View" = "Results View";
 "Show path" = "Show path";
+"Show extension" = "Show extension";
 "Show size" = "Show size";
 "Show modified date" = "Show modified date";
 "Show content snippets" = "Show content snippets";
@@ -218,6 +223,18 @@
 "Exactly one character" = "Exactly one character";
 "Files ending with .txt" = "Files ending with .txt";
 "Files starting with test" = "Files starting with test";
+"All" = "All";
+"Files" = "Files";
+"Folders" = "Folders";
+"Apps" = "Apps";
+"Docs" = "Docs";
+"Images" = "Images";
+"Code" = "Code";
+"Archives" = "Archives";
+"Quick filters" = "Quick filters";
+"Quick filter" = "Quick filter";
+"Path filter" = "Path filter";
+"Filter by path..." = "Filter by path...";
 "Files containing keyword" = "Files containing keyword";
 "ECMAScript regex (case-insensitive)" = "ECMAScript regex (case-insensitive)";
 "Example: regex:^test  regex:\\.cpp$" = "Example: regex:^test  regex:\\.cpp$";

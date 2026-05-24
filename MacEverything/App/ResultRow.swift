@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Quartz
 
 /// Shared icon cache to avoid repeated NSWorkspace.shared.icon(forFile:) calls.
 /// - App bundles (type=5): cached by full path (each app has a unique icon)
@@ -60,10 +61,11 @@ struct ResultRow: View {
     let hints: [HighlightHint]
     let isSelected: Bool
     let requestedRename: Bool
-    let onSelect: () -> Void
+    let selectedItems: [FileItem]
+    let onSelect: (_ extending: Bool, _ toggling: Bool) -> Void
     var onRenameComplete: (() -> Void)?
     var onRenameSuccess: ((_ oldID: String, _ newName: String) -> Void)?
-    var onDelete: (() -> Void)?
+    var onDeleteItems: ((_ ids: [String]) -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
@@ -78,6 +80,7 @@ struct ResultRow: View {
         GeometryReader { proxy in
             rowContent(dense: dense, widths: columnLayout.resolvedWidths(
                 showPath: settings.showPath,
+                showExtension: settings.showExtension,
                 showSize: settings.showSize,
                 showModifiedDate: settings.showModifiedDate,
                 availableWidth: proxy.size.width
@@ -105,6 +108,7 @@ struct ResultRow: View {
                                     onCancel: { cancelRename() })
                 } else {
                     highlighted.nameText.lineLimit(1)
+                        .help(item.name)
                 }
             }
             .frame(width: widths.name, alignment: .leading)
@@ -112,7 +116,17 @@ struct ResultRow: View {
             if settings.showPath {
                 highlighted.pathText
                     .lineLimit(1)
+                    .help(item.path)
                     .frame(width: widths.path, alignment: .leading)
+            }
+
+            if settings.showExtension {
+                Text(item.fileExtension)
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .help(item.fileExtension)
+                    .frame(width: widths.ext, alignment: .leading)
             }
 
             if settings.showSize {
@@ -143,15 +157,18 @@ struct ResultRow: View {
             isHovered = hovering
         }
         .contextMenu {
+            let actionItems = contextActionItems
             Button(L10n.tr("Open")) { openFile(item) }
             Button(L10n.tr("Reveal in Finder")) { revealInFinder(item) }
-            Button(L10n.tr("Quick Look")) { quickLook(item) }
+            Button(L10n.tr("Open in Finder")) { openInFinder(item) }
+            Button(L10n.tr("Quick Look")) { quickLook(actionItems) }
             Button(L10n.tr("Rename")) { startRename() }
+                .disabled(actionItems.count != 1)
             Divider()
-            Button(L10n.tr("Copy File")) { copyFile(item) }
-            Button(L10n.tr("Copy Filename")) { copyFilename(item) }
+            Button(L10n.tr("Copy File")) { copyFiles(actionItems) }
+            Button(L10n.tr("Copy Filename")) { copyFilenames(actionItems) }
             Divider()
-            Button(L10n.tr("Move to Trash")) { trashFile(item) }
+            Button(L10n.tr("Move to Trash")) { trashFiles(actionItems) }
             Button(L10n.tr("Open in Terminal")) { openInTerminal(item) }
         }
         .onDrag {
@@ -160,7 +177,7 @@ struct ResultRow: View {
         }
         .onTapGesture(count: 2) {
             cancelRename()
-            onSelect()
+            onSelect(false, false)
             if NSEvent.modifierFlags.contains(.command) {
                 revealInFinder(item)
             } else {
@@ -169,15 +186,18 @@ struct ResultRow: View {
         }
         .onTapGesture(count: 1) {
             if NSEvent.modifierFlags.contains(.command) {
-                onSelect()
-                revealInFinder(item)
+                onSelect(false, true)
+                return
+            }
+            if NSEvent.modifierFlags.contains(.shift) {
+                onSelect(true, false)
                 return
             }
             if isSelected, let last = lastSelectTime, Date().timeIntervalSince(last) > 0.5 {
                 startRename()
             } else {
                 cancelRename()
-                onSelect()
+                onSelect(false, false)
             }
             lastSelectTime = Date()
         }
@@ -204,6 +224,12 @@ struct ResultRow: View {
         return isHovered ? Color.accentColor.opacity(0.12) : Color.clear
     }
 
+    private var contextActionItems: [FileItem] {
+        selectedItems.isEmpty || !selectedItems.contains(where: { $0.id == item.id })
+            ? [item]
+            : selectedItems
+    }
+
     private func formatSize(_ bytes: UInt64) -> String {
         ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
     }
@@ -226,8 +252,11 @@ struct ResultRow: View {
     }
 
     private func revealInFinder(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
-        NSWorkspace.shared.selectFile(fullPath, inFileViewerRootedAtPath: "")
+        NSWorkspace.shared.selectFile(item.fullPath, inFileViewerRootedAtPath: "")
+    }
+
+    private func openInFinder(_ item: FileItem) {
+        NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
     }
 
     private var isActivelyRenaming: Bool {
@@ -273,10 +302,10 @@ struct ResultRow: View {
         }
     }
 
-    private func copyFile(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
+    private func copyFiles(_ items: [FileItem]) {
+        guard !items.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([NSURL(fileURLWithPath: fullPath)])
+        NSPasteboard.general.writeObjects(items.map { NSURL(fileURLWithPath: $0.fullPath) })
     }
 
     private func copyFilename(_ item: FileItem) {
@@ -284,14 +313,25 @@ struct ResultRow: View {
         NSPasteboard.general.setString(item.name, forType: .string)
     }
 
-    private func trashFile(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
-        let url = URL(fileURLWithPath: fullPath)
-        do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            onDelete?()
-        } catch {
-            NSSound.beep()
+    private func copyFilenames(_ items: [FileItem]) {
+        guard !items.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(items.map(\.name).joined(separator: "\n"), forType: .string)
+    }
+
+    private func trashFiles(_ items: [FileItem]) {
+        guard !items.isEmpty else { return }
+        var removed: [String] = []
+        for item in items {
+            do {
+                try FileManager.default.trashItem(at: URL(fileURLWithPath: item.fullPath), resultingItemURL: nil)
+                removed.append(item.id)
+            } catch {
+                NSSound.beep()
+            }
+        }
+        if !removed.isEmpty {
+            onDeleteItems?(removed)
         }
     }
 
@@ -303,20 +343,15 @@ struct ResultRow: View {
         try? process.run()
     }
 
-    private func quickLook(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
-        process.arguments = ["-p", fullPath]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
+    private func quickLook(_ items: [FileItem]) {
+        QuickLookPreviewController.shared.open(urls: items.map { URL(fileURLWithPath: $0.fullPath) })
     }
 }
 
 struct ResolvedResultColumnWidths {
     let name: CGFloat
     let path: CGFloat
+    let ext: CGFloat
     let size: CGFloat
     let modified: CGFloat
 }
@@ -324,28 +359,32 @@ struct ResolvedResultColumnWidths {
 final class ResultColumnLayout: ObservableObject {
     static let nameWidthRange: ClosedRange<CGFloat> = 160...520
     static let pathWidthRange: ClosedRange<CGFloat> = 180...800
+    static let extWidthRange: ClosedRange<CGFloat> = 52...120
     static let sizeWidthRange: ClosedRange<CGFloat> = 72...150
     static let modifiedWidthRange: ClosedRange<CGFloat> = 120...240
 
     @Published var nameWidth: CGFloat = 260
     @Published var pathWidth: CGFloat = 260
+    @Published var extWidth: CGFloat = 68
     @Published var sizeWidth: CGFloat = 92
     @Published var modifiedWidth: CGFloat = 150
 
     func resolvedWidths(showPath: Bool,
+                        showExtension: Bool,
                         showSize: Bool,
                         showModifiedDate: Bool,
                         availableWidth: CGFloat) -> ResolvedResultColumnWidths {
-        let visibleColumns = 1 + (showPath ? 1 : 0) + (showSize ? 1 : 0) + (showModifiedDate ? 1 : 0)
+        let visibleColumns = 1 + (showPath ? 1 : 0) + (showExtension ? 1 : 0) + (showSize ? 1 : 0) + (showModifiedDate ? 1 : 0)
         let interColumnSpace = CGFloat(max(0, visibleColumns - 1)) * 10
         let contentWidth = max(0, availableWidth - 12)
-        let fixedTrailingWidth = (showSize ? sizeWidth : 0) + (showModifiedDate ? modifiedWidth : 0)
+        let fixedTrailingWidth = (showExtension ? extWidth : 0) + (showSize ? sizeWidth : 0) + (showModifiedDate ? modifiedWidth : 0)
 
         if showPath {
             let remainingPathWidth = contentWidth - interColumnSpace - nameWidth - fixedTrailingWidth
             return ResolvedResultColumnWidths(
                 name: nameWidth,
                 path: max(Self.pathWidthRange.lowerBound, remainingPathWidth),
+                ext: extWidth,
                 size: sizeWidth,
                 modified: modifiedWidth
             )
@@ -355,9 +394,36 @@ final class ResultColumnLayout: ObservableObject {
         return ResolvedResultColumnWidths(
             name: max(Self.nameWidthRange.lowerBound, max(nameWidth, remainingNameWidth)),
             path: pathWidth,
+            ext: extWidth,
             size: sizeWidth,
             modified: modifiedWidth
         )
+    }
+}
+
+@MainActor
+final class QuickLookPreviewController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    static let shared = QuickLookPreviewController()
+    private var urls: [URL] = []
+
+    func open(urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        self.urls = urls
+        let panel = QLPreviewPanel.shared()!
+        panel.dataSource = self
+        panel.delegate = self
+        panel.currentPreviewItemIndex = 0
+        panel.reloadData()
+        panel.makeKeyAndOrderFront(nil)
+    }
+
+    func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
+        urls.count
+    }
+
+    func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
+        guard urls.indices.contains(index) else { return nil }
+        return urls[index] as NSURL
     }
 }
 

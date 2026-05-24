@@ -25,6 +25,8 @@ fi
 
 declare -a QUEUE=()
 for candidate in \
+  "${SRCROOT:-}/third_party/re2/lib/libre2"*.dylib \
+  "${SRCROOT:-}/third_party/re2/lib/libabsl"*.dylib \
   /opt/homebrew/opt/re2/lib/libre2*.dylib \
   /usr/local/opt/re2/lib/libre2*.dylib; do
   if [[ -f "$candidate" ]]; then
@@ -41,7 +43,9 @@ COPIED_NAMES=""
 
 is_embeddable_dependency() {
   local dep="$1"
-  [[ "$dep" == /opt/homebrew/* || "$dep" == /usr/local/* ]]
+  [[ "$dep" == "$FRAMEWORKS_DIR"/* ]] ||
+    [[ -n "${SRCROOT:-}" && "$dep" == "$SRCROOT/third_party/re2/lib/"* ]] ||
+    [[ "$dep" == /opt/homebrew/* || "$dep" == /usr/local/* ]]
 }
 
 has_copied_name() {

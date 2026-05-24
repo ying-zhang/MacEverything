@@ -70,7 +70,9 @@ static void runPathTableTests() {
 
     // -- Test 5: Many unique paths --
     std::cout << "\n  --- Many unique paths ---\n";
-    {
+    if (gSkipPerformanceTests) {
+        std::cout << "    [SKIP] Large PathTable workload skipped in --fast mode\n";
+    } else {
         PathTable table;
         const uint32_t N = 10000;
         for (uint32_t i = 0; i < N; i++) {
