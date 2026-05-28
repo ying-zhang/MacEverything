@@ -60,6 +60,11 @@ jobs:
         run: |
           scripts/create-dmg.sh build/Release/MacEverything.app MacEverything.dmg MacEverything
 
+      - name: Collect bundled libre2 dylibs
+        run: |
+          mkdir -p libre2-dylibs
+          cp -a build/Release/MacEverything.app/Contents/Frameworks/libre2*.dylib libre2-dylibs/
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
@@ -67,3 +72,4 @@ jobs:
           path: |
             build/Release/MacEverything.app
             MacEverything.dmg
+            libre2-dylibs/
