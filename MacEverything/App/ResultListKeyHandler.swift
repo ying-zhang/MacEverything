@@ -40,8 +40,8 @@ struct ResultListKeyHandler: NSViewRepresentable {
             self.parent = parent
         }
 
-        var previewURL: URL? {
-            parent.viewModel.selectedFileURL()
+        var previewURLs: [URL] {
+            parent.viewModel.selectedFileURLs()
         }
 
         var isQLVisible: Bool {
@@ -49,7 +49,7 @@ struct ResultListKeyHandler: NSViewRepresentable {
         }
 
         func toggleQuickLook() {
-            guard QLPreviewPanel.sharedPreviewPanelExists() || parent.viewModel.selectedFileURL() != nil else { return }
+            guard QLPreviewPanel.sharedPreviewPanelExists() || !previewURLs.isEmpty else { return }
             let panel = QLPreviewPanel.shared()!
             if panel.isVisible {
                 panel.orderOut(nil)
@@ -74,11 +74,13 @@ struct ResultListKeyHandler: NSViewRepresentable {
         // MARK: - QLPreviewPanelDataSource
 
         func numberOfPreviewItems(in panel: QLPreviewPanel!) -> Int {
-            return previewURL != nil ? 1 : 0
+            return previewURLs.count
         }
 
         func previewPanel(_ panel: QLPreviewPanel!, previewItemAt index: Int) -> (any QLPreviewItem)! {
-            return previewURL as? NSURL
+            let urls = previewURLs
+            guard urls.indices.contains(index) else { return nil }
+            return urls[index] as NSURL
         }
 
         // MARK: - QLPreviewPanelDelegate

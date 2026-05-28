@@ -19,6 +19,7 @@ enum StartupDisplayMode: String, CaseIterable, Codable, Identifiable {
 enum SortField: String, CaseIterable, Codable, Identifiable {
     case relevance
     case name
+    case ext
     case path
     case size
     case modified
@@ -29,6 +30,7 @@ enum SortField: String, CaseIterable, Codable, Identifiable {
         switch self {
         case .relevance: return L10n.tr("Relevance")
         case .name: return L10n.tr("Name")
+        case .ext: return L10n.tr("Extension")
         case .path: return L10n.tr("Path")
         case .size: return L10n.tr("Size")
         case .modified: return L10n.tr("Modified Date")
@@ -106,6 +108,7 @@ struct AppSettingsSnapshot {
     var searchHistoryEnabled: Bool
     var searchHistoryLimit: Int
     var showPath: Bool
+    var showExtension: Bool
     var showSize: Bool
     var showModifiedDate: Bool
     var showContentSnippets: Bool
@@ -151,6 +154,7 @@ final class AppSettings: ObservableObject {
         static let searchHistoryEnabled = "settings.searchHistoryEnabled"
         static let searchHistoryLimit = "settings.searchHistoryLimit"
         static let showPath = "settings.showPath"
+        static let showExtension = "settings.showExtension"
         static let showSize = "settings.showSize"
         static let showModifiedDate = "settings.showModifiedDate"
         static let showContentSnippets = "settings.showContentSnippets"
@@ -211,6 +215,7 @@ final class AppSettings: ObservableObject {
         }
     }
     @Published var showPath: Bool { didSet { save(showPath, Key.showPath) } }
+    @Published var showExtension: Bool { didSet { save(showExtension, Key.showExtension) } }
     @Published var showSize: Bool { didSet { save(showSize, Key.showSize) } }
     @Published var showModifiedDate: Bool { didSet { save(showModifiedDate, Key.showModifiedDate) } }
     @Published var showContentSnippets: Bool { didSet { save(showContentSnippets, Key.showContentSnippets) } }
@@ -263,6 +268,7 @@ final class AppSettings: ObservableObject {
         searchHistoryEnabled = defaults.object(forKey: Key.searchHistoryEnabled) as? Bool ?? true
         searchHistoryLimit = defaults.object(forKey: Key.searchHistoryLimit) as? Int ?? 200
         showPath = defaults.object(forKey: Key.showPath) as? Bool ?? true
+        showExtension = defaults.object(forKey: Key.showExtension) as? Bool ?? true
         showSize = defaults.object(forKey: Key.showSize) as? Bool ?? true
         showModifiedDate = defaults.object(forKey: Key.showModifiedDate) as? Bool ?? false
         showContentSnippets = defaults.object(forKey: Key.showContentSnippets) as? Bool ?? true
@@ -308,6 +314,7 @@ final class AppSettings: ObservableObject {
             searchHistoryEnabled: searchHistoryEnabled,
             searchHistoryLimit: clamped(searchHistoryLimit, 0, 5000),
             showPath: showPath,
+            showExtension: showExtension,
             showSize: showSize,
             showModifiedDate: showModifiedDate,
             showContentSnippets: showContentSnippets,

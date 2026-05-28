@@ -54,6 +54,7 @@
 "Open Settings" = "打开设置";
 "Open" = "打开";
 "Reveal in Finder" = "在访达中显示";
+"Open in Finder" = "在访达中打开";
 "Quick Look" = "预览";
 "Rename" = "改名";
 "Rename Failed" = "改名失败";
@@ -161,6 +162,8 @@
 "Sort Results By" = "排序方式";
 "Relevance" = "相关性";
 "Name" = "名称";
+"Extension" = "扩展名";
+"Ext" = "扩展名";
 "Path" = "路径";
 "Size" = "大小";
 "Modified Date" = "修改日期";
@@ -171,6 +174,7 @@
 "Clear Search History" = "清空搜索历史";
 "Results View" = "结果视图";
 "Show path" = "显示路径";
+"Show extension" = "显示扩展名";
 "Show size" = "显示大小";
 "Show modified date" = "显示修改日期";
 "Show content snippets" = "显示内容片段";
@@ -218,6 +222,17 @@
 "Exactly one character" = "恰好一个字符";
 "Files ending with .txt" = "以 .txt 结尾的文件";
 "Files starting with test" = "以 test 开头的文件";
+"All" = "全部";
+"Files" = "文件";
+"Folders" = "文件夹";
+"Apps" = "应用";
+"Docs" = "文档";
+"Images" = "图片";
+"Code" = "代码";
+"Archives" = "压缩包";
+"Quick filters" = "快速筛选";
+"Path filter" = "路径筛选";
+"Filter by path..." = "按路径筛选...";
 "Files containing keyword" = "包含 keyword 的文件";
 "ECMAScript regex (case-insensitive)" = "ECMAScript 正则表达式（不区分大小写）";
 "Example: regex:^test  regex:\\.cpp$" = "示例：regex:^test  regex:\\.cpp$";

@@ -23,6 +23,7 @@ struct ContentResultRow: View {
                         .fontWeight(.medium)
                         .foregroundColor(.primary)
                         .lineLimit(1)
+                        .help(item.fileName)
 
                     if settings.showPath {
                         Text(directoryPath(item.filePath))
@@ -30,6 +31,7 @@ struct ContentResultRow: View {
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
+                            .help(directoryPath(item.filePath))
                     }
                 }
 
@@ -54,6 +56,7 @@ struct ContentResultRow: View {
         .contextMenu {
             Button(L10n.tr("Open")) { openFile() }
             Button(L10n.tr("Reveal in Finder")) { revealInFinder() }
+            Button(L10n.tr("Open in Finder")) { openInFinder() }
             Button(L10n.tr("Quick Look")) { quickLook() }
             Divider()
             Button(L10n.tr("Copy File")) { copyFile() }
@@ -101,6 +104,10 @@ struct ContentResultRow: View {
         NSWorkspace.shared.selectFile(item.filePath, inFileViewerRootedAtPath: "")
     }
 
+    private func openInFinder() {
+        NSWorkspace.shared.open(URL(fileURLWithPath: directoryPath(item.filePath)))
+    }
+
 
 
     private func copyFile() {
@@ -131,11 +138,6 @@ struct ContentResultRow: View {
     }
 
     private func quickLook() {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/qlmanage")
-        process.arguments = ["-p", item.filePath]
-        process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
-        try? process.run()
+        QuickLookPreviewController.shared.open(urls: [URL(fileURLWithPath: item.filePath)])
     }
 }

@@ -11,6 +11,56 @@ struct FileItem: Identifiable {
     let type: UInt8
     let size: UInt64
     let modTime: time_t
+
+    var fullPath: String {
+        (path as NSString).appendingPathComponent(name)
+    }
+
+    var fileExtension: String {
+        if type == 2 { return "" }
+        let ext = (name as NSString).pathExtension.lowercased()
+        if ext.isEmpty, name.hasSuffix(".app") { return "app" }
+        return ext
+    }
+}
+
+enum QuickFilter: String, CaseIterable, Identifiable {
+    case all
+    case files
+    case folders
+    case apps
+    case documents
+    case images
+    case code
+    case archives
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .all: return L10n.tr("All")
+        case .files: return L10n.tr("Files")
+        case .folders: return L10n.tr("Folders")
+        case .apps: return L10n.tr("Apps")
+        case .documents: return L10n.tr("Docs")
+        case .images: return L10n.tr("Images")
+        case .code: return L10n.tr("Code")
+        case .archives: return L10n.tr("Archives")
+        }
+    }
+
+    var queryToken: String? {
+        switch self {
+        case .all: return nil
+        case .files: return "type:file"
+        case .folders: return "type:folder"
+        case .apps: return "ext:app"
+        case .documents: return "doc:"
+        case .images: return "pic:"
+        case .code: return "ext:swift;h;m;mm;cpp;c;hpp;rs;go;py;js;ts;tsx;jsx;java;kt;rb;php;sh;zsh;json;xml;yml;yaml;toml;sql;css;scss;html"
+        case .archives: return "zip:"
+        }
+    }
 }
 
 struct ContentFileItem: Identifiable {
@@ -275,7 +325,11 @@ class SearchViewModel: ObservableObject {
     @Published var contentResults: [ContentFileItem] = []
     @Published var ghostSuggestion: String? = nil
     @Published var selectedItemID: String? = nil
+    @Published var selectedItemIDs: Set<String> = []
+    @Published var selectionAnchorID: String? = nil
     @Published var renameRequestedItemID: String? = nil
+    @Published var quickFilter: QuickFilter = .all
+    @Published var pathFilter: String = ""
 
     @Published var highlightHints: [HighlightHint] = []
 
@@ -360,7 +414,7 @@ class SearchViewModel: ObservableObject {
     }
 
     private func updateHighlightHints() {
-        let query = searchOptions.buildQuery(searchText)
+        let query = composedQuery(for: searchText)
         guard !query.isEmpty else { highlightHints = []; return }
         highlightHints = bridge.parseHighlightHints(query).map { HighlightHint(from: $0) }
     }
@@ -379,7 +433,7 @@ class SearchViewModel: ObservableObject {
         recentTask?.cancel()
         searchGeneration &+= 1
         isLoadingMore = false
-        selectedItemID = nil
+        clearSelection()
         updateHighlightHints()
         let text = searchText
 
@@ -428,7 +482,7 @@ class SearchViewModel: ObservableObject {
             sourceItems = []
             cachedItems = []
             loadedCount = 0
-            selectedItemID = nil
+            clearSelection()
 
             let keyword = String(text.dropFirst(7))
             contentKeyword = keyword // H-9: cache computed keyword
@@ -469,7 +523,7 @@ class SearchViewModel: ObservableObject {
         let pageSize = Self.pageSize
         let gen = searchGeneration
         let sessionId = self.sessionId
-        let query = searchOptions.buildQuery(keyword)
+        let query = composedQuery(for: keyword)
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
             // P-4: Use batch method — single engine lock, no NSNumber boxing
@@ -486,9 +540,8 @@ class SearchViewModel: ObservableObject {
                 guard let self, self.searchGeneration == gen else { return }
                 self.cachedResults = results
                 self.sourceItems = finalItems
-                self.cachedItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
-                self.totalMatches = finalItems.count
+                self.totalMatches = self.cachedItems.count
                 self.resultLimitReached = results.count >= Int(maxResults)
                 self.queryTimeMs = elapsed
             }
@@ -583,10 +636,10 @@ class SearchViewModel: ObservableObject {
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
                 self.cachedResults = results
-                self.sourceItems = finalItems
-                self.cachedItems = finalItems
+                let quickFilteredItems = self.filteredByQuickFilter(finalItems)
+                self.sourceItems = quickFilteredItems
                 self.applySortedResults(pageSize: Self.pageSize)
-                self.totalMatches = finalItems.count
+                self.totalMatches = self.cachedItems.count
                 self.resultLimitReached = false
                 self.showingRecent = true
                 self.queryTimeMs = 0
@@ -605,7 +658,54 @@ class SearchViewModel: ObservableObject {
     }
 
     func select(_ item: FileItem) {
+        selectedItemIDs = [item.id]
         selectedItemID = item.id
+        selectionAnchorID = item.id
+    }
+
+    func select(_ item: FileItem, extending: Bool, toggling: Bool) {
+        if extending, let anchorID = selectionAnchorID,
+           let anchorIndex = displayItems.firstIndex(where: { $0.id == anchorID }),
+           let targetIndex = displayItems.firstIndex(where: { $0.id == item.id }) {
+            let range = min(anchorIndex, targetIndex)...max(anchorIndex, targetIndex)
+            selectedItemIDs = Set(displayItems[range].map(\.id))
+            selectedItemID = item.id
+            return
+        }
+
+        if toggling {
+            if selectedItemIDs.contains(item.id) {
+                selectedItemIDs.remove(item.id)
+                selectedItemID = selectedItemIDs.first
+            } else {
+                selectedItemIDs.insert(item.id)
+                selectedItemID = item.id
+                selectionAnchorID = selectionAnchorID ?? item.id
+            }
+            return
+        }
+
+        select(item)
+    }
+
+    func prepareContextMenu(for item: FileItem) {
+        if !selectedItemIDs.contains(item.id) {
+            select(item)
+        } else {
+            selectedItemID = item.id
+        }
+    }
+
+    func selectedItemsInDisplayOrder() -> [FileItem] {
+        let ids = selectedItemIDs
+        guard !ids.isEmpty else { return [] }
+        return displayItems.filter { ids.contains($0.id) }
+    }
+
+    func clearSelection() {
+        selectedItemID = nil
+        selectedItemIDs = []
+        selectionAnchorID = nil
     }
 
     func selectNext() -> Bool {
@@ -613,9 +713,9 @@ class SearchViewModel: ObservableObject {
         if let currentID = selectedItemID,
            let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
             let nextIdx = min(idx + 1, displayItems.count - 1)
-            selectedItemID = displayItems[nextIdx].id
+            select(displayItems[nextIdx])
         } else {
-            selectedItemID = displayItems.first?.id
+            if let first = displayItems.first { select(first) }
         }
         return true
     }
@@ -625,9 +725,9 @@ class SearchViewModel: ObservableObject {
         if let currentID = selectedItemID,
            let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
             if idx == 0 { return false }
-            selectedItemID = displayItems[idx - 1].id
+            select(displayItems[idx - 1])
         } else {
-            selectedItemID = displayItems.last?.id
+            if let last = displayItems.last { select(last) }
         }
         return true
     }
@@ -647,7 +747,7 @@ class SearchViewModel: ObservableObject {
            let selected = displayItems.first(where: { $0.id == selectedItemID }) {
             openFile(selected)
         } else {
-            selectedItemID = first.id
+            select(first)
         }
         return true
     }
@@ -658,12 +758,28 @@ class SearchViewModel: ObservableObject {
     }
 
     func deleteSelectedFile() {
-        guard let id = selectedItemID,
-              let item = displayItems.first(where: { $0.id == id }) else { return }
-        let fullPath = item.path + "/" + item.name
+        let items = selectedItemsInDisplayOrder()
+        guard !items.isEmpty else { return }
+        var removed: [String] = []
+        for item in items {
+            let fullPath = item.fullPath
+            do {
+                try FileManager.default.trashItem(at: URL(fileURLWithPath: fullPath), resultingItemURL: nil)
+                removed.append(item.id)
+            } catch {
+                NSSound.beep()
+            }
+        }
+        for id in removed {
+            removeItemFromResults(id: id)
+        }
+    }
+
+    func deleteItem(_ item: FileItem) {
+        let fullPath = item.fullPath
         do {
             try FileManager.default.trashItem(at: URL(fileURLWithPath: fullPath), resultingItemURL: nil)
-            removeItemFromResults(id: id)
+            removeItemFromResults(id: item.id)
         } catch {
             NSSound.beep()
         }
@@ -681,6 +797,10 @@ class SearchViewModel: ObservableObject {
         totalMatches = max(0, totalMatches - 1)
         if selectedItemID == id {
             selectedItemID = nil
+        }
+        selectedItemIDs.remove(id)
+        if selectionAnchorID == id {
+            selectionAnchorID = selectedItemID
         }
     }
 
@@ -702,28 +822,35 @@ class SearchViewModel: ObservableObject {
         if selectedItemID == oldID {
             selectedItemID = newID
         }
+        if selectedItemIDs.remove(oldID) != nil, let newID {
+            selectedItemIDs.insert(newID)
+        }
+        if selectionAnchorID == oldID {
+            selectionAnchorID = newID
+        }
     }
 
     func copySelectedFile() {
-        guard let id = selectedItemID,
-              let item = displayItems.first(where: { $0.id == id }) else { return }
-        let fullPath = item.path + "/" + item.name
+        let items = selectedItemsInDisplayOrder()
+        guard !items.isEmpty else { return }
         NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects([NSURL(fileURLWithPath: fullPath)])
+        NSPasteboard.general.writeObjects(items.map { NSURL(fileURLWithPath: $0.fullPath) })
     }
 
-    func selectedFileURL() -> URL? {
-        guard let id = selectedItemID,
-              let item = displayItems.first(where: { $0.id == id }) else { return nil }
-        return URL(fileURLWithPath: item.path + "/" + item.name)
+    func selectedFileURLs() -> [URL] {
+        selectedItemsInDisplayOrder().map { URL(fileURLWithPath: $0.fullPath) }
     }
 
     private func applySortedResults(pageSize: Int) {
-        cachedItems = sorted(sourceItems)
+        cachedItems = sorted(filteredByPath(sourceItems))
         loadedCount = min(pageSize, cachedItems.count)
         displayItems = Array(cachedItems.prefix(loadedCount))
-        if let selectedItemID, !displayItems.contains(where: { $0.id == selectedItemID }) {
-            self.selectedItemID = nil
+        selectedItemIDs = selectedItemIDs.intersection(Set(displayItems.map(\.id)))
+        if let selectedItemID, !selectedItemIDs.contains(selectedItemID) {
+            self.selectedItemID = selectedItemIDs.first
+        }
+        if let selectionAnchorID, !selectedItemIDs.contains(selectionAnchorID) {
+            self.selectionAnchorID = selectedItemID
         }
     }
 
@@ -747,8 +874,10 @@ class SearchViewModel: ObservableObject {
                 result = .orderedSame
             case .name:
                 result = lhs.name.localizedCaseInsensitiveCompare(rhs.name)
+            case .ext:
+                result = lhs.fileExtension.localizedCaseInsensitiveCompare(rhs.fileExtension)
             case .path:
-                result = (lhs.path + "/" + lhs.name).localizedCaseInsensitiveCompare(rhs.path + "/" + rhs.name)
+                result = lhs.fullPath.localizedCaseInsensitiveCompare(rhs.fullPath)
             case .size:
                 result = lhs.size == rhs.size ? .orderedSame : (lhs.size < rhs.size ? .orderedAscending : .orderedDescending)
             case .modified:
@@ -765,7 +894,7 @@ class SearchViewModel: ObservableObject {
     private static let fileTypeApplication: UInt8 = 5
 
     private func openFile(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
+        let fullPath = item.fullPath
         if item.type == Self.fileTypeApplication {
             let url = URL(fileURLWithPath: fullPath)
             NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
@@ -807,6 +936,19 @@ class SearchViewModel: ObservableObject {
         } else if searchText.isEmpty && displayItems.isEmpty && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         }
+    }
+
+    func onQuickFilterChanged() {
+        guard service.scanComplete else { return }
+        if !isContentSearch {
+            rerunCurrentSearch()
+        }
+    }
+
+    func onPathFilterChanged() {
+        guard service.scanComplete else { return }
+        applySortedResults(pageSize: max(loadedCount, Self.pageSize))
+        totalMatches = cachedItems.count
     }
 
     var hasMoreResults: Bool {
@@ -914,5 +1056,58 @@ class SearchViewModel: ObservableObject {
             performSearch(searchText)
         }
         scheduleHistoryRecord()
+    }
+
+    private func composedQuery(for keyword: String) -> String {
+        var query = searchOptions.buildQuery(keyword)
+        if let token = quickFilter.queryToken {
+            query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            query = query.isEmpty ? token : "\(query) \(token)"
+        }
+        return query
+    }
+
+    private func filteredByPath(_ items: [FileItem]) -> [FileItem] {
+        let needle = pathFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return items }
+        return items.filter { $0.fullPath.localizedCaseInsensitiveContains(needle) }
+    }
+
+    private func filteredByQuickFilter(_ items: [FileItem]) -> [FileItem] {
+        switch quickFilter {
+        case .all:
+            return items
+        case .files:
+            return items.filter { $0.type == 1 || $0.type == 5 }
+        case .folders:
+            return items.filter { $0.type == 2 }
+        case .apps:
+            return items.filter { $0.fileExtension == "app" }
+        case .documents:
+            let exts: Set<String> = ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "rtf", "pages", "numbers", "key"]
+            return items.filter { exts.contains($0.fileExtension) }
+        case .images:
+            let exts: Set<String> = ["jpg", "jpeg", "png", "gif", "bmp", "tiff", "webp", "svg", "heic", "heif"]
+            return items.filter { exts.contains($0.fileExtension) }
+        case .code:
+            let exts: Set<String> = ["swift", "h", "m", "mm", "cpp", "c", "hpp", "rs", "go", "py", "js", "ts", "tsx", "jsx", "java", "kt", "rb", "php", "sh", "zsh", "json", "xml", "yml", "yaml", "toml", "sql", "css", "scss", "html"]
+            return items.filter { exts.contains($0.fileExtension) }
+        case .archives:
+            let exts: Set<String> = ["zip", "rar", "7z", "tar", "gz", "bz2", "xz", "tgz", "zst", "lz4"]
+            return items.filter { exts.contains($0.fileExtension) }
+        }
+    }
+
+    private func rerunCurrentSearch() {
+        searchTask?.cancel()
+        recentTask?.cancel()
+        searchGeneration &+= 1
+        bridge.cancelSession(sessionId)
+        updateHighlightHints()
+        if searchText.isEmpty {
+            loadRecentFiles()
+        } else {
+            performSearch(searchText)
+        }
     }
 }
