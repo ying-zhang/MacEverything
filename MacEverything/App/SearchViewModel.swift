@@ -391,6 +391,8 @@ class SearchViewModel: ObservableObject {
             sourceItems = []
             cachedItems = []
             loadedCount = 0
+            displayItems = []
+            showingRecent = false
             isContentSearch = false
             contentResults = []
             contentKeyword = "" // H-9: reset cached keyword
@@ -399,21 +401,15 @@ class SearchViewModel: ObservableObject {
             // Cancel any in-flight queries for this GUI session
             bridge.cancelSession(sessionId)
             if service.scanComplete {
-                // Slight delay so the stale query's dispatch_apply threads
-                // detect the generation change and exit before we compete for the thread pool
-                recentTask = Task { @MainActor [weak self] in
-                    try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
-                    guard !Task.isCancelled, let self else { return }
-                    if self.settings.snapshot.startupDisplayMode == .recent {
+                if settings.snapshot.startupDisplayMode == .recent {
+                    // Slight delay so the stale query's dispatch_apply threads
+                    // detect the generation change and exit before we compete for the thread pool
+                    recentTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 20_000_000) // 20ms
+                        guard !Task.isCancelled, let self else { return }
                         self.loadRecentFiles()
-                    } else {
-                        self.displayItems = []
-                        self.showingRecent = false
                     }
                 }
-            } else {
-                displayItems = []
-                showingRecent = false
             }
             return
         }
