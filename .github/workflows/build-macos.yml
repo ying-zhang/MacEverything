@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: brew install re2 abseil
 
+      - name: Prepare local RE2 dependencies
+        run: scripts/prepare-re2-deps.sh third_party/re2
+
       - name: Run fast tests
         run: make test-fast
 
