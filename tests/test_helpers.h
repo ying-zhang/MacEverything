@@ -42,6 +42,7 @@ static std::string ptablePathFor(const std::string& basePath) {
 }
 
 static int passed = 0, failed = 0;
+static bool gSkipPerformanceTests = false;
 
 #define CHECK(expr) check((expr), #expr)
 
