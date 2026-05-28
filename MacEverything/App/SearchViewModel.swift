@@ -608,6 +608,39 @@ class SearchViewModel: ObservableObject {
         selectedItemID = item.id
     }
 
+    func selectNext() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        if let currentID = selectedItemID,
+           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
+            let nextIdx = min(idx + 1, displayItems.count - 1)
+            selectedItemID = displayItems[nextIdx].id
+        } else {
+            selectedItemID = displayItems.first?.id
+        }
+        return true
+    }
+
+    func selectPrevious() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        if let currentID = selectedItemID,
+           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
+            if idx == 0 { return false }
+            selectedItemID = displayItems[idx - 1].id
+        } else {
+            selectedItemID = displayItems.last?.id
+        }
+        return true
+    }
+
+    func openSelectedOrFirst() {
+        if let selectedItemID,
+           let selected = displayItems.first(where: { $0.id == selectedItemID }) {
+            openFile(selected)
+        } else if let first = displayItems.first {
+            openFile(first)
+        }
+    }
+
     func activateSelectedOrFirstResult() -> Bool {
         guard let first = displayItems.first else { return false }
         if let selectedItemID,
