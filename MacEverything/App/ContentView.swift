@@ -305,6 +305,8 @@ struct ContentView: View {
                                     selectedItems: viewModel.selectedItemsInDisplayOrder(),
                                     onSelect: { extending, toggling in
                                         viewModel.select(item, extending: extending, toggling: toggling)
+                                        resultListFocused = true
+                                        isSearchFieldFocused = false
                                     },
                                     onRenameComplete: {
                                         viewModel.renameRequestedItemID = nil
