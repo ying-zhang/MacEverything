@@ -235,9 +235,10 @@ std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath) {
 
         uint32_t computedCRC = crc32(rawBuf.data(), rawBuf.size());
         if (computedCRC != storedCRC) {
-            // H-4: Log CRC mismatch location for diagnostics
             LOG_ERROR("IndexWAL", "CRC mismatch at offset " << startPos
-                      << ", recovered " << entries.size() << " entries");
+                      << ", recovered " << entries.size() << " entries"
+                      << ", truncating WAL to last valid entry");
+            ftruncate(fileno(f), startPos);
             break;
         }
 

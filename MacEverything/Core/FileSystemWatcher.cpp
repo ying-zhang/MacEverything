@@ -183,7 +183,8 @@ void FileSystemWatcher::fseventsCallback(
         // (path is inside an exclusion directory)
         bool excluded = false;
         for (const auto& ep : watcher->exclusionPaths_) {
-            if (pathStr.size() >= ep.size() && pathStr.compare(0, ep.size(), ep) == 0) {
+            if (pathStr.size() >= ep.size() && pathStr.compare(0, ep.size(), ep) == 0
+                && (pathStr.size() == ep.size() || pathStr[ep.size()] == '/')) {
                 excluded = true;
                 break;
             }
