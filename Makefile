@@ -51,15 +51,11 @@ test-all: test_all
 
 # === Xcode build ===
 app:
-	DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer xcodebuild \
-		-project MacEverything.xcodeproj -scheme MacEverything \
-		-configuration Release build SYMROOT=build \
-		CODE_SIGN_STYLE=Manual CODE_SIGN_IDENTITY="-" DEVELOPMENT_TEAM=""
+	scripts/build-release-dmgs.sh arm64
 
 # === Package ===
 dmg: app
-	-hdiutil detach /Volumes/MacEverything 2>/dev/null
-	scripts/create-dmg.sh build/Release/MacEverything.app MacEverything.dmg MacEverything
+	@echo "Created artifacts/MacEverything-arm64.dmg"
 
 # === Cleanup ===
 clean:

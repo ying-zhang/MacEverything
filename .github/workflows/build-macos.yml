@@ -7,8 +7,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  build:
-    runs-on: macos-15
+  build-intel:
+    name: Build x86_64
+    runs-on: macos-15-intel
 
     steps:
       - name: Checkout
@@ -17,62 +18,22 @@ jobs:
       - name: Install dependencies
         run: brew install re2 abseil
 
-      - name: Prepare local RE2 dependency mirror
-        run: scripts/prepare-re2-deps.sh
+      - name: Build release DMG
+        run: scripts/build-release-dmgs.sh x86_64
 
-      - name: Build release app
+      - name: Verify DMG exists
         run: |
-          xcodebuild \
-            -project MacEverything.xcodeproj \
-            -scheme MacEverything \
-            -configuration Release \
-            -derivedDataPath build/DerivedData \
-            SYMROOT="$PWD/build" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="-" \
-            DEVELOPMENT_TEAM="" \
-            build
-
-      - name: Verify dynamic libraries are bundled
-        run: |
-          app="$PWD/build/Release/MacEverything.app"
-          main="$app/Contents/MacOS/MacEverything"
-
-          echo "MacEverything dependencies:"
-          otool -L "$main"
-
-          if otool -L "$main" | grep -E '/opt/homebrew|/usr/local'; then
-            echo "::error::App binary still references Homebrew dylibs"
+          dmg="artifacts/MacEverything-x86_64.dmg"
+          if [[ ! -f "$dmg" ]]; then
+            echo "::error::DMG was not created: $dmg"
             exit 1
           fi
-
-          if ! find "$app/Contents/Frameworks" -name 'libre2*.dylib' -print -quit | grep -q .; then
-            echo "::error::libre2 dylib was not embedded in the app bundle"
-            exit 1
-          fi
-
-          while IFS= read -r dylib; do
-            echo "Checking $dylib"
-            if otool -L "$dylib" | grep -E '/opt/homebrew|/usr/local'; then
-              echo "::error::$dylib still references Homebrew dylibs"
-              exit 1
-            fi
-          done < <(find "$app/Contents/Frameworks" -name '*.dylib' -print)
-
-      - name: Create DMG
-        run: |
-          scripts/create-dmg.sh build/Release/MacEverything.app MacEverything.dmg MacEverything
-
-      - name: Collect bundled libre2 dylibs
-        run: |
-          mkdir -p libre2-dylibs
-          cp -a build/Release/MacEverything.app/Contents/Frameworks/libre2*.dylib libre2-dylibs/
+          ls -lh "$dmg"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v7.0.1
         with:
-          name: MacEverything-macOS
+          name: MacEverything-macOS-x86_64
           path: |
-            build/Release/MacEverything.app
-            MacEverything.dmg
-            libre2-dylibs/
+            build/x86_64/Release/MacEverything.app
+            artifacts/MacEverything-x86_64.dmg

@@ -25,6 +25,8 @@ fi
 
 declare -a QUEUE=()
 for candidate in \
+  "${RE2_DEPENDENCY_ROOT:-}/lib/libre2"*.dylib \
+  "${RE2_DEPENDENCY_ROOT:-}/lib/libabsl"*.dylib \
   "${SRCROOT:-}/third_party/re2/lib/libre2"*.dylib \
   "${SRCROOT:-}/third_party/re2/lib/libabsl"*.dylib \
   /opt/homebrew/opt/re2/lib/libre2*.dylib \
@@ -44,6 +46,7 @@ COPIED_NAMES=""
 is_embeddable_dependency() {
   local dep="$1"
   [[ "$dep" == "$FRAMEWORKS_DIR"/* ]] ||
+    [[ -n "${RE2_DEPENDENCY_ROOT:-}" && "$dep" == "$RE2_DEPENDENCY_ROOT/lib/"* ]] ||
     [[ -n "${SRCROOT:-}" && "$dep" == "$SRCROOT/third_party/re2/lib/"* ]] ||
     [[ "$dep" == /opt/homebrew/* || "$dep" == /usr/local/* ]]
 }
