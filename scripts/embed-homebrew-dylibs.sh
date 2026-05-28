@@ -96,9 +96,11 @@ rewrite_binary_references() {
 
 rewrite_dylib_references() {
   local dylib
-  for dylib in "$FRAMEWORKS_DIR"/*.dylib; do
+  for dylib in "$FRAMEWORKS_DIR"/*.dylib "$APP_PATH/Contents/MacOS"/*.dylib; do
     [[ -f "$dylib" ]] || continue
-    install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib"
+    if [[ "$dylib" == "$FRAMEWORKS_DIR/"* ]]; then
+      install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib"
+    fi
 
     while IFS= read -r dep; do
       if is_embeddable_dependency "$dep"; then

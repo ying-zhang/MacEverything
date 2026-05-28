@@ -436,8 +436,8 @@ static uint32_t decodeUTF8(const char* data, size_t len, size_t& pos) {
     pos++; return 0;  // invalid
 }
 
-std::vector<uint32_t> SearchEngine::extractCJKBigrams(const char* data, uint16_t len) {
-    std::vector<uint32_t> result;
+std::vector<uint64_t> SearchEngine::extractCJKBigrams(const char* data, uint16_t len) {
+    std::vector<uint64_t> result;
     std::vector<uint32_t> cjkChars;
     size_t pos = 0;
     while (pos < len) {
@@ -450,7 +450,7 @@ std::vector<uint32_t> SearchEngine::extractCJKBigrams(const char* data, uint16_t
         if (cjkChars.size() >= 2) {
             uint32_t prev = cjkChars[cjkChars.size() - 2];
             uint32_t curr = cjkChars[cjkChars.size() - 1];
-            uint32_t bigram = (prev << 16) | (curr & 0xFFFF);
+            uint64_t bigram = (static_cast<uint64_t>(prev) << 32) | curr;
             result.push_back(bigram);
         }
     }
@@ -462,7 +462,7 @@ std::vector<uint32_t> SearchEngine::extractCJKBigrams(const char* data, uint16_t
 
 void SearchEngine::addCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
     auto bigrams = extractCJKBigrams(data, len);
-    for (uint32_t bg : bigrams) {
+    for (uint64_t bg : bigrams) {
         auto& list = cjkBigramIndex_[bg];
         auto pos = std::lower_bound(list.begin(), list.end(), idx);
         if (pos == list.end() || *pos != idx) {
@@ -473,7 +473,7 @@ void SearchEngine::addCJKBigramsForRecord(uint32_t idx, const char* data, uint16
 
 void SearchEngine::removeCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
     auto bigrams = extractCJKBigrams(data, len);
-    for (uint32_t bg : bigrams) {
+    for (uint64_t bg : bigrams) {
         auto it = cjkBigramIndex_.find(bg);
         if (it == cjkBigramIndex_.end()) continue;
         auto& list = it->second;
@@ -485,14 +485,14 @@ void SearchEngine::removeCJKBigramsForRecord(uint32_t idx, const char* data, uin
     }
 }
 
-std::unordered_map<uint32_t, std::vector<uint32_t>> SearchEngine::buildCJKBigramIndexFromData(
+std::unordered_map<uint64_t, std::vector<uint32_t>> SearchEngine::buildCJKBigramIndexFromData(
     const std::vector<uint8_t>& types, const StringPool& namePool) {
-    std::unordered_map<uint32_t, std::vector<uint32_t>> index;
+    std::unordered_map<uint64_t, std::vector<uint32_t>> index;
     for (uint32_t i = 0; i < namePool.entryCount(); i++) {
         if (i >= types.size() || types[i] == 0) continue;
         if (!namePool.isLive(i)) continue;
         auto bigrams = extractCJKBigrams(namePool.data(i), namePool.length(i));
-        for (uint32_t bg : bigrams) {
+        for (uint64_t bg : bigrams) {
             index[bg].push_back(i);
         }
     }

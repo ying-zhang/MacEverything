@@ -18,6 +18,9 @@ jobs:
       - name: Install dependencies
         run: brew install re2 abseil
 
+      - name: Run fast tests
+        run: make test-fast
+
       - name: Build release DMG
         run: scripts/build-release-dmgs.sh x86_64
 

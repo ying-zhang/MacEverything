@@ -9,6 +9,7 @@
 #include <string>
 #include <memory>
 #include <mutex>
+#include <atomic>
 #include <dispatch/dispatch.h>
 
 /// Orchestrates index persistence: paged base files + WAL + auto-compaction.
@@ -86,6 +87,7 @@ private:
     dispatch_queue_t  timerQueue_ = nullptr;
     double currentIntervalSec_ = 0;
     mutable std::mutex walMutex_;
+    std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
 
     /// Compute the next auto-compaction interval based on dirty ratio and WAL size.
     double computeAdaptiveInterval() const;

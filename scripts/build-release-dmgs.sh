@@ -94,6 +94,10 @@ verify_app_arch() {
     echo "error: app binary still references Homebrew dylibs" >&2
     exit 65
   fi
+  if otool -L "$mcp" | grep -E '/opt/homebrew|/usr/local'; then
+    echo "error: MCP binary still references Homebrew dylibs" >&2
+    exit 65
+  fi
 
   if ! find "$app_path/Contents/Frameworks" -name 'libre2*.dylib' -print -quit | grep -q .; then
     echo "error: libre2 dylib was not embedded in the app bundle" >&2

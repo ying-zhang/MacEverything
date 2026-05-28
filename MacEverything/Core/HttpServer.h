@@ -7,6 +7,7 @@
 #include <functional>
 #include <vector>
 #include <unordered_map>
+#include <mutex>
 
 class SearchEngine;
 class ContentIndex;
@@ -76,4 +77,6 @@ private:
     int serverFd_{-1};
     uint16_t port_{0};
     std::thread acceptThread_;
+    std::mutex connectionThreadsMutex_;
+    std::vector<std::thread> connectionThreads_;
 };

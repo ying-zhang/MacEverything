@@ -5,6 +5,7 @@
 #include <vector>
 #include <functional>
 #include <atomic>
+#include <mutex>
 
 class FileSystemWatcher {
 public:
@@ -71,6 +72,7 @@ private:
     std::string label_;
     FSEventStreamRef stream_ = nullptr;
     dispatch_queue_t queue_ = nullptr;
+    void* queueKey_ = nullptr;
     Callback callback_;
     ReplayDoneCallback onReplayDone_;
     std::atomic<FSEventStreamEventId> lastEventId_{0};
@@ -78,6 +80,7 @@ private:
     std::atomic<uint64_t> totalEventsReceived_{0};
     void* earlyAbortSem_ = nullptr;  // Actually dispatch_semaphore_t; void* for ABI compat
     std::vector<std::string> exclusionPaths_;
+    std::mutex stateMutex_;
 
     void startInternal(const std::vector<std::string>& rootPaths, FSEventStreamEventId sinceEventId);
 

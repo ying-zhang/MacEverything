@@ -230,7 +230,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\"\n";
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\" \"MacEverythingMCP\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
