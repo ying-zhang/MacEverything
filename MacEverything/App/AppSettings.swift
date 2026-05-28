@@ -89,6 +89,7 @@ struct AppSettingsSnapshot {
     var indexAppBundleContents: Bool
     var refreshMode: RefreshMode
     var startupDisplayMode: StartupDisplayMode
+    var autoResetQuickFilterOnEmptyResults: Bool
     var searchAsYouType: Bool
     var defaultRegex: Bool
     var defaultCaseSensitive: Bool
@@ -135,6 +136,7 @@ final class AppSettings: ObservableObject {
         static let indexAppBundleContents = "settings.indexAppBundleContents"
         static let refreshMode = "settings.refreshMode"
         static let startupDisplayMode = "settings.startupDisplayMode"
+        static let autoResetQuickFilterOnEmptyResults = "settings.autoResetQuickFilterOnEmptyResults"
         static let searchAsYouType = "settings.searchAsYouType"
         static let defaultRegex = "settings.defaultRegex"
         static let defaultCaseSensitive = "settings.defaultCaseSensitive"
@@ -178,6 +180,7 @@ final class AppSettings: ObservableObject {
     @Published var indexAppBundleContents: Bool { didSet { save(indexAppBundleContents, Key.indexAppBundleContents) } }
     @Published var refreshMode: RefreshMode { didSet { save(refreshMode.rawValue, Key.refreshMode) } }
     @Published var startupDisplayMode: StartupDisplayMode { didSet { save(startupDisplayMode.rawValue, Key.startupDisplayMode) } }
+    @Published var autoResetQuickFilterOnEmptyResults: Bool { didSet { save(autoResetQuickFilterOnEmptyResults, Key.autoResetQuickFilterOnEmptyResults) } }
     @Published var searchAsYouType: Bool { didSet { save(searchAsYouType, Key.searchAsYouType) } }
     @Published var defaultRegex: Bool { didSet { save(defaultRegex, Key.defaultRegex) } }
     @Published var defaultCaseSensitive: Bool { didSet { save(defaultCaseSensitive, Key.defaultCaseSensitive) } }
@@ -249,6 +252,7 @@ final class AppSettings: ObservableObject {
         indexAppBundleContents = defaults.object(forKey: Key.indexAppBundleContents) as? Bool ?? false
         refreshMode = RefreshMode(rawValue: defaults.string(forKey: Key.refreshMode) ?? "") ?? .realtime
         startupDisplayMode = StartupDisplayMode(rawValue: defaults.string(forKey: Key.startupDisplayMode) ?? "") ?? .recent
+        autoResetQuickFilterOnEmptyResults = defaults.object(forKey: Key.autoResetQuickFilterOnEmptyResults) as? Bool ?? true
         searchAsYouType = defaults.object(forKey: Key.searchAsYouType) as? Bool ?? true
         defaultRegex = defaults.object(forKey: Key.defaultRegex) as? Bool ?? false
         defaultCaseSensitive = defaults.object(forKey: Key.defaultCaseSensitive) as? Bool ?? false
@@ -295,6 +299,7 @@ final class AppSettings: ObservableObject {
             indexAppBundleContents: indexAppBundleContents,
             refreshMode: refreshMode,
             startupDisplayMode: startupDisplayMode,
+            autoResetQuickFilterOnEmptyResults: autoResetQuickFilterOnEmptyResults,
             searchAsYouType: searchAsYouType,
             defaultRegex: defaultRegex,
             defaultCaseSensitive: defaultCaseSensitive,

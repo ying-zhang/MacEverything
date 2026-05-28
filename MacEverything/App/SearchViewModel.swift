@@ -538,7 +538,9 @@ class SearchViewModel: ObservableObject {
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
-                if finalItems.isEmpty, self.quickFilter != .all {
+                if finalItems.isEmpty,
+                   self.quickFilter != .all,
+                   self.settings.snapshot.autoResetQuickFilterOnEmptyResults {
                     self.quickFilter = .all
                     return
                 }

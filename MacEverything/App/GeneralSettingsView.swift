@@ -334,6 +334,8 @@ struct GeneralSettingsView: View {
             }
             .pickerStyle(.segmented)
 
+            Toggle(L10n.tr("Reset quick filter when no results are found"), isOn: $settings.autoResetQuickFilterOnEmptyResults)
+
             Toggle(L10n.tr("Search as you type"), isOn: $settings.searchAsYouType)
 
             Picker(L10n.tr("Enter Key Action"), selection: $settings.enterKeyAction) {

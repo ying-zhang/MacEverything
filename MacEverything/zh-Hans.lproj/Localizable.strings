@@ -144,6 +144,7 @@
 "Search Defaults" = "搜索默认值";
 "Search Options" = "搜索选项";
 "Startup Results" = "启动后结果";
+"Reset quick filter when no results are found" = "无结果时自动切回全部快速筛选";
 "Empty List" = "空列表";
 "Recent Changes" = "最近变动";
 "Search as you type" = "输入时搜索";
