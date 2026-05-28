@@ -643,12 +643,14 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/MacEverything/Core",
 					"$(SRCROOT)/MacEverything/Bridge",
+					"$(SRCROOT)/third_party/re2/include",
 					"/opt/homebrew/opt/re2/include",
 					"/opt/homebrew/opt/abseil/include",
 					"/usr/local/opt/re2/include",
 					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
+					"$(SRCROOT)/third_party/re2/lib",
 					"/opt/homebrew/opt/re2/lib",
 					"/opt/homebrew/opt/abseil/lib",
 					"/usr/local/opt/re2/lib",
@@ -680,12 +682,14 @@
 				HEADER_SEARCH_PATHS = (
 					"$(SRCROOT)/MacEverything/Core",
 					"$(SRCROOT)/MacEverything/Bridge",
+					"$(SRCROOT)/third_party/re2/include",
 					"/opt/homebrew/opt/re2/include",
 					"/opt/homebrew/opt/abseil/include",
 					"/usr/local/opt/re2/include",
 					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
+					"$(SRCROOT)/third_party/re2/lib",
 					"/opt/homebrew/opt/re2/lib",
 					"/opt/homebrew/opt/abseil/lib",
 					"/usr/local/opt/re2/lib",
