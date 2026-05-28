@@ -92,8 +92,6 @@ rewrite_binary_references() {
       install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$path"
     fi
   done < <(otool -L "$path" | awk 'NR > 1 { print $1 }')
-
-  codesign --force --sign - "$path" >/dev/null
 }
 
 rewrite_dylib_references() {
@@ -117,6 +115,11 @@ for binary in "${BINARIES[@]}"; do
   rewrite_binary_references "$binary"
 done
 rewrite_dylib_references
+for binary in "${BINARIES[@]}"; do
+  path="$APP_PATH/Contents/MacOS/$binary"
+  [[ -f "$path" ]] || continue
+  codesign --force --sign - "$path" >/dev/null
+done
 
 echo "Embedded Homebrew dylibs in $FRAMEWORKS_DIR:"
 find "$FRAMEWORKS_DIR" -maxdepth 1 -name '*.dylib' -print | sort
