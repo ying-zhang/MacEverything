@@ -785,16 +785,22 @@ class SearchViewModel: ObservableObject {
             }
         }
         service.onWindowFocusChanged(focused)
-        if focused {
-            refreshForServiceUpdate()
-        }
     }
 
     func refreshForServiceUpdate() {
         guard service.scanComplete else { return }
         if !searchText.isEmpty && !isContentSearch {
+            searchTask?.cancel()
+            recentTask?.cancel()
+            searchGeneration &+= 1
+            bridge.cancelSession(sessionId)
+            updateHighlightHints()
             performSearch(searchText)
         } else if isContentSearch && !contentKeyword.isEmpty {
+            searchTask?.cancel()
+            recentTask?.cancel()
+            searchGeneration &+= 1
+            updateHighlightHints()
             performContentSearch(contentKeyword)
         } else if showingRecent && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
