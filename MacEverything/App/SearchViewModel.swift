@@ -348,6 +348,7 @@ class SearchViewModel: ObservableObject {
     private var loadedCount: Int = 0
     private var searchGeneration: UInt64 = 0
     private let sessionId: UInt64
+    private var allowQuickFilterAutoResetForCurrentSearch = false
 
     private static let pageSize: Int = 100
 
@@ -436,6 +437,7 @@ class SearchViewModel: ObservableObject {
         clearSelection()
         updateHighlightHints()
         let text = searchText
+        allowQuickFilterAutoResetForCurrentSearch = true
 
         if text.isEmpty {
             totalMatches = 0
@@ -540,10 +542,13 @@ class SearchViewModel: ObservableObject {
                 guard let self, self.searchGeneration == gen else { return }
                 if finalItems.isEmpty,
                    self.quickFilter != .all,
-                   self.settings.snapshot.autoResetQuickFilterOnEmptyResults {
+                   self.settings.snapshot.autoResetQuickFilterOnEmptyResults,
+                   self.allowQuickFilterAutoResetForCurrentSearch {
+                    self.allowQuickFilterAutoResetForCurrentSearch = false
                     self.quickFilter = .all
                     return
                 }
+                self.allowQuickFilterAutoResetForCurrentSearch = false
                 self.cachedResults = results
                 self.sourceItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
@@ -947,6 +952,7 @@ class SearchViewModel: ObservableObject {
     func onQuickFilterChanged() {
         guard service.scanComplete else { return }
         if !isContentSearch {
+            allowQuickFilterAutoResetForCurrentSearch = false
             rerunCurrentSearch()
         }
     }
@@ -1050,6 +1056,7 @@ class SearchViewModel: ObservableObject {
         searchTask?.cancel()
         recentTask?.cancel()
         searchGeneration &+= 1
+        allowQuickFilterAutoResetForCurrentSearch = true
         showingRecent = false
         let lowerText = searchText.lowercased()
         if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
