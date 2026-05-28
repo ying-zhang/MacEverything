@@ -583,55 +583,65 @@ private struct QuickFilterBar: View {
     @Binding var showPathFilter: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
-            Picker("", selection: $quickFilter) {
-                ForEach(QuickFilter.allCases) { filter in
-                    Text(filter.title).tag(filter)
-                }
-            }
-            .pickerStyle(.segmented)
-            .labelsHidden()
-            .help(L10n.tr("Quick filters"))
+        GeometryReader { proxy in
+            let showExpandedPathFilter = proxy.size.width >= 820 || showPathFilter || !pathFilter.isEmpty
 
-            Button {
-                showPathFilter.toggle()
-            } label: {
-                Image(systemName: showPathFilter || !pathFilter.isEmpty ? "folder.fill" : "folder")
-                    .font(.system(size: 14, weight: .medium))
-            }
-            .buttonStyle(.borderless)
-            .help(L10n.tr("Path filter"))
+            HStack(spacing: 8) {
+                Text(L10n.tr("Quick filter"))
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
 
-            if showPathFilter || !pathFilter.isEmpty {
-                HStack(spacing: 6) {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .foregroundColor(.secondary)
-                    TextField(L10n.tr("Filter by path..."), text: $pathFilter)
-                        .textFieldStyle(.plain)
-                    if !pathFilter.isEmpty {
-                        Button {
-                            pathFilter = ""
-                        } label: {
-                            Image(systemName: "xmark.circle.fill")
-                                .foregroundColor(.secondary)
-                        }
-                        .buttonStyle(.plain)
+                Picker("", selection: $quickFilter) {
+                    ForEach(QuickFilter.allCases) { filter in
+                        Text(filter.title).tag(filter)
                     }
                 }
-                .font(.callout)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(Color(nsColor: .separatorColor).opacity(0.7))
-                )
-                .frame(minWidth: 180, idealWidth: 260, maxWidth: 360)
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .help(L10n.tr("Quick filters"))
+
+                Button {
+                    showPathFilter.toggle()
+                } label: {
+                    Image(systemName: showExpandedPathFilter ? "folder.fill" : "folder")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.tr("Path filter"))
+
+                if showExpandedPathFilter {
+                    HStack(spacing: 6) {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundColor(.secondary)
+                        TextField(L10n.tr("Filter by path..."), text: $pathFilter)
+                            .textFieldStyle(.plain)
+                        if !pathFilter.isEmpty {
+                            Button {
+                                pathFilter = ""
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                                    .foregroundColor(.secondary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                    .font(.callout)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 5)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(nsColor: .controlBackgroundColor))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor).opacity(0.7))
+                    )
+                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 360)
+                }
             }
         }
+        .frame(height: 30)
     }
 }
 

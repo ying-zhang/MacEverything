@@ -231,6 +231,7 @@
 "Code" = "代码";
 "Archives" = "压缩包";
 "Quick filters" = "快速筛选";
+"Quick filter" = "快速筛选";
 "Path filter" = "路径筛选";
 "Filter by path..." = "按路径筛选...";
 "Files containing keyword" = "包含 keyword 的文件";

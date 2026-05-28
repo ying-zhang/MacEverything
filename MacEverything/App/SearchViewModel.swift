@@ -538,6 +538,10 @@ class SearchViewModel: ObservableObject {
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
+                if finalItems.isEmpty, self.quickFilter != .all {
+                    self.quickFilter = .all
+                    return
+                }
                 self.cachedResults = results
                 self.sourceItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
@@ -1105,7 +1109,20 @@ class SearchViewModel: ObservableObject {
         bridge.cancelSession(sessionId)
         updateHighlightHints()
         if searchText.isEmpty {
-            loadRecentFiles()
+            if settings.snapshot.startupDisplayMode == .recent {
+                loadRecentFiles()
+            } else {
+                cachedResults = []
+                sourceItems = []
+                cachedItems = []
+                loadedCount = 0
+                displayItems = []
+                showingRecent = false
+                totalMatches = 0
+                resultLimitReached = false
+                queryTimeMs = 0
+                clearSelection()
+            }
         } else {
             performSearch(searchText)
         }

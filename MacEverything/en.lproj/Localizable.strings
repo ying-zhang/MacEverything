@@ -231,6 +231,7 @@
 "Code" = "Code";
 "Archives" = "Archives";
 "Quick filters" = "Quick filters";
+"Quick filter" = "Quick filter";
 "Path filter" = "Path filter";
 "Filter by path..." = "Filter by path...";
 "Files containing keyword" = "Files containing keyword";
