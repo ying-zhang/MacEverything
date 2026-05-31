@@ -12,11 +12,15 @@ struct ContentView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var resultListFocused = false
     @State private var showPathFilter = false
+    @State private var searchFieldFocusRequest = 0
 
     var body: some View {
         VStack(spacing: 0) {
             WindowReader { window in
                 hostWindow = window
+                if SearchWindowSupport.isSearchWindow(window) {
+                    window.delegate = NSApp.delegate as? NSWindowDelegate
+                }
                 updateSearchWindowTitle()
             }
             .frame(width: 0, height: 0)
@@ -59,7 +63,8 @@ struct ContentView: View {
                     },
                     onEscape: {
                         handleEscape()
-                    }
+                    },
+                    focusRequest: searchFieldFocusRequest
                 )
                 .frame(height: 36)
                 .onChange(of: viewModel.searchText) {
@@ -396,6 +401,11 @@ struct ContentView: View {
         .onReceive(NotificationCenter.default.publisher(for: .searchServiceDidRefresh)) { _ in
             viewModel.refreshForServiceUpdate()
         }
+        .onReceive(NotificationCenter.default.publisher(for: .searchWindowDidRestore)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  hostWindow === window else { return }
+            restoreSearchFocus()
+        }
         .onChange(of: viewModel.quickFilter) {
             viewModel.onQuickFilterChanged()
         }
@@ -404,15 +414,32 @@ struct ContentView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(true)
-            resultListFocused = false
-            isSearchFieldFocused = true
+            restoreSearchFocus()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(false)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
-            scrollViewID += 1
+            restoreSearchInteraction()
         }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didBecomeKeyNotification)) { notification in
+            guard let window = notification.object as? NSWindow,
+                  hostWindow === window else { return }
+            restoreSearchFocus()
+        }
+    }
+
+    private func restoreSearchInteraction() {
+        scrollViewID += 1
+        restoreSearchFocus()
+        viewModel.refreshAfterWindowRestore()
+    }
+
+    private func restoreSearchFocus() {
+        resultListFocused = false
+        isSearchFieldFocused = false
+        searchFieldFocusRequest += 1
+        isSearchFieldFocused = true
     }
 
     private func updateSearchWindowTitle() {

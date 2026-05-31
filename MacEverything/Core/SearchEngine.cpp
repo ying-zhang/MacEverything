@@ -1110,11 +1110,15 @@ void SearchEngine::detachWAL() {
 std::vector<uint32_t> SearchEngine::recentIndices(uint32_t count) const {
     std::shared_lock lock(mutex_);
     std::vector<uint32_t> result;
-    uint32_t n = std::min(count, static_cast<uint32_t>(recentCache_.size()));
-    result.reserve(n);
-    auto it = recentCache_.begin();
-    for (uint32_t i = 0; i < n; ++i, ++it) {
-        result.push_back(it->index);
+    result.reserve(std::min(count, static_cast<uint32_t>(recentCache_.size())));
+    for (const auto& entry : recentCache_) {
+        if (result.size() >= count) {
+            break;
+        }
+        if (entry.index >= types_.size() || types_[entry.index] == 0) {
+            continue;
+        }
+        result.push_back(entry.index);
     }
     return result;
 }

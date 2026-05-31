@@ -266,6 +266,7 @@ void SearchEngine::completePhase2() {
                 removePinyinInitialsForRecord(i);
             }
         }
+        recentCache_ = buildRecentCacheFromData(types_, modTimes_, kRecentCacheSize);
 
         phase2Pending_.store(false, std::memory_order_release);
 

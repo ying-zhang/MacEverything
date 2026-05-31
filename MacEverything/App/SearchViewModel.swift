@@ -341,6 +341,7 @@ class SearchViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var recentTask: Task<Void, Never>?
     private var settledTask: Task<Void, Never>?
+    private var windowRestoreRefreshTask: Task<Void, Never>?
     private var optionsSink: AnyCancellable?
     private var cachedResults: [MEFileResult] = []
     private var sourceItems: [FileItem] = []
@@ -433,6 +434,7 @@ class SearchViewModel: ObservableObject {
         searchTask?.cancel()
         recentTask?.cancel()
         searchGeneration &+= 1
+        bridge.cancelSession(sessionId)
         isLoadingMore = false
         clearSelection()
         updateHighlightHints()
@@ -947,6 +949,57 @@ class SearchViewModel: ObservableObject {
         } else if searchText.isEmpty && displayItems.isEmpty && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         }
+    }
+
+    func refreshAfterWindowRestore() {
+        guard service.scanComplete else { return }
+
+        let textSnapshot = searchText
+        let contentKeywordSnapshot = contentKeyword
+        let isContentSnapshot = isContentSearch
+        windowRestoreRefreshTask?.cancel()
+        windowRestoreRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled, let self else { return }
+            guard self.searchText == textSnapshot,
+                  self.contentKeyword == contentKeywordSnapshot,
+                  self.isContentSearch == isContentSnapshot else { return }
+            self.performWindowRestoreRefresh()
+        }
+    }
+
+    private func performWindowRestoreRefresh() {
+        searchTask?.cancel()
+        recentTask?.cancel()
+        searchGeneration &+= 1
+        bridge.cancelSession(sessionId)
+        updateHighlightHints()
+
+        if !searchText.isEmpty {
+            showingRecent = false
+            allowQuickFilterAutoResetForCurrentSearch = false
+            if isContentSearch {
+                let keyword = currentContentSearchKeyword()
+                contentKeyword = keyword
+                if !keyword.isEmpty {
+                    performContentSearch(keyword)
+                }
+            } else {
+                performSearch(searchText)
+            }
+        } else if showingRecent || settings.snapshot.startupDisplayMode == .recent {
+            loadRecentFiles()
+        }
+    }
+
+    private func currentContentSearchKeyword() -> String {
+        if !contentKeyword.isEmpty {
+            return contentKeyword
+        }
+        if searchText.lowercased().hasPrefix("infile:") {
+            return String(searchText.dropFirst(7))
+        }
+        return ""
     }
 
     func onQuickFilterChanged() {

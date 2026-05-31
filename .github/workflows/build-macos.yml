@@ -41,6 +41,7 @@ jobs:
         with:
           name: MacEverything-macOS-arm64
           path: |
+            third_party/re2
             build/arm64/Release/MacEverything.app
             artifacts/MacEverything-arm64.dmg
 
@@ -78,5 +79,6 @@ jobs:
         with:
           name: MacEverything-macOS-x86_64
           path: |
+            third_party/re2
             build/x86_64/Release/MacEverything.app
             artifacts/MacEverything-x86_64.dmg

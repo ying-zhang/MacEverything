@@ -1,4 +1,4 @@
-# 146 — MacEverything 1.5 发布说明
+# MacEverything 1.5.30 发布说明
 
 MacEverything 1.5 重点改进搜索响应速度、索引内存占用，以及搜索窗口和设置界面的可用性。
 
