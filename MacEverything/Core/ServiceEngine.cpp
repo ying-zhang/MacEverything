@@ -343,6 +343,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
                     if (this->shuttingDown_.load(std::memory_order_acquire)) return;
                     auto eng = this->safeEngine();
                     if (eng) eng->completePhase2();
+                    if (this->onIndexChanged) this->onIndexChanged();
                 });
             }
 
