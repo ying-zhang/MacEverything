@@ -20,7 +20,7 @@
 
 ## 1. 项目概述
 
-MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Windows 上的 Everything。它通过直接调用 macOS 底层 API（`getattrlistbulk`）进行全盘扫描，在内存中维护文件名和内容的倒排索引，提供毫秒级的搜索响应。
+MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Windows 上的 [Everything](https://www.voidtools.com/)。它通过直接调用 macOS 底层 API（`getattrlistbulk`）进行全盘扫描，在内存中维护文件名和内容的倒排索引，提供毫秒级的搜索响应。
 
 **核心目标**：
 - 全盘扫描 < 10 秒（数百万文件）

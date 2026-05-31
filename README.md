@@ -51,7 +51,7 @@
 - **搜索选项徽章** — 搜索栏旁的彩色徽章，一键切换 Regex / Case Sensitive / Whole Word / Match Filename
 - **中英文界面** — 应用界面、菜单、设置窗口和搜索语法帮助支持简体中文与英文，跟随 macOS 首选语言自动切换
 
-### Everything 风格查询语法
+### [Everything](https://www.voidtools.com/) 风格查询语法
 
 完整的 AST 解析器，支持 15+ 过滤器、布尔运算、glob 通配符、正则表达式。内置语法帮助窗口（**Cmd+?**）。
 
@@ -73,7 +73,7 @@
 
 #### 文件名与路径片段匹配
 
-默认搜索面向文件名和完整路径：空格分隔的多个普通词按 AND 组合，每个词可以命中文件名或路径任意位置。因此 `ying pdf` 可以匹配 `/Users/ying/xx/xx.pdf`，也保留 Everything 式“随手输入片段即可命中”的体验。
+默认搜索面向文件名和完整路径：空格分隔的多个普通词按 AND 组合，每个词可以命中文件名或路径任意位置。因此 `ying pdf` 可以匹配 `/Users/ying/xx/xx.pdf`，也保留 [Everything](https://www.voidtools.com/) 式“随手输入片段即可命中”的体验。
 
 带 `/` 的查询会启用结构化路径匹配，并继续保持子串匹配语义。比如 `src/main` 表示文件名包含 `main` 且父路径包含 `src`；`/project/*/target` 可匹配非相邻路径段；`/local/bin/*` 用于列出目录的直接子项。非 ASCII 查询会在查询阶段自动尝试 macOS 常见的 Unicode NFC/NFD 归一化，不额外扩大持久索引。
 
@@ -115,8 +115,11 @@
 ### 交互细节
 
 - **智能高亮** — 搜索结果中匹配部分高亮标记，基于 AST 感知：正确处理 glob 通配符、正则、大小写、NOT 排除等复杂场景
+- **快速过滤器** — 结果列表上方可一键筛选文件、文件夹、应用、文档、图片、代码和压缩包；当过滤器导致当前查询无结果时自动回到全部结果，避免误以为搜索失败
+- **路径过滤器** — 可在当前搜索结果内继续按路径片段过滤，适合在大结果集中快速缩小目录范围
+- **可配置结果列** — 支持按名称、扩展名、路径、大小、修改日期排序，扩展名/路径/大小/日期列可显示或隐藏，列宽可拖拽调整
 - **拖放** — 直接从搜索结果拖放文件到 Finder、VS Code、Xcode 等任意应用
-- **右键菜单** — 打开 / 在 Finder 中显示 / 复制路径
+- **键盘与右键操作** — Enter 可配置为打开文件或重命名；支持方向键选择、结果列表聚焦、右键打开 / 在 Finder 中显示 / 复制路径
 - **Cmd+Click** — 快速在 Finder 中定位文件
 - **最近文件** — 搜索栏为空时自动展示最近修改的文件
 
@@ -153,6 +156,8 @@ curl "http://localhost:19860/api/status"                          # 索引状态
 curl "http://localhost:19860/api/memory"                          # 内存拆分
 ```
 
+HTTP 服务仅绑定本机回环地址，支持并发连接；启动时会对短暂端口占用进行重试，请求体大小也会做上限校验，避免慢连接或异常请求阻塞服务。
+
 ### 安装
 
 #### 下载 DMG（推荐）
@@ -182,7 +187,7 @@ hdiutil create -volname MacEverything \
   -ov -format UDZO MacEverything.dmg
 ```
 
-Release 构建和 GitHub Actions 发布包会自动把 Homebrew 的 `libre2` 及其依赖嵌入 `.app/Contents/Frameworks`，避免发布包在未安装 Homebrew/RE2 的 Mac 上启动失败。
+Release 构建和 GitHub Actions 发布包会自动把 Homebrew 的 `libre2` 及其依赖嵌入 `.app/Contents/Frameworks`，避免发布包在未安装 Homebrew/RE2 的 Mac 上启动失败。发布脚本会分别构建 arm64 与 Intel DMG，并验证主应用、MCP 可执行文件和嵌入 dylib 的架构与依赖路径。
 
 #### CLI 守护进程
 
@@ -277,11 +282,15 @@ make daemon
 | GCD 并行扫描 | Trigram 无法加速时启用多核线性扫描 |
 | StringPool 连续内存 | 文件名紧凑排列在单一 `char` 缓冲区，SIMD 友好 |
 | PathTable intern 化 | 目录路径仅存 `uint32` 索引 — 百万文件节省 ~550MB |
+| v6 Flat SoA 两阶段加载 | 启动时先装载基础记录立即可搜，后台构建 Trigram、拼音、路径、扩展名、CJK bigram 和最近文件索引 |
+| Phase 2 索引可靠性保护 | 后台索引构建期间新增/更新记录先写入基础数据，索引完成时统一回放；内存不足时跳过 Phase 2，避免半成品索引 |
 | Unicode 查询归一化 | 对非 ASCII 查询在查询阶段尝试 NFC/NFD 变体，兼容 macOS 文件名表示且不维护第二份索引 |
 | Generation 计数器 | 每 1024 次迭代检查，快速输入时零开销取消过时查询 |
 | APFS Firmlink 去重 | inode + devid 检测，正确处理 macOS Data/System 卷合并环路 |
 | Regex Trigram 预过滤 | 从正则中提取字面量生成 trigram 候选，~7s → <100ms |
+| CJK bigram 索引 | 中文、日文、韩文查询可通过 bigram 候选集预过滤，降低纯线性扫描概率 |
 | 自适应 Trigram 旁路 | 候选集过大时自动回退并行扫描，避免无效索引查找 |
+| FSEvents 安全重放 | 规范化排除路径、过滤自身缓存事件，停止监听时排空回调队列，避免竞态与误触发全量重扫 |
 | COW 无阻塞压缩 | 写时复制，压缩期间独占锁持有 < 100ms（原 30–60s） |
 | 分页增量持久化 | 仅写入脏页，典型 flush I/O 从 ~112MB 降至 KB 级 |
 

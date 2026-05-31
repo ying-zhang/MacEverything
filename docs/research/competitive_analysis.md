@@ -2,7 +2,7 @@
 
 ## 目录
 
-1. [Windows 平台：voidtools Everything](#1-windows-平台voidtools-everything)
+1. [Windows 平台：voidtools Everything](#1-windows-平台voidtools-everything)（[官网](https://www.voidtools.com/)）
 2. [Linux 平台：FSearch / plocate](#2-linux-平台fsearch--plocate)
 3. [macOS 平台：Spotlight / Alfred / Find Any File / 开源克隆](#3-macos-平台spotlight--alfred--find-any-file--开源克隆)
 4. [跨平台工具：fd / ripgrep / fzf](#4-跨平台工具fd--ripgrep--fzf)
@@ -14,13 +14,13 @@
 
 ---
 
-## 1. Windows 平台：voidtools Everything
+## 1. Windows 平台：voidtools [Everything](https://www.voidtools.com/)
 
-Everything 是文件名搜索的行业标杆，在 100 万文件中实现亚毫秒搜索。
+[Everything](https://www.voidtools.com/) 是文件名搜索的行业标杆，在 100 万文件中实现亚毫秒搜索。
 
 ### 1.1 核心架构：NTFS MFT 直接解析
 
-Everything 的极致速度源于一个根本性架构决策：**绕过 Win32 文件枚举 API，直接读取 NTFS 主文件表（MFT）**。
+[Everything](https://www.voidtools.com/) 的极致速度源于一个根本性架构决策：**绕过 Win32 文件枚举 API，直接读取 NTFS 主文件表（MFT）**。
 
 **MFT 结构**：NTFS 为卷上的每个文件和目录维护一条记录（通常 1 KB）。每条 MFT 记录包含：
 - `$FILE_NAME` 属性：UTF-16LE 文件名（最长 255 字符）、8 字节父目录引用（6 字节记录号 + 2 字节序列号）、时间戳、文件大小
@@ -40,14 +40,14 @@ Everything 的极致速度源于一个根本性架构决策：**绕过 Win32 文
 | 特性 | 实现 |
 |------|------|
 | 索引内容 | 默认仅文件名和文件夹名（可选大小/日期/属性） |
-| 存储位置 | 完全驻留内存；退出时持久化到 `Everything.db` |
+| 存储位置 | 完全驻留内存；退出时持久化到 [Everything](https://www.voidtools.com/) 数据库文件（`Everything.db`） |
 | 路径重建 | 不存储完整路径，使用父 FRN 引用链回溯到卷根 |
 | 增量更新 | NTFS USN Journal 监控（零轮询变更检测） |
 | 启动恢复 | 加载 `.db` 文件 → 重放离线期间 USN Journal 条目 |
 
 ### 1.3 搜索算法
 
-Everything 对内存中的文件名索引执行**线性扫描**：
+[Everything](https://www.voidtools.com/) 对内存中的文件名索引执行**线性扫描**：
 - 100 万条短文件名字符串 × ~50 字节 ≈ 50 MB → 完全放入 LLC
 - 现代 CPU 内存扫描吞吐量 20+ GB/s → 搜索时间为微秒级
 - 默认 AND 语义（空格分隔多词）
@@ -77,7 +77,7 @@ Everything 对内存中的文件名索引执行**线性扫描**：
 
 ### 1.6 网络与多卷支持
 
-- **ETP 协议**：自定义协议运行在 FTP 端口上，远程 Everything 实例共享索引
+- **ETP 协议**：自定义协议运行在 FTP 端口上，远程 [Everything](https://www.voidtools.com/) 实例共享索引
 - **文件夹索引**：非 NTFS 源使用传统递归目录扫描
 - **EFU 文件列表**：静态文件列表格式，可索引离线介质
 
@@ -85,7 +85,7 @@ Everything 对内存中的文件名索引执行**线性扫描**：
 
 ## 2. Linux 平台：FSearch / plocate
 
-### 2.1 FSearch — Linux 版 Everything
+### 2.1 FSearch — Linux 版 [Everything](https://www.voidtools.com/)
 
 **语言/框架**：C + GTK3，GPL-2.0
 
@@ -179,7 +179,7 @@ Everything 对内存中的文件名索引执行**线性扫描**：
 - 无持久索引，每次搜索都是实时扫描
 - **局限**：APFS 上性能不如 HFS+
 
-### 3.4 macOS 开源 Everything 克隆
+### 3.4 macOS 开源 [Everything](https://www.voidtools.com/) 克隆
 
 #### macfind (Rust)
 - 承认 "macOS APFS 没有 MFT 等价物" + "SIP 阻止原始磁盘 I/O"
@@ -321,7 +321,7 @@ ripgrep 的速度来自分层优化管道：
 
 | 策略 | 延迟 | 实现复杂度 | 使用者 |
 |------|------|-----------|--------|
-| NTFS USN Journal | 秒级 | 中 | Everything |
+| NTFS USN Journal | 秒级 | 中 | [Everything](https://www.voidtools.com/) |
 | FSEvents | 秒级 | 中 | MacEverything, Spotlight |
 | inotify | 实时 | 高（需递归监控） | FSearch |
 | 全量重扫 | 分钟级 | 低 | mlocate |
@@ -357,12 +357,12 @@ APFS 以 **NFD**（分解形式）存储文件名，但用户输入和很多 API
   - Root 搜索模式（Option+Click "Find"）：提权访问所有用户文件
   - 支持 Time Machine 备份和 APFS 快照搜索
   - Synology/QNAP NAS 协议级优化
-  - 可通过 voidtools Everything HTTP 服务搜索 Windows 共享
+  - 可通过 voidtools [Everything](https://www.voidtools.com/) HTTP 服务搜索 Windows 共享
   - AppleScript 自动化、URL scheme 集成
 - **性能**：名称搜索 3-15 秒（实时遍历）
 - **优点**：找到一切文件；Root 模式极强；NAS 支持独特；$6 价格友好
 - **缺点**：不支持即时搜索；需点击 Find 按钮；UI 功能优先非设计优先
-- **启示**：NAS 搜索支持和 Everything HTTP 集成是差异化功能
+- **启示**：NAS 搜索支持和 [Everything](https://www.voidtools.com/) HTTP 集成是差异化功能
 
 ### 6.3 HoudahSpot 6 — Houdah Software（$34）
 
@@ -404,7 +404,7 @@ APFS 以 **NFD**（分解形式）存储文件名，但用户输入和很多 API
 
 | 产品 | 索引策略 | 名称搜索速度 | 内容搜索 | 找到隐藏/系统文件 | 正则 | 价格 |
 |------|---------|-------------|---------|------------------|------|------|
-| **Everything (Win)** | NTFS USN Journal | **<100ms** | 慢(content:) | 是 | 是 | 免费 |
+| **[Everything](https://www.voidtools.com/) (Win)** | NTFS USN Journal | **<100ms** | 慢(content:) | 是 | 是 | 免费 |
 | EasyFind | 无（实时遍历） | 5-30s | 是 | 是 | 是 | 免费 |
 | Find Any File | 无（searchfs） | 3-15s | 有限 | 是(root) | 否 | $6 |
 | HoudahSpot | Spotlight | <1-3s | 是 | 否 | 仅过滤 | $34 |
@@ -412,7 +412,7 @@ APFS 以 **NFD**（分解形式）存储文件名，但用户输入和很多 API
 | Raycast | Spotlight | <1s | 否 | 隐藏文件可 | 否 | 免费 |
 | LaunchBar | 自有+Spotlight | <1s (索引) | 纯文本 | 包内容 | 否 | ~$29 |
 
-**Mac 市场存在明确的空白**：没有任何现有 Mac 应用复制了 Everything 的核心价值 — **亚100ms 全文件系统文件名搜索 + 轻量持久索引 + 实时更新**。
+**Mac 市场存在明确的空白**：没有任何现有 Mac 应用复制了 [Everything](https://www.voidtools.com/) 的核心价值 — **亚100ms 全文件系统文件名搜索 + 轻量持久索引 + 实时更新**。
 
 市场分为三类，各有硬伤：
 1. **实时遍历工具**（EasyFind、FAF）：找到一切但慢（秒到十秒级）
@@ -439,15 +439,15 @@ APFS 以 **NFD**（分解形式）存储文件名，但用户输入和很多 API
 | `search-cache` | 持久化/内存索引缓存 |
 | `search-cancel` | 协同取消（输入即搜索响应性） |
 | `query-segmentation` | 查询分词 |
-| `cardinal-syntax` | **Everything 兼容查询解析器** |
+| `cardinal-syntax` | **[Everything](https://www.voidtools.com/) 兼容查询解析器** |
 | `file-tags` | macOS Finder 标签读取 |
 
-**搜索语法**：实现 Everything 兼容语法 — AND(空格)、通配符(`*.pdf`)、大小过滤(`size:>100MB`)、目录范围(`in:/Users`)、否定(`!.psd`)、内容搜索(`content:"Bearer "`)、标签匹配(`tag:ProjectA`)、正则
+**搜索语法**：实现 [Everything](https://www.voidtools.com/) 兼容语法 — AND(空格)、通配符(`*.pdf`)、大小过滤(`size:>100MB`)、目录范围(`in:/Users`)、否定(`!.psd`)、内容搜索(`content:"Bearer "`)、标签匹配(`tag:ProjectA`)、正则
 **多语言支持**：15 种语言，包括简/繁体中文
 
 **关键启示**：
 - `slab-mmap` 零反序列化索引是最先进的持久化方案 — 直接映射到虚拟内存，OS 管理分页
-- Everything 兼容语法是用户获取策略（Windows 用户迁移零学习成本）
+- [Everything](https://www.voidtools.com/) 兼容语法是用户获取策略（Windows 用户迁移零学习成本）
 - Tauri/Web UI 是其弱点 — 非原生体验，为原生方案留出机会
 
 ### 7.2 macfind — 架构最接近 MacEverything ⭐0
@@ -584,7 +584,7 @@ lower_names: Vec<u8>     — 预小写名称池（搜索用）
 | 项目 | Stars | 技术要点 |
 |------|-------|---------|
 | **fd** (sharkdp/fd) | 42,600 | Rust 并行 readdir + regex，比 find 快 23x，无索引 |
-| **FSearch** (cboxdoerfer/fsearch) | 4,100 | C/GTK3 Linux Everything 克隆，Delta 压缩持久化 |
+| **FSearch** (cboxdoerfer/fsearch) | 4,100 | C/GTK3 Linux [Everything](https://www.voidtools.com/) 克隆，Delta 压缩持久化 |
 | **mverything-plus** | 25 | uTools 插件封装 mdfind，模糊/通配/正则/UTI 过滤 |
 | **Cerebro** | 8,500 | Electron 启动器，插件架构但非文件搜索专用 |
 | **Quicksilver** | 2,900 | ObjC 老牌启动器，2009 至今仍维护 |
@@ -618,7 +618,7 @@ lower_names: Vec<u8>     — 预小写名称池（搜索用）
 | Trigram posting lists | **MacEverything**, plocate | 亚线性查询，大数据集最优 |
 | SQLite LIKE | charlesoon/everything | 利用 SQLite 优化器 |
 | Trie + 倒排 + fuzzy 多算法 | SpotSearch | 最灵活 UX |
-| Everything 兼容语法 | Cardinal | 最丰富查询语言 |
+| [Everything](https://www.voidtools.com/) 兼容语法 | Cardinal | 最丰富查询语言 |
 
 ---
 
@@ -660,7 +660,7 @@ lower_names: Vec<u8>     — 预小写名称池（搜索用）
 
 ## 9. 总结：关键设计决策对照表
 
-| 设计决策 | Everything (Win) | FSearch (Linux) | plocate (Linux) | MacEverything (Mac) | 最优方案 |
+| 设计决策 | [Everything](https://www.voidtools.com/) (Win) | FSearch (Linux) | plocate (Linux) | MacEverything (Mac) | 最优方案 |
 |----------|-----------------|-----------------|-----------------|--------------------|---------| 
 | 文件枚举 | MFT 直读 | readdir + fstatat | 定期全量扫描 | **getattrlistbulk** | 平台限定，Mac 上 getattrlistbulk 最优 |
 | 索引结构 | 线性数组（暴力扫描） | 排序数组 + 函数指针匹配 | **Trigram 倒排索引** | **Trigram 倒排索引** | Trigram — 百万级最优 |

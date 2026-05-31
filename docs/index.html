@@ -11,16 +11,107 @@
   <h1>MacEverything：macOS 快速文件搜索工具（fork自joshua-wu）</h1>
   <p><time>2026-05-21</time><span id="url">https://ying-zhang.cn/misc/2026-maceverything/</span></p>
 </div>
-<p>macOS 的极速文件搜索工具，类似 Windows 系统的<a href="https://www.voidtools.com/">Everything</a>。Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a>，增加了一些改进。</p>
+<p>MacEverything 是 macOS 的极速文件搜索工具，灵感来自 Windows 上的 <a href="https://www.voidtools.com/">Everything</a>。Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a>，在搜索速度、查询语法、中文体验、实时索引、AI 工具集成和应用可用性上做了系统改进。</p>
 
-<h2>主要特性</h2>
+<h2>完整功能列表</h2>
+
+<h3>搜索与索引</h3>
 <ul>
-<li><strong>极速搜索</strong> — 500 万文件索引 &lt;1s，查询 ~10ms</li>
-<li><strong>中文界面</strong> — 完整简体中文本地化</li>
-<li><strong>拼音首字母搜索</strong> — 输入 zm 找到「桌面」</li>
-<li><strong>丰富的过滤器</strong> — 扩展名、大小、日期、路径、正则、文件内容</li>
-<li><strong>搜索结果快捷操作</strong> — 改名、删除、拷贝、预览、在终端打开</li>
-<li><strong>可配置</strong> — 索引范围、快捷键、MCP 集成、低内存模式等</li>
+<li><strong>极速文件名搜索</strong> — 面向数百万文件的毫秒级搜索，基于文件名与路径 Trigram 倒排索引。</li>
+<li><strong>全盘快速扫描</strong> — 使用 macOS 底层批量文件属性 API 扫描目录树，减少逐文件系统调用开销。</li>
+<li><strong>文件名与完整路径同时匹配</strong> — 普通关键词默认同时搜索文件名和路径，支持多个词按 AND 组合。</li>
+<li><strong>路径片段搜索</strong> — 支持 `src/main`、`/project/*/target`、`/local/bin/*` 等结构化路径查询。</li>
+<li><strong>Glob 通配符</strong> — 支持 `*.swift`、`~/Documents/*.pdf` 等常见通配符搜索。</li>
+<li><strong>正则表达式搜索</strong> — 支持 `regex:` 查询，并通过 Trigram 预过滤加速候选集生成。</li>
+<li><strong>区分大小写、全词、全文件名匹配</strong> — 支持 `case:`、`ww:`、`wfn:` 等精确匹配模式。</li>
+<li><strong>最近文件视图</strong> — 搜索框为空时显示最近修改的文件，便于快速回到刚处理的内容。</li>
+<li><strong>搜索取消与防抖</strong> — 快速输入时取消过期查询，避免旧结果覆盖新结果。</li>
+<li><strong>快速过滤器</strong> — 在当前结果中筛选文件、文件夹、应用、文档、图片、代码和压缩包；过滤后无结果时可自动恢复全部结果。</li>
+<li><strong>路径过滤器</strong> — 在结果集内按路径片段继续缩小范围，适合大目录或多项目工作区。</li>
+</ul>
+
+<h3>查询语法</h3>
+<ul>
+<li><strong><a href="https://www.voidtools.com/">Everything</a> 风格查询</strong> — 保留随手输入片段即可命中的体验，并扩展为完整 AST 查询管线。</li>
+<li><strong>布尔运算</strong> — 支持 AND、OR、NOT 组合复杂条件。</li>
+<li><strong>扩展名过滤</strong> — `ext:swift,h`、`ext:py` 等。</li>
+<li><strong>大小过滤</strong> — `size:&gt;1mb`、`size:100kb-5mb` 等。</li>
+<li><strong>类型过滤</strong> — `type:file`、`type:folder`。</li>
+<li><strong>路径过滤</strong> — `path:`、`nopath:`、`parent:`、`depth:`。</li>
+<li><strong>日期过滤</strong> — `dm:` 修改日期、`dc:` 创建日期、`da:` 访问日期，支持 today、thisweek、last7days 和比较表达式。</li>
+<li><strong>文件名长度过滤</strong> — `len:&gt;50` 等。</li>
+<li><strong>文件类型宏</strong> — `audio:`、`video:`、`pic:`、`doc:`、`zip:` 快速筛选常见媒体和文档类型。</li>
+<li><strong>Home 目录展开</strong> — 支持 `~` 查询，如 `~/Downloads/*.dmg`。</li>
+<li><strong>内置语法帮助</strong> — 应用内提供搜索语法帮助窗口。</li>
+</ul>
+
+<h3>全文内容搜索</h3>
+<ul>
+<li><strong>文件内容检索</strong> — 使用 `content:` 或 `infile:` 搜索文件内部文本。</li>
+<li><strong>内容 Trigram 索引</strong> — 为全文搜索建立独立索引，避免每次查询都全盘 grep。</li>
+<li><strong>增量内容索引</strong> — 仅重新索引变更文件。</li>
+<li><strong>上下文片段</strong> — 内容搜索结果显示命中关键词附近的文本片段。</li>
+<li><strong>内容索引设置</strong> — 可配置参与内容索引的文件类型和最大文件大小。</li>
+</ul>
+
+<h3>实时同步与启动</h3>
+<ul>
+<li><strong>FSEvents 实时监控</strong> — 新建、删除、重命名和修改文件后自动更新索引。</li>
+<li><strong>两阶段即时启动</strong> — 启动时先加载磁盘缓存，让搜索尽快可用，再在后台追赶文件系统变更。</li>
+<li><strong>WAL 与增量持久化</strong> — 使用写前日志和分页脏页刷新降低崩溃恢复与落盘成本。</li>
+<li><strong>自动子树重扫</strong> — 检测事件截断或目录级变化后自动触发必要范围的重扫。</li>
+<li><strong>焦点感知刷新</strong> — 窗口不在前台时减少刷新，回到前台后批量追赶，降低后台 CPU 占用。</li>
+</ul>
+
+<h3>界面与交互</h3>
+<ul>
+<li><strong>全局快捷键</strong> — 默认 `Option+Space` 唤出搜索窗口，快捷键可配置。</li>
+<li><strong>搜索框自动聚焦</strong> — 打开窗口即可输入。</li>
+<li><strong>Ghost 自动补全</strong> — 根据搜索历史和系统关键词显示半透明建议，按 Tab 接受。</li>
+<li><strong>搜索栏语法高亮</strong> — 过滤器、参数、字符串和运算符使用不同颜色标识。</li>
+<li><strong>搜索选项徽章</strong> — 以菜单和徽章切换正则、大小写敏感、全词、全文件名等模式。</li>
+<li><strong>结果高亮</strong> — 基于查询 AST 标注命中部分，能处理 glob、正则、大小写和排除条件。</li>
+<li><strong>可配置结果列</strong> — 支持名称、扩展名、路径、大小、修改日期列，列可隐藏、排序并拖拽调整宽度。</li>
+<li><strong>键盘工作流</strong> — Enter 可配置为打开或重命名，方向键可移动选中项，选择结果后焦点可进入列表继续操作。</li>
+<li><strong>拖放文件</strong> — 可将搜索结果直接拖到 Finder、VS Code、Xcode 或其他应用。</li>
+<li><strong>右键菜单</strong> — 支持打开、在 Finder 中显示、复制路径等常用操作。</li>
+<li><strong>Cmd+Click 定位</strong> — 快速在 Finder 中显示目标文件。</li>
+<li><strong>中英文界面</strong> — 应用界面、菜单、设置和帮助支持简体中文与英文。</li>
+</ul>
+
+<h3>设置与部署</h3>
+<ul>
+<li><strong>完整磁盘访问提示</strong> — 首次启动引导授予 macOS 权限。</li>
+<li><strong>开机启动</strong> — 支持登录后自动启动，并可最小化后台运行。</li>
+<li><strong>快捷键设置</strong> — 可自定义全局唤出快捷键。</li>
+<li><strong>内容搜索设置</strong> — 管理全文索引范围和资源限制。</li>
+<li><strong>GUI 应用</strong> — SwiftUI 菜单栏应用，面向日常桌面使用。</li>
+<li><strong>CLI daemon</strong> — 无界面后台服务，适合服务器或自动化环境。</li>
+<li><strong>本地构建与 DMG 发布</strong> — 支持 Xcode 本地构建与 DMG 打包；发布脚本可分别产出 arm64 和 Intel DMG。</li>
+<li><strong>RE2 依赖嵌入</strong> — 构建流程会准备并嵌入 RE2/Abseil dylib，验证主应用、MCP 程序和依赖库不再引用 Homebrew 绝对路径。</li>
+</ul>
+
+<h3>自动化与 AI 工具集成</h3>
+<ul>
+<li><strong>本地 HTTP API</strong> — 默认监听 `localhost:19860`，支持文件搜索、内容搜索、最近文件、状态和内存信息接口。</li>
+<li><strong>HTTP 服务健壮性</strong> — 仅绑定回环地址，支持并发连接，启动端口短暂占用时自动重试，并限制异常请求体大小。</li>
+<li><strong>MCP Server</strong> — 内置 Model Context Protocol 支持，可供 Claude Code、Cursor、Claude Desktop 等 AI 工具调用。</li>
+<li><strong>一键配置 MCP</strong> — 应用菜单中提供 MCP 集成入口。</li>
+<li><strong>AI 可用工具</strong> — 提供 `search_files`、`search_content`、`recent_files`、`index_status` 等能力。</li>
+</ul>
+
+<h3>性能与可靠性</h3>
+<ul>
+<li><strong>C++20 核心引擎</strong> — 搜索、扫描、索引、持久化由同一套核心驱动 GUI、daemon 和 MCP。</li>
+<li><strong>SoA 列式数据布局</strong> — 提升大规模候选过滤时的缓存局部性。</li>
+<li><strong>路径字符串驻留</strong> — 目录路径使用表索引复用，降低百万文件规模下的内存占用。</li>
+<li><strong>v6 Flat SoA 两阶段索引</strong> — 启动先加载基础记录，后台再构建 Trigram、拼音、路径、扩展名、CJK bigram 和最近文件索引。</li>
+<li><strong>Phase 2 可靠性保护</strong> — 后台索引构建期间新增/更新记录先进入基础数据，索引切换时回放变更；内存不足时跳过 Phase 2 避免半成品索引。</li>
+<li><strong>ARM NEON SIMD</strong> — 对不可索引加速的字符串匹配路径使用向量化优化。</li>
+<li><strong>APFS Firmlink 去重</strong> — 处理 macOS System/Data 卷合并路径带来的重复遍历问题。</li>
+<li><strong>Unicode 查询归一化</strong> — 对非 ASCII 查询尝试常见 NFC/NFD 变体，适配 macOS 文件名表示。</li>
+<li><strong>FSEvents 安全重放</strong> — 规范化排除路径、过滤自身缓存事件，并在停止监听时排空回调队列，降低竞态和误重扫风险。</li>
+<li><strong>自动化测试覆盖</strong> — 覆盖扫描、查询、持久化、内容索引、HTTP、MCP、并发和内存安全等模块。</li>
 </ul>
 
 <h2>链接</h2>
@@ -28,6 +119,7 @@
 <li><a href="https://github.com/ying-zhang/MacEverything">源代码</a></li>
 <li><a href="https://github.com/ying-zhang/MacEverything/releases">Release 页面</a></li>
 <li><a href="https://github.com/joshua-wu/MacEverything">上游项目 (joshua-wu/MacEverything)</a></li>
+<li><a href="https://www.voidtools.com/">Everything 官网</a></li>
 <li><a href="https://ying-zhang.cn/misc/2026-maceverything/">简介</a></li>
 </ul>
 
