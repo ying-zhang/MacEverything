@@ -23,12 +23,14 @@ else
   BINARIES=("MacEverything")
 fi
 
+# Seed only with libre2; copy_dependency_closure() walks otool -L recursively to
+# embed exactly the Abseil dylibs libre2 actually references at runtime. Seeding
+# every libabsl*.dylib here would embed Homebrew's entire Abseil set (~95 libs,
+# including test-only ones like libabsl_scoped_mock_log), bloating the bundle.
 declare -a QUEUE=()
 for candidate in \
   "${RE2_DEPENDENCY_ROOT:-}/lib/libre2"*.dylib \
-  "${RE2_DEPENDENCY_ROOT:-}/lib/libabsl"*.dylib \
   "${SRCROOT:-}/third_party/re2/lib/libre2"*.dylib \
-  "${SRCROOT:-}/third_party/re2/lib/libabsl"*.dylib \
   /opt/homebrew/opt/re2/lib/libre2*.dylib \
   /usr/local/opt/re2/lib/libre2*.dylib; do
   if [[ -f "$candidate" ]]; then

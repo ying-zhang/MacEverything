@@ -51,7 +51,7 @@ Press **`Option+Space`** to summon the search window anytime (hotkey is customiz
 - **Search option badges** — colorful badges next to the search bar for one-click toggling of Regex / Case Sensitive / Whole Word / Match Filename
 - **Chinese and English UI** — the app UI, menus, settings windows, and search syntax help support Simplified Chinese and English, automatically following the preferred macOS language
 
-### Everything-Style Query Syntax
+### [Everything](https://www.voidtools.com/)-Style Query Syntax
 
 Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and regular expressions. Built-in syntax help window (**Cmd+?**).
 
@@ -73,7 +73,7 @@ Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and r
 
 #### Filename and Path Fragment Matching
 
-Default search targets both filenames and full paths: multiple plain terms separated by spaces are combined with AND, and each term may match anywhere in the filename or path. For example, `ying pdf` can match `/Users/ying/xx/xx.pdf`, preserving the Everything-style experience where casual fragments still find files.
+Default search targets both filenames and full paths: multiple plain terms separated by spaces are combined with AND, and each term may match anywhere in the filename or path. For example, `ying pdf` can match `/Users/ying/xx/xx.pdf`, preserving the [Everything](https://www.voidtools.com/)-style experience where casual fragments still find files.
 
 Queries containing `/` enable structured path matching while keeping substring semantics. For example, `src/main` means the filename contains `main` and the parent path contains `src`; `/project/*/target` can match non-adjacent path segments; `/local/bin/*` lists direct children of a directory. For non-ASCII queries, MacEverything tries common macOS Unicode NFC/NFD normalization variants at query time, without growing the persistent index.
 
@@ -115,8 +115,11 @@ Type `infile:keyword` to search file contents — results include highlighted co
 ### Interaction Details
 
 - **Smart highlighting** — matches highlighted in search results, AST-aware: correctly handles glob wildcards, regex, case sensitivity, NOT exclusions, and other complex patterns
+- **Quick filters** — filter the current result set by files, folders, apps, documents, images, code, or archives; if a selected filter makes the current query empty, MacEverything falls back to all results so the search does not look broken
+- **Path filter** — narrow the current result set by a path fragment, useful when a broad query spans many directories
+- **Configurable result columns** — sort by name, extension, path, size, or modified date; extension/path/size/date columns can be shown or hidden, and column widths are resizable
 - **Drag & drop** — drag files directly from search results to Finder, VS Code, Xcode, or any application
-- **Context menu** — Open / Reveal in Finder / Copy Path
+- **Keyboard and context actions** — Enter can open or rename the selected result; supports arrow-key selection, result-list focus, and context actions for Open / Reveal in Finder / Copy Path
 - **Cmd+Click** — quickly locate files in Finder
 - **Recent files** — automatically shows recently modified files when the search bar is empty
 
@@ -153,6 +156,8 @@ curl "http://localhost:19860/api/status"                          # Index status
 curl "http://localhost:19860/api/memory"                          # Memory breakdown
 ```
 
+The HTTP server binds to loopback only, supports concurrent connections, retries short-lived port conflicts during startup, and validates request body size so slow or malformed clients do not block the service.
+
 ### Installation
 
 #### Download DMG (Recommended)
@@ -182,7 +187,7 @@ hdiutil create -volname MacEverything \
   -ov -format UDZO MacEverything.dmg
 ```
 
-Release builds and GitHub Actions artifacts automatically embed Homebrew's `libre2` and its dependencies into `.app/Contents/Frameworks` so the distributed app can launch on Macs without Homebrew/RE2 installed.
+Release builds and GitHub Actions artifacts automatically embed Homebrew's `libre2` and its dependencies into `.app/Contents/Frameworks` so the distributed app can launch on Macs without Homebrew/RE2 installed. Release scripts build separate arm64 and Intel DMGs and verify the app binary, MCP binary, embedded dylibs, architectures, and dependency paths.
 
 #### CLI Daemon
 
@@ -277,11 +282,15 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 | GCD parallel scan | Multi-core linear scan when trigram can't accelerate |
 | StringPool contiguous memory | Filenames packed in a single `char` buffer, SIMD-friendly |
 | PathTable interning | Directory paths stored as `uint32` index — saves ~550MB at million-file scale |
+| v6 Flat SoA two-phase load | Loads base records first so search becomes available quickly, then builds Trigram, pinyin, path, extension, CJK bigram, and recent-file indexes in the background |
+| Phase 2 index reliability guard | Records added or updated during background index construction are committed to base data first and replayed when indexes swap in; Phase 2 is skipped under low-memory pressure to avoid partial indexes |
 | Unicode query normalization | Tries NFC/NFD variants for non-ASCII queries at query time, matching macOS filename representations without maintaining a second index |
 | Generation counter | Checked every 1024 iterations, zero-overhead cancellation of stale queries during fast typing |
 | APFS Firmlink dedup | inode + devid detection, correctly handles macOS Data/System volume merge loops |
 | Regex Trigram pre-filter | Extracts literals from regex to generate trigram candidates, ~7s → <100ms |
+| CJK bigram index | Chinese, Japanese, and Korean queries can pre-filter candidates through bigrams, reducing fallback to pure linear scans |
 | Adaptive Trigram bypass | Falls back to parallel scan when candidate set is too large, avoiding wasteful index lookups |
+| Safe FSEvents replay | Normalizes exclusion paths, filters self-generated cache events, and drains callback queues during shutdown to avoid races and unnecessary full rescans |
 | COW non-blocking compaction | Copy-on-write, exclusive lock held < 100ms during compaction (was 30–60s) |
 | Paged incremental persistence | Only writes dirty pages, typical flush I/O drops from ~112MB to KB-level |
 
