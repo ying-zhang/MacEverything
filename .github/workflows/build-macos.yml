@@ -7,6 +7,43 @@ on:
   workflow_dispatch:
 
 jobs:
+  build-arm64:
+    name: Build arm64
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+
+      - name: Install dependencies
+        run: brew install re2 abseil
+
+      - name: Prepare local RE2 dependencies
+        run: scripts/prepare-re2-deps.sh third_party/re2
+
+      - name: Run fast tests
+        run: make test-fast
+
+      - name: Build release DMG
+        run: scripts/build-release-dmgs.sh arm64
+
+      - name: Verify DMG exists
+        run: |
+          dmg="artifacts/MacEverything-arm64.dmg"
+          if [[ ! -f "$dmg" ]]; then
+            echo "::error::DMG was not created: $dmg"
+            exit 1
+          fi
+          ls -lh "$dmg"
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7.0.1
+        with:
+          name: MacEverything-macOS-arm64
+          path: |
+            build/arm64/Release/MacEverything.app
+            artifacts/MacEverything-arm64.dmg
+
   build-intel:
     name: Build x86_64
     runs-on: macos-15-intel

@@ -570,7 +570,8 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
 
     // Intern path before moving record
     uint32_t pIdx = internPath(record.path);
-    if (pIdx >= pathIdxToRecords_.size()) {
+    if (!phase2Pending_.load(std::memory_order_acquire) &&
+        pIdx >= pathIdxToRecords_.size()) {
         ensurePathTrigramsForPathIdx(pIdx);
     }
     record.path.clear();
@@ -584,12 +585,13 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
     pathIndices_.push_back(pIdx);
     setPathIndexUnlocked(lowerFull, idx);
 
-    // Update trigram index
-    addTrigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
-    addPinyinInitialsForRecord(idx);
-    addPathTrigramsForRecord(idx);
-    addExtensionForRecord(idx);
-    addCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+    if (!phase2Pending_.load(std::memory_order_acquire)) {
+        addTrigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+        addPinyinInitialsForRecord(idx);
+        addPathTrigramsForRecord(idx);
+        addExtensionForRecord(idx);
+        addCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+    }
 
     // Dirty page tracking
     if (idx / kRecordsPerPage >= dirtyPages_.size()) {
@@ -709,7 +711,8 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         if (wal_) wal_->append(WALOp::Update, fullPath, record);
 
         uint32_t pIdx = internPath(record.path);
-        if (pIdx >= pathIdxToRecords_.size()) {
+        if (!phase2Pending_.load(std::memory_order_acquire) &&
+            pIdx >= pathIdxToRecords_.size()) {
             ensurePathTrigramsForPathIdx(pIdx);
         }
         record.path.clear();
@@ -721,11 +724,13 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         namePool_.append(lower);
         pathIndices_.push_back(pIdx);
         setPathIndexUnlocked(me::toLower(fullPath), newIdx);
-        addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
-        addPinyinInitialsForRecord(newIdx);
-        addPathTrigramsForRecord(newIdx);
-        addExtensionForRecord(newIdx);
-        addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+        if (!phase2Pending_.load(std::memory_order_acquire)) {
+            addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+            addPinyinInitialsForRecord(newIdx);
+            addPathTrigramsForRecord(newIdx);
+            addExtensionForRecord(newIdx);
+            addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+        }
         if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
             dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
         }
@@ -766,7 +771,8 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
 
     // Intern path before moving record
     uint32_t pIdx = internPath(updated.path);
-    if (pIdx >= pathIdxToRecords_.size()) {
+    if (!phase2Pending_.load(std::memory_order_acquire) &&
+        pIdx >= pathIdxToRecords_.size()) {
         ensurePathTrigramsForPathIdx(pIdx);
     }
     updated.path.clear();
@@ -778,11 +784,13 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
     namePool_.append(lower);
     pathIndices_.push_back(pIdx);
     setPathIndexUnlocked(me::toLower(newFullPath), newIdx);
-    addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
-    addPinyinInitialsForRecord(newIdx);
-    addPathTrigramsForRecord(newIdx);
-    addExtensionForRecord(newIdx);
-    addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+    if (!phase2Pending_.load(std::memory_order_acquire)) {
+        addTrigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+        addPinyinInitialsForRecord(newIdx);
+        addPathTrigramsForRecord(newIdx);
+        addExtensionForRecord(newIdx);
+        addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+    }
     if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
         dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
     }
@@ -798,12 +806,25 @@ void SearchEngine::updateByPath(const std::string& fullPath, FileRecord&& update
 
 void SearchEngine::batchMutate(std::vector<MutationOp>&& ops) {
     if (ops.empty()) return;
-    std::unique_lock lock(mutex_);
-    for (auto& op : ops) {
-        if (op.type == MutationOp::REMOVE) {
-            removeByPathUnlocked(op.path);
-        } else {
-            updateByPathUnlocked(op.path, std::move(op.record));
+
+    // Apply mutations in chunks, releasing mutex_ between chunks so concurrent
+    // searches aren't blocked for the whole batch during FSEvents storms. Each
+    // op is self-contained, so chunk boundaries stay consistent. 300 keeps the
+    // per-chunk lock hold in the sub-millisecond range while bounding the
+    // re-lock overhead to a fraction of a percent of total batch time.
+    constexpr size_t kChunkSize = 300;
+    const size_t total = ops.size();
+
+    for (size_t offset = 0; offset < total; offset += kChunkSize) {
+        const size_t end = std::min(offset + kChunkSize, total);
+        std::unique_lock lock(mutex_);
+        for (size_t i = offset; i < end; ++i) {
+            auto& op = ops[i];
+            if (op.type == MutationOp::REMOVE) {
+                removeByPathUnlocked(op.path);
+            } else {
+                updateByPathUnlocked(op.path, std::move(op.record));
+            }
         }
     }
 }
