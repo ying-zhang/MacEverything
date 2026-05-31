@@ -127,18 +127,39 @@ void SearchEngine::completePhase2() {
 
     {
         std::shared_lock lock(mutex_);
+        // Peak transient footprint of completePhase2(): the lightweight snapshot
+        // (types/modTimes/string pools/path indices) plus all secondary indices
+        // (name/pinyin/path trigrams, pathIdxToRecords, extension, CJK bigram).
+        // ~200 B/record was the measured peak across our test corpora; it is a
+        // rough upper bound, not an exact figure.
+        constexpr uint64_t kEstimatedBytesPerRecord = 200;
+        // Only build when the estimate fits within this fraction of reclaimable
+        // memory, leaving headroom for the rest of the process and the OS.
+        constexpr uint64_t kMemoryBudgetNumerator = 7;
+        constexpr uint64_t kMemoryBudgetDenominator = 10;
+
         uint64_t recordCount = types_.size();
-        uint64_t estimatedBytes = recordCount * 200; // measured peak: snapshots + secondary indices
+        uint64_t estimatedBytes = recordCount * kEstimatedBytesPerRecord;
 #ifdef __APPLE__
         vm_statistics64_data_t vmstat;
         mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
         uint64_t availableBytes = 0;
         if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
                               reinterpret_cast<host_info64_t>(&vmstat), &count) == KERN_SUCCESS) {
-            uint64_t availablePages = vmstat.free_count + vmstat.inactive_count;
+            // Reclaimable pages on macOS: free pages, plus pages the VM can hand
+            // back without paging to disk — inactive (compressible under memory
+            // pressure), speculative (read-ahead, dropped first), and purgeable
+            // (volatile caches). Counting only free+inactive understated what is
+            // actually available and caused false skips; including speculative
+            // and purgeable tracks real availability more closely.
+            uint64_t availablePages = static_cast<uint64_t>(vmstat.free_count)
+                                    + vmstat.inactive_count
+                                    + vmstat.speculative_count
+                                    + vmstat.purgeable_count;
             availableBytes = availablePages * vm_page_size;
         }
-        if (availableBytes > 0 && estimatedBytes > availableBytes * 7 / 10) {
+        if (availableBytes > 0 &&
+            estimatedBytes > availableBytes * kMemoryBudgetNumerator / kMemoryBudgetDenominator) {
             LOG_WARN("SearchEngine", "Phase 2 skipped: need ~" << (estimatedBytes >> 20)
                      << "MB but only ~" << (availableBytes >> 20)
                      << "MB available. Keeping Phase 2 pending to avoid partial indices.");

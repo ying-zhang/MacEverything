@@ -341,9 +341,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
             if (engine->isPhase2Pending()) {
                 dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
                     if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-                    auto eng = this->safeEngine();
-                    if (eng) eng->completePhase2();
-                    if (this->onIndexChanged) this->onIndexChanged();
+                    this->runPhase2Completion();
                 });
             }
 
@@ -390,6 +388,48 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
 // ═══════════════════════════════════════════════════════
 //  Background sync (FSEvents replay or full scan)
 // ═══════════════════════════════════════════════════════
+
+void ServiceEngine::runPhase2Completion() {
+    // completePhase2() may defer (return with phase2Pending_ still true) when it
+    // estimates the secondary indices won't fit in available memory. Without a
+    // retry, a single transient memory spike at startup would permanently leave
+    // search on the slow linear-scan fallback. Retry with exponential backoff so
+    // Phase 2 completes once memory frees up.
+    constexpr int kMaxAttempts = 8;
+    dispatch_semaphore_t sleeper = dispatch_semaphore_create(0);
+
+    for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
+        if (this->shuttingDown_.load(std::memory_order_acquire)) break;
+
+        auto eng = this->safeEngine();
+        if (!eng || !eng->isPhase2Pending()) break;  // already built or no engine
+
+        eng->completePhase2();
+        if (this->onIndexChanged) this->onIndexChanged();
+
+        if (!eng->isPhase2Pending()) break;  // succeeded — indices active
+
+        if (attempt + 1 >= kMaxAttempts) {
+            LOG_WARN("ServiceEngine", "Phase 2 still pending after " << kMaxAttempts
+                     << " attempts; secondary indices unbuilt (search uses linear-scan fallback).");
+            break;
+        }
+
+        // Backoff: 15s, 30s, 60s, 120s, 240s, then capped at 300s.
+        int64_t delaySec = int64_t(15) << attempt;
+        if (delaySec > 300) delaySec = 300;
+        LOG_INFO("ServiceEngine", "Phase 2 deferred (low memory); retrying in " << delaySec << "s");
+
+        // Shutdown-responsive sleep: wake every second to re-check shuttingDown_
+        // so teardown isn't blocked waiting out a long backoff interval.
+        for (int64_t elapsed = 0; elapsed < delaySec; ++elapsed) {
+            if (this->shuttingDown_.load(std::memory_order_acquire)) break;
+            dispatch_semaphore_wait(sleeper, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC));
+        }
+    }
+
+    dispatch_release(sleeper);
+}
 
 void ServiceEngine::backgroundSyncEngine(
     std::shared_ptr<SearchEngine> engine,

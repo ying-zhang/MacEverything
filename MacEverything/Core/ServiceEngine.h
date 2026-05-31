@@ -104,6 +104,10 @@ private:
                               uint64_t lastEventId,
                               std::chrono::steady_clock::time_point incrementalStart,
                               std::chrono::steady_clock::time_point indexLoadDone);
+    // Build Phase 2 secondary indices, retrying with backoff when
+    // SearchEngine::completePhase2() defers due to transient memory pressure.
+    // Runs as a single background block tracked by backgroundGroup_.
+    void runPhase2Completion();
     IndexMetadata buildMetadata();
 
     // ── FSEvents methods (ServiceEngine+FSEvents.cpp) ──

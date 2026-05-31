@@ -807,6 +807,11 @@ void SearchEngine::updateByPath(const std::string& fullPath, FileRecord&& update
 void SearchEngine::batchMutate(std::vector<MutationOp>&& ops) {
     if (ops.empty()) return;
 
+    // Apply mutations in chunks, releasing mutex_ between chunks so concurrent
+    // searches aren't blocked for the whole batch during FSEvents storms. Each
+    // op is self-contained, so chunk boundaries stay consistent. 300 keeps the
+    // per-chunk lock hold in the sub-millisecond range while bounding the
+    // re-lock overhead to a fraction of a percent of total batch time.
     constexpr size_t kChunkSize = 300;
     const size_t total = ops.size();
 
