@@ -433,6 +433,7 @@ class SearchViewModel: ObservableObject {
         searchTask?.cancel()
         recentTask?.cancel()
         searchGeneration &+= 1
+        bridge.cancelSession(sessionId)
         isLoadingMore = false
         clearSelection()
         updateHighlightHints()
@@ -945,6 +946,34 @@ class SearchViewModel: ObservableObject {
         } else if showingRecent && settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         } else if searchText.isEmpty && displayItems.isEmpty && settings.snapshot.startupDisplayMode == .recent {
+            loadRecentFiles()
+        }
+    }
+
+    func refreshAfterWindowRestore() {
+        guard service.scanComplete else { return }
+
+        searchTask?.cancel()
+        recentTask?.cancel()
+        searchGeneration &+= 1
+        bridge.cancelSession(sessionId)
+        updateHighlightHints()
+
+        if !searchText.isEmpty {
+            showingRecent = false
+            allowQuickFilterAutoResetForCurrentSearch = false
+            if isContentSearch {
+                let keyword = contentKeyword.isEmpty && searchText.lowercased().hasPrefix("infile:")
+                    ? String(searchText.dropFirst(7))
+                    : contentKeyword
+                contentKeyword = keyword
+                if !keyword.isEmpty {
+                    performContentSearch(keyword)
+                }
+            } else {
+                performSearch(searchText)
+            }
+        } else if showingRecent || settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         }
     }

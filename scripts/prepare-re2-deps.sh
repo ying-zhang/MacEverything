@@ -21,6 +21,10 @@ copy_matching_libs() {
   cp -a "$lib_root"/$pattern "$dest/lib/"
 }
 
+artifact_framework_dirs() {
+  find "$root_dir/artifacts" "$root_dir/build" -path '*/MacEverything.app/Contents/Frameworks' -type d -print 2>/dev/null || true
+}
+
 copied_re2_headers=0
 copied_absl_headers=0
 copied_re2_libs=0
@@ -40,6 +44,8 @@ done
 
 for source_root in \
   "${RE2_SOURCE_DIR:-}" \
+  "$root_dir/third_party/re2/include" \
+  "$root_dir/third_party/re2" \
   "$root_dir/artifacts/re2-source" \
   /tmp/re2-main; do
   [[ $copied_re2_headers -eq 0 ]] || break
@@ -66,6 +72,8 @@ done
 
 for source_root in \
   "${ABSEIL_SOURCE_DIR:-}" \
+  "$root_dir/third_party/re2/include" \
+  "$root_dir/third_party/re2" \
   "$root_dir/artifacts/abseil-source" \
   /tmp/abseil-master; do
   [[ $copied_absl_headers -eq 0 ]] || break
@@ -89,7 +97,10 @@ done
 
 for lib_root in \
   "${RE2_LIB_DIR:-}" \
-  "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks"; do
+  "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks" \
+  "$root_dir/artifacts/MacEverything-macOS-arm64/build/arm64/Release/MacEverything.app/Contents/Frameworks" \
+  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks" \
+  $(artifact_framework_dirs); do
   [[ $copied_re2_libs -eq 0 ]] || break
   [[ -n "${lib_root:-}" ]] || continue
   if copy_matching_libs "$lib_root" "libre2*.dylib"; then
@@ -115,7 +126,10 @@ done
 for lib_root in \
   "${ABSEIL_LIB_DIR:-}" \
   "${RE2_LIB_DIR:-}" \
-  "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks"; do
+  "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks" \
+  "$root_dir/artifacts/MacEverything-macOS-arm64/build/arm64/Release/MacEverything.app/Contents/Frameworks" \
+  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks" \
+  $(artifact_framework_dirs); do
   [[ $copied_absl_libs -eq 0 ]] || break
   [[ -n "${lib_root:-}" ]] || continue
   if copy_matching_libs "$lib_root" "libabsl*.dylib"; then

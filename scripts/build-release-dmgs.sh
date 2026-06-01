@@ -59,12 +59,23 @@ prepare_re2_for_arch() {
   fi
 
   if [[ ! -d "$prefix/opt/re2" || ! -d "$prefix/opt/abseil" ]]; then
+    if "$root_dir/scripts/prepare-re2-deps.sh" "$dep_root" >&2; then
+      local dylib
+      while IFS= read -r dylib; do
+        assert_dylib_arch "$arch" "$dylib"
+      done < <(find "$dep_root/lib" -maxdepth 1 -name '*.dylib' -print)
+      printf '%s' "$dep_root"
+      return 0
+    fi
+
     cat >&2 <<EOF
 error: missing $arch Homebrew re2/abseil dependencies under $prefix.
 Install them first, for example:
   $( [[ "$arch" == arm64 ]] && echo "arch -arm64" || echo "arch -x86_64" ) brew install re2 abseil
 
 Override the prefix with ARM64_BREW_PREFIX or X86_64_BREW_PREFIX if needed.
+Alternatively, unpack the GitHub Actions artifact under artifacts/ and provide
+headers via third_party/re2/include, artifacts/re2-source, and artifacts/abseil-source.
 EOF
     exit 69
   fi
@@ -81,6 +92,32 @@ EOF
   printf '%s' "$dep_root"
 }
 
+verify_no_homebrew_refs() {
+  local path="$1"
+  if otool -L "$path" | grep -E '/opt/homebrew|/usr/local'; then
+    echo "error: $path still references Homebrew dylibs" >&2
+    exit 65
+  fi
+}
+
+verify_rpath_dependencies() {
+  local app_path="$1"
+  local path="$2"
+  local frameworks_dir="$app_path/Contents/Frameworks"
+  local dep
+
+  while IFS= read -r dep; do
+    case "$dep" in
+      @rpath/*.dylib)
+        if [[ ! -f "$frameworks_dir/$(basename "$dep")" ]]; then
+          echo "error: $path references missing embedded dylib: $dep" >&2
+          exit 65
+        fi
+        ;;
+    esac
+  done < <(otool -L "$path" | awk 'NR > 1 { print $1 }')
+}
+
 verify_app_arch() {
   local arch="$1"
   local app_path="$2"
@@ -90,14 +127,10 @@ verify_app_arch() {
   assert_dylib_arch "$arch" "$main"
   assert_dylib_arch "$arch" "$mcp"
 
-  if otool -L "$main" | grep -E '/opt/homebrew|/usr/local'; then
-    echo "error: app binary still references Homebrew dylibs" >&2
-    exit 65
-  fi
-  if otool -L "$mcp" | grep -E '/opt/homebrew|/usr/local'; then
-    echo "error: MCP binary still references Homebrew dylibs" >&2
-    exit 65
-  fi
+  verify_no_homebrew_refs "$main"
+  verify_no_homebrew_refs "$mcp"
+  verify_rpath_dependencies "$app_path" "$main"
+  verify_rpath_dependencies "$app_path" "$mcp"
 
   if ! find "$app_path/Contents/Frameworks" -name 'libre2*.dylib' -print -quit | grep -q .; then
     echo "error: libre2 dylib was not embedded in the app bundle" >&2
@@ -107,10 +140,8 @@ verify_app_arch() {
   local dylib
   while IFS= read -r dylib; do
     assert_dylib_arch "$arch" "$dylib"
-    if otool -L "$dylib" | grep -E '/opt/homebrew|/usr/local'; then
-      echo "error: $dylib still references Homebrew dylibs" >&2
-      exit 65
-    fi
+    verify_no_homebrew_refs "$dylib"
+    verify_rpath_dependencies "$app_path" "$dylib"
   done < <(find "$app_path/Contents/Frameworks" -name '*.dylib' -print)
 }
 

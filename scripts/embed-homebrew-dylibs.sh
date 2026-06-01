@@ -53,6 +53,37 @@ is_embeddable_dependency() {
     [[ "$dep" == /opt/homebrew/* || "$dep" == /usr/local/* ]]
 }
 
+resolve_embeddable_dependency() {
+  local dep="$1"
+
+  if is_embeddable_dependency "$dep"; then
+    printf '%s\n' "$dep"
+    return 0
+  fi
+
+  case "$dep" in
+    @rpath/*.dylib|@loader_path/*.dylib|@executable_path/*.dylib)
+      local name
+      name="$(basename "$dep")"
+      local root
+      for root in \
+        "$FRAMEWORKS_DIR" \
+        "${RE2_DEPENDENCY_ROOT:-}/lib" \
+        "${SRCROOT:-}/third_party/re2/lib" \
+        /opt/homebrew/opt/re2/lib \
+        /opt/homebrew/opt/abseil/lib \
+        /usr/local/opt/re2/lib \
+        /usr/local/opt/abseil/lib; do
+        [[ -n "$root" && -f "$root/$name" ]] || continue
+        printf '%s\n' "$root/$name"
+        return 0
+      done
+      ;;
+  esac
+
+  return 1
+}
+
 has_copied_name() {
   local name="$1"
   [[ "$COPIED_NAMES" == *"
@@ -77,8 +108,8 @@ $name
     chmod u+w "$FRAMEWORKS_DIR/$name"
 
     while IFS= read -r child; do
-      if is_embeddable_dependency "$child"; then
-        QUEUE+=("$child")
+      if resolved="$(resolve_embeddable_dependency "$child")"; then
+        QUEUE+=("$resolved")
       fi
     done < <(otool -L "$dep" | awk 'NR > 1 { print $1 }')
   done

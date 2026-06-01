@@ -406,12 +406,16 @@ struct ContentView: View {
             viewModel.onWindowFocusChanged(true)
             resultListFocused = false
             isSearchFieldFocused = true
+            viewModel.refreshAfterWindowRestore()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(false)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didDeminiaturizeNotification)) { _ in
             scrollViewID += 1
+            resultListFocused = false
+            isSearchFieldFocused = true
+            viewModel.refreshAfterWindowRestore()
         }
     }
 
