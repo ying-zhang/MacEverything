@@ -341,6 +341,7 @@ class SearchViewModel: ObservableObject {
     private var searchTask: Task<Void, Never>?
     private var recentTask: Task<Void, Never>?
     private var settledTask: Task<Void, Never>?
+    private var windowRestoreRefreshTask: Task<Void, Never>?
     private var optionsSink: AnyCancellable?
     private var cachedResults: [MEFileResult] = []
     private var sourceItems: [FileItem] = []
@@ -953,6 +954,15 @@ class SearchViewModel: ObservableObject {
     func refreshAfterWindowRestore() {
         guard service.scanComplete else { return }
 
+        windowRestoreRefreshTask?.cancel()
+        windowRestoreRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 100_000_000)
+            guard !Task.isCancelled, let self else { return }
+            self.performWindowRestoreRefresh()
+        }
+    }
+
+    private func performWindowRestoreRefresh() {
         searchTask?.cancel()
         recentTask?.cancel()
         searchGeneration &+= 1
@@ -963,9 +973,7 @@ class SearchViewModel: ObservableObject {
             showingRecent = false
             allowQuickFilterAutoResetForCurrentSearch = false
             if isContentSearch {
-                let keyword = contentKeyword.isEmpty && searchText.lowercased().hasPrefix("infile:")
-                    ? String(searchText.dropFirst(7))
-                    : contentKeyword
+                let keyword = currentContentSearchKeyword()
                 contentKeyword = keyword
                 if !keyword.isEmpty {
                     performContentSearch(keyword)
@@ -976,6 +984,16 @@ class SearchViewModel: ObservableObject {
         } else if showingRecent || settings.snapshot.startupDisplayMode == .recent {
             loadRecentFiles()
         }
+    }
+
+    private func currentContentSearchKeyword() -> String {
+        if !contentKeyword.isEmpty {
+            return contentKeyword
+        }
+        if searchText.lowercased().hasPrefix("infile:") {
+            return String(searchText.dropFirst(7))
+        }
+        return ""
     }
 
     func onQuickFilterChanged() {
