@@ -32,7 +32,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         // Delay by one frame to let SwiftUI create the window
         DispatchQueue.main.async { [weak self] in
             self?.activeSearchWindow = self?.frontmostSearchWindow()
-            self?.activeSearchWindow.map { SearchWindowSupport.configure($0, searchText: "") }
+            self?.activeSearchWindow.map { window in
+                window.delegate = self
+                SearchWindowSupport.configure(window, searchText: "")
+            }
             if shouldMinimize {
                 self?.activeSearchWindow?.orderOut(nil)
                 NSApp.hide(nil)
@@ -160,7 +163,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func menuWillOpen(_ menu: NSMenu) {
         activeSearchWindow = frontmostSearchWindow() ?? activeSearchWindow
         if let item = menu.items.first {
-            let isVisible = activeSearchWindow?.isVisible ?? false
+            let isVisible = (activeSearchWindow?.isVisible ?? false) && !NSApp.isHidden
             item.title = isVisible ? L10n.tr("Hide MacEverything") : L10n.tr("Show MacEverything")
         }
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
@@ -174,12 +177,12 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     @objc private func toggleWindow() {
         activeSearchWindow = frontmostSearchWindow() ?? activeSearchWindow
-        if let window = activeSearchWindow, window.isVisible {
+        if let window = activeSearchWindow, window.isVisible, !NSApp.isHidden {
             NSApp.hide(nil)
         } else {
             NSApp.activate(ignoringOtherApps: true)
             if let window = activeSearchWindow {
-                window.makeKeyAndOrderFront(nil)
+                SearchWindowSupport.restore(window)
             } else {
                 newSearchWindow()
             }
@@ -196,7 +199,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         win.delegate = self
         SearchWindowSupport.configure(win, searchText: "")
         win.center()
-        win.makeKeyAndOrderFront(self)
+        SearchWindowSupport.restore(win)
         auxiliarySearchWindows.append(win)
         activeSearchWindow = win
     }
@@ -207,6 +210,13 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         if activeSearchWindow === window {
             activeSearchWindow = frontmostSearchWindow()
         }
+    }
+
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        guard SearchWindowSupport.isSearchWindow(sender) else { return true }
+        activeSearchWindow = sender
+        NSApp.hide(nil)
+        return false
     }
 
     @objc private func rebuildIndex() {
@@ -318,6 +328,20 @@ enum SearchWindowSupport {
         window.tabbingMode = .preferred
         window.title = title(for: searchText)
         requestTabBarIfNeeded(for: window)
+    }
+
+    static func restore(_ window: NSWindow) {
+        if window.isMiniaturized {
+            window.deminiaturize(nil)
+        }
+        NSApp.unhide(nil)
+        window.orderFrontRegardless()
+        window.makeKeyAndOrderFront(nil)
+
+        DispatchQueue.main.async {
+            window.makeKeyAndOrderFront(nil)
+            NotificationCenter.default.post(name: .searchWindowDidRestore, object: window)
+        }
     }
 
     private static func title(for searchText: String) -> String {

@@ -954,10 +954,16 @@ class SearchViewModel: ObservableObject {
     func refreshAfterWindowRestore() {
         guard service.scanComplete else { return }
 
+        let textSnapshot = searchText
+        let contentKeywordSnapshot = contentKeyword
+        let isContentSnapshot = isContentSearch
         windowRestoreRefreshTask?.cancel()
         windowRestoreRefreshTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 100_000_000)
             guard !Task.isCancelled, let self else { return }
+            guard self.searchText == textSnapshot,
+                  self.contentKeyword == contentKeywordSnapshot,
+                  self.isContentSearch == isContentSnapshot else { return }
             self.performWindowRestoreRefresh()
         }
     }

@@ -87,6 +87,7 @@ extension Notification.Name {
     static let rebuildContentIndex = Notification.Name("rebuildContentIndex")
     static let clearContentIndex = Notification.Name("clearContentIndex")
     static let searchServiceDidRefresh = Notification.Name("searchServiceDidRefresh")
+    static let searchWindowDidRestore = Notification.Name("searchWindowDidRestore")
 }
 
 @MainActor

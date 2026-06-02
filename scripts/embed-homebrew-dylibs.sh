@@ -104,7 +104,10 @@ copy_dependency_closure() {
 $name
 "
 
-    cp -fL "$dep" "$FRAMEWORKS_DIR/$name"
+    local target="$FRAMEWORKS_DIR/$name"
+    if [[ ! -e "$target" || "$(realpath "$dep")" != "$(realpath "$target")" ]]; then
+      cp -fL "$dep" "$target"
+    fi
     chmod u+w "$FRAMEWORKS_DIR/$name"
 
     while IFS= read -r child; do

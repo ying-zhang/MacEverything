@@ -51,12 +51,12 @@ class HotkeyManager {
                                           eventKind: UInt32(kEventHotKeyPressed))
             InstallEventHandler(GetApplicationEventTarget(), { _, event, _ -> OSStatus in
                 let mainWindow = NSApp.orderedWindows.first { SearchWindowSupport.isSearchWindow($0) }
-                if NSApp.isActive, let window = mainWindow, window.isVisible {
+                if NSApp.isActive, let window = mainWindow, window.isVisible, !NSApp.isHidden {
                     NSApp.hide(nil)
                 } else {
                     NSApp.activate(ignoringOtherApps: true)
                     if let window = mainWindow {
-                        window.makeKeyAndOrderFront(nil)
+                        SearchWindowSupport.restore(window)
                     }
                 }
                 return noErr

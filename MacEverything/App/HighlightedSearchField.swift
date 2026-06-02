@@ -172,6 +172,7 @@ struct HighlightedSearchField: NSViewRepresentable {
     var onCmdDelete: (() -> Void)?
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Void)?
+    var focusRequest: Int = 0
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -204,8 +205,9 @@ struct HighlightedSearchField: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.setAccessibilityIdentifier("searchField")
 
-        // Single-line behavior: disable Enter/Return
-        textView.isFieldEditor = true
+        // Keep this as a normal embedded NSTextView. AppKit field editors are
+        // temporary window-owned editors and become unreliable across app hide/show.
+        textView.isFieldEditor = false
 
         // Key handling
         textView.onTabKey = context.coordinator.handleTab
@@ -248,8 +250,13 @@ struct HighlightedSearchField: NSViewRepresentable {
             textView.needsDisplay = true
         }
 
+        let shouldFocus = isFocused.wrappedValue || context.coordinator.lastFocusRequest != focusRequest
+        if context.coordinator.lastFocusRequest != focusRequest {
+            context.coordinator.lastFocusRequest = focusRequest
+        }
+
         // Handle focus
-        if isFocused.wrappedValue && textView.window != nil && textView.window?.firstResponder !== textView {
+        if shouldFocus && textView.window != nil && textView.window?.firstResponder !== textView {
             textView.window?.makeFirstResponder(textView)
         }
     }
@@ -260,6 +267,7 @@ struct HighlightedSearchField: NSViewRepresentable {
         var parent: HighlightedSearchField
         weak var textView: NSTextView?
         var isUpdatingFromSwiftUI = false
+        var lastFocusRequest = 0
 
         init(_ parent: HighlightedSearchField) {
             self.parent = parent
@@ -281,6 +289,26 @@ struct HighlightedSearchField: NSViewRepresentable {
                     parent.isFocused.wrappedValue = isFocused
                 }
             }
+        }
+
+        func textView(_ textView: NSTextView,
+                      shouldChangeTextIn affectedCharRange: NSRange,
+                      replacementString: String?) -> Bool {
+            guard let replacementString else { return true }
+            if replacementString == "\n" || replacementString == "\r" {
+                parent.onSubmit?()
+                return false
+            }
+            guard replacementString.contains(where: \.isNewline) else { return true }
+
+            let sanitized = replacementString
+                .split(whereSeparator: \.isNewline)
+                .joined(separator: " ")
+            if let range = Range(affectedCharRange, in: textView.string) {
+                textView.string.replaceSubrange(range, with: sanitized)
+                self.textDidChange(Notification(name: NSText.didChangeNotification, object: textView))
+            }
+            return false
         }
 
         func handleTab() -> Bool {
