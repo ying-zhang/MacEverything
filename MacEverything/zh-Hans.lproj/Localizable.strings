@@ -4,6 +4,8 @@
 "Search files... (Chinese initials supported)" = "搜索文件...（支持拼音首字母）";
 "Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)" = "搜索文件名（支持拼音首字母；Cmd+N新建搜索；infile: 搜索文件内容）";
 "Search filenames (Chinese initials supported; Cmd+N for new search)" = "搜索文件名（支持拼音首字母；Cmd+N新建搜索）";
+"Search filenames (Chinese initials supported; Cmd+N for new tab; infile: for content)" = "搜索文件名（支持拼音首字母；Cmd+N新建标签页；infile: 搜索文件内容）";
+"Search filenames (Chinese initials supported; Cmd+N for new tab)" = "搜索文件名（支持拼音首字母；Cmd+N新建标签页）";
 "Scanning... %d items scanned" = "正在扫描... 已扫描 %d 项";
 "Syncing..." = "正在同步...";
 "Live" = "实时";
@@ -30,6 +32,8 @@
 "Show MacEverything" = "显示 MacEverything";
 "Hide MacEverything" = "隐藏 MacEverything";
 "New Search" = "新建搜索";
+"New Search Tab" = "新建搜索标签页";
+"New Search Window" = "新建搜索窗口";
 "Rebuild Index" = "重建索引";
 "Shortcut Settings..." = "快捷键设置...";
 "Content Settings..." = "内容设置...";

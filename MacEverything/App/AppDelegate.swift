@@ -34,7 +34,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             self?.activeSearchWindow = self?.frontmostSearchWindow()
             self?.activeSearchWindow.map { window in
                 window.delegate = self
-                SearchWindowSupport.configure(window, searchText: "")
+                SearchWindowSupport.configure(window, searchText: "", presentation: .window)
             }
             if shouldMinimize {
                 self?.activeSearchWindow?.orderOut(nil)
@@ -76,7 +76,14 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         let menu = NSMenu()
         menu.delegate = self
         menu.addItem(NSMenuItem(title: L10n.tr("Show MacEverything"), action: #selector(toggleWindow), keyEquivalent: ""))
-        menu.addItem(NSMenuItem(title: L10n.tr("New Search"), action: #selector(newSearchWindow), keyEquivalent: ""))
+        menu.addItem(Self.menuItem(title: L10n.tr("New Search Tab"),
+                                   action: #selector(newSearchTab),
+                                   keyEquivalent: "n",
+                                   modifiers: [.command]))
+        menu.addItem(Self.menuItem(title: L10n.tr("New Search Window"),
+                                   action: #selector(newSearchWindow),
+                                   keyEquivalent: "n",
+                                   modifiers: [.command, .shift]))
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.tr("Settings..."), action: #selector(openSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Rebuild Index"), action: #selector(rebuildIndex), keyEquivalent: ""))
@@ -105,6 +112,15 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: L10n.tr("Quit MacEverything"), action: #selector(quitApp), keyEquivalent: "q"))
         statusItem?.menu = menu
+    }
+
+    private static func menuItem(title: String,
+                                 action: Selector,
+                                 keyEquivalent: String,
+                                 modifiers: NSEvent.ModifierFlags) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: action, keyEquivalent: keyEquivalent)
+        item.keyEquivalentModifierMask = modifiers
+        return item
     }
 
     private static func makeStatusBarIcon() -> NSImage {
@@ -184,24 +200,40 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             if let window = activeSearchWindow {
                 SearchWindowSupport.restore(window)
             } else {
-                newSearchWindow()
+                newSearchTab()
             }
         }
     }
 
+    @objc func newSearchTab() {
+        createSearchWindow(presentation: .tab)
+    }
+
     @objc func newSearchWindow() {
+        createSearchWindow(presentation: .window)
+    }
+
+    @discardableResult
+    private func createSearchWindow(presentation: SearchWindowSupport.Presentation) -> NSWindow {
         NSApp.activate(ignoringOtherApps: true)
+        let tabTarget = presentation == .tab ? targetSearchWindowForNewTab() : nil
         let hostingController = NSHostingController(rootView: ContentView())
         let win = NSWindow(contentViewController: hostingController)
         win.styleMask = NSWindow.StyleMask([.titled, .closable, .miniaturizable, .resizable])
         win.setContentSize(NSSize(width: 800, height: 600))
         win.minSize = NSSize(width: 600, height: 400)
         win.delegate = self
-        SearchWindowSupport.configure(win, searchText: "")
-        win.center()
+        SearchWindowSupport.configure(win, searchText: "", presentation: presentation, tabTarget: tabTarget)
+        if let tabTarget {
+            SearchWindowSupport.restore(tabTarget)
+            tabTarget.addTabbedWindow(win, ordered: .above)
+        } else {
+            win.center()
+        }
         SearchWindowSupport.restore(win)
         auxiliarySearchWindows.append(win)
         activeSearchWindow = win
+        return win
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -215,6 +247,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         guard SearchWindowSupport.isSearchWindow(sender) else { return true }
         activeSearchWindow = sender
+        if hasOtherSearchWindows(than: sender) {
+            return true
+        }
         NSApp.hide(nil)
         return false
     }
@@ -294,6 +329,24 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
     }
 
+    private func targetSearchWindowForNewTab() -> NSWindow? {
+        if let keyWindow = NSApp.keyWindow,
+           SearchWindowSupport.isSearchWindow(keyWindow) {
+            return keyWindow
+        }
+        if let mainWindow = NSApp.mainWindow,
+           SearchWindowSupport.isSearchWindow(mainWindow) {
+            return mainWindow
+        }
+        return frontmostSearchWindow() ?? activeSearchWindow
+    }
+
+    private func hasOtherSearchWindows(than closingWindow: NSWindow) -> Bool {
+        NSApp.windows.contains { window in
+            window !== closingWindow && SearchWindowSupport.isSearchWindow(window)
+        }
+    }
+
     // MARK: - Launch Mode Detection
 
     private static func shouldStartMinimized() -> Bool {
@@ -311,23 +364,42 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
 @MainActor
 enum SearchWindowSupport {
+    enum Presentation {
+        case tab
+        case window
+    }
+
     static let windowIdentifier = NSUserInterfaceItemIdentifier("MacEverything.searchWindow")
-    static let tabbingIdentifier = NSWindow.TabbingIdentifier("MacEverything.search")
+    static let legacyTabbingIdentifier = NSWindow.TabbingIdentifier("MacEverything.search")
     private static var tabBarRequestedWindows: Set<ObjectIdentifier> = []
 
     static func isSearchWindow(_ window: NSWindow) -> Bool {
         window.identifier == windowIdentifier ||
-        window.tabbingIdentifier == tabbingIdentifier ||
+        window.tabbingIdentifier == legacyTabbingIdentifier ||
         window.title == "MacEverything" ||
         window.title.hasSuffix(" - MacEverything")
     }
 
-    static func configure(_ window: NSWindow, searchText: String) {
+    static func configure(_ window: NSWindow,
+                          searchText: String,
+                          presentation: Presentation = .window,
+                          tabTarget: NSWindow? = nil) {
         window.identifier = windowIdentifier
-        window.tabbingIdentifier = tabbingIdentifier
-        window.tabbingMode = .preferred
+        updateTitle(window, searchText: searchText)
+
+        switch presentation {
+        case .tab:
+            window.tabbingIdentifier = tabbingIdentifier(forNewTabIn: tabTarget)
+            window.tabbingMode = .preferred
+            requestTabBarIfNeeded(for: window)
+        case .window:
+            window.tabbingIdentifier = newTabbingIdentifier()
+            window.tabbingMode = .preferred
+        }
+    }
+
+    static func updateTitle(_ window: NSWindow, searchText: String) {
         window.title = title(for: searchText)
-        requestTabBarIfNeeded(for: window)
     }
 
     static func restore(_ window: NSWindow) {
@@ -357,6 +429,18 @@ enum SearchWindowSupport {
             ? String(compact.prefix(maxTitleKeywordLength)) + "..."
             : compact
         return "\(keyword) - MacEverything"
+    }
+
+    private static func tabbingIdentifier(forNewTabIn target: NSWindow?) -> NSWindow.TabbingIdentifier {
+        if let target,
+           !target.tabbingIdentifier.isEmpty {
+            return target.tabbingIdentifier
+        }
+        return newTabbingIdentifier()
+    }
+
+    private static func newTabbingIdentifier() -> NSWindow.TabbingIdentifier {
+        NSWindow.TabbingIdentifier("MacEverything.search.\(UUID().uuidString)")
     }
 
     private static func requestTabBarIfNeeded(for window: NSWindow) {

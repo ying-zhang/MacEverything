@@ -4,6 +4,8 @@
 "Search files... (Chinese initials supported)" = "Search files... (Chinese initials supported)";
 "Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)" = "Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)";
 "Search filenames (Chinese initials supported; Cmd+N for new search)" = "Search filenames (Chinese initials supported; Cmd+N for new search)";
+"Search filenames (Chinese initials supported; Cmd+N for new tab; infile: for content)" = "Search filenames (Chinese initials supported; Cmd+N for new tab; infile: for content)";
+"Search filenames (Chinese initials supported; Cmd+N for new tab)" = "Search filenames (Chinese initials supported; Cmd+N for new tab)";
 "Scanning... %d items scanned" = "Scanning... %d items scanned";
 "Syncing..." = "Syncing...";
 "Live" = "Live";
@@ -30,6 +32,8 @@
 "Show MacEverything" = "Show MacEverything";
 "Hide MacEverything" = "Hide MacEverything";
 "New Search" = "New Search";
+"New Search Tab" = "New Search Tab";
+"New Search Window" = "New Search Window";
 "Rebuild Index" = "Rebuild Index";
 "Shortcut Settings..." = "Shortcut Settings...";
 "Content Settings..." = "Content Settings...";
