@@ -14,16 +14,27 @@ struct MacEverythingApp: App {
         .defaultSize(width: 800, height: 600)
         .commands {
             CommandGroup(replacing: .newItem) {
-                Button(L10n.tr("New Search")) {
-                    appDelegate.newSearchWindow()
+                Button(L10n.tr("New Search Tab")) {
+                    appDelegate.newSearchTab()
                 }
                 .keyboardShortcut("n", modifiers: [.command])
+
+                Button(L10n.tr("New Search Window")) {
+                    appDelegate.newSearchWindow()
+                }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
             }
 
             CommandMenu(Text(L10n.tr("Search"))) {
-                Button(L10n.tr("New Search")) {
+                Button(L10n.tr("New Search Tab")) {
+                    appDelegate.newSearchTab()
+                }
+                .keyboardShortcut("n", modifiers: [.command])
+
+                Button(L10n.tr("New Search Window")) {
                     appDelegate.newSearchWindow()
                 }
+                .keyboardShortcut("n", modifiers: [.command, .shift])
 
                 Divider()
 

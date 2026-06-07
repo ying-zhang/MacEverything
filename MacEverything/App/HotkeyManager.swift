@@ -57,6 +57,8 @@ class HotkeyManager {
                     NSApp.activate(ignoringOtherApps: true)
                     if let window = mainWindow {
                         SearchWindowSupport.restore(window)
+                    } else if let appDelegate = NSApp.delegate as? AppDelegate {
+                        appDelegate.newSearchTab()
                     }
                 }
                 return noErr

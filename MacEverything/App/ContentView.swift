@@ -36,8 +36,8 @@ struct ContentView: View {
                 HighlightedSearchField(
                     text: $viewModel.searchText,
                     placeholder: settings.contentIndexingEnabled
-                        ? L10n.tr("Search filenames (Chinese initials supported; Cmd+N for new search; infile: for content)")
-                        : L10n.tr("Search filenames (Chinese initials supported; Cmd+N for new search)"),
+                        ? L10n.tr("Search filenames (Chinese initials supported; Cmd+N for new tab; infile: for content)")
+                        : L10n.tr("Search filenames (Chinese initials supported; Cmd+N for new tab)"),
                     ghostSuggestion: viewModel.ghostSuggestion,
                     isFocused: $isSearchFieldFocused,
                     onTab: {
@@ -445,7 +445,7 @@ struct ContentView: View {
     private func updateSearchWindowTitle() {
         guard let window = hostWindow,
               SearchWindowSupport.isSearchWindow(window) else { return }
-        SearchWindowSupport.configure(window, searchText: viewModel.searchText)
+        SearchWindowSupport.updateTitle(window, searchText: viewModel.searchText)
     }
 
     private func formattedIndexMemory(_ bytes: UInt64) -> String {
