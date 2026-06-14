@@ -109,6 +109,7 @@ Type `infile:keyword` to search file contents — results include highlighted co
 ### Real-Time Sync, Always Up to Date
 
 - **File monitoring** — FSEvents-based real-time file system listener; new, renamed, or deleted files appear in search results immediately
+- **USB hot-plug** — automatically scans and indexes files on newly inserted USB drives, and cleans up the index on ejection — no restart needed
 - **Two-phase instant startup** — loads disk cache on launch (searchable immediately), then catches up with changes via FSEvents in the background. Zero wait time
 - **Focus-aware power saving** — pauses refresh when the window is in the background, batch-catches up on refocus. Near-zero background CPU usage
 
@@ -291,6 +292,8 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 | CJK bigram index | Chinese, Japanese, and Korean queries can pre-filter candidates through bigrams, reducing fallback to pure linear scans |
 | Adaptive Trigram bypass | Falls back to parallel scan when candidate set is too large, avoiding wasteful index lookups |
 | Safe FSEvents replay | Normalizes exclusion paths, filters self-generated cache events, and drains callback queues during shutdown to avoid races and unnecessary full rescans |
+| USB hot-plug index maintenance | `willUnmount` pre-cleanup + `didMount` auto-rescan + `config_` shared_mutex thread safety + automatic FSEvents restart |
+| Multi-term composite scoring | Ranks by miss count (query terms not in filename) + match quality (exact/prefix/boundary/substring) + path length — more precise results for multi-word queries |
 | COW non-blocking compaction | Copy-on-write, exclusive lock held < 100ms during compaction (was 30–60s) |
 | Paged incremental persistence | Only writes dirty pages, typical flush I/O drops from ~112MB to KB-level |
 
