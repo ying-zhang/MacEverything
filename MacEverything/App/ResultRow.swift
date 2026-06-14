@@ -160,7 +160,9 @@ struct ResultRow: View {
             let actionItems = contextActionItems
             Button(L10n.tr("Open")) { openFile(item) }
             Button(L10n.tr("Reveal in Finder")) { revealInFinder(item) }
-            Button(L10n.tr("Open in Finder")) { openInFinder(item) }
+            if item.type == 2 {
+                Button(L10n.tr("Open Folder")) { openInFinder(item) }
+            }
             Button(L10n.tr("Quick Look")) { quickLook(actionItems) }
             Button(L10n.tr("Rename")) { startRename() }
                 .disabled(actionItems.count != 1)
@@ -256,7 +258,7 @@ struct ResultRow: View {
     }
 
     private func openInFinder(_ item: FileItem) {
-        NSWorkspace.shared.open(URL(fileURLWithPath: item.path))
+        NSWorkspace.shared.open(URL(fileURLWithPath: item.fullPath))
     }
 
     private var isActivelyRenaming: Bool {
