@@ -11,13 +11,14 @@ namespace fs = std::filesystem;
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::setupContentPersistence() {
-    if (!config_.contentIndexingEnabled) return;
+    auto cfg = safeConfig();
+    if (!cfg.contentIndexingEnabled) return;
 
     auto contentIndex = safeContentIndex();
     auto engine = safeEngine();
     if (!contentIndex || !engine) return;
 
-    std::string cacheDir = config_.cachePath;
+    std::string cacheDir = cfg.cachePath;
     fs::create_directories(cacheDir);
 
     std::string basePath = cacheDir + "/content_index.bin";
@@ -51,7 +52,7 @@ void ServiceEngine::setupContentPersistence() {
     }
 
     newContentPersistence->attachWAL();
-    if (config_.automaticMaintenanceEnabled) {
+    if (cfg.automaticMaintenanceEnabled) {
         newContentPersistence->startAutoCompaction(300.0);
     }
 
@@ -68,7 +69,7 @@ void ServiceEngine::setupContentPersistence() {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startContentIndexing() {
-    if (!config_.contentIndexingEnabled) return;
+    if (!safeConfig().contentIndexingEnabled) return;
 
     auto engine = safeEngine();
     auto contentIndex = safeContentIndex();
@@ -138,6 +139,7 @@ void ServiceEngine::startContentIndexing() {
             if (this->contentIndexGeneration_.load(std::memory_order_acquire) != myGeneration) return;
 
             const auto& entry = entries[i];
+            if (this->isVolumeUnmounting(entry.fullPath)) return;
             bool didIndex = contentIndex->indexFile(entry.idx, entry.fullPath, entry.modTime);
 
             if (didIndex && contentPersistence) {
@@ -182,7 +184,7 @@ void ServiceEngine::startContentIndexing() {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::rebuildContentIndex() {
-    if (!config_.contentIndexingEnabled) return;
+    if (!safeConfig().contentIndexingEnabled) return;
 
     auto engine = safeEngine();
     auto contentIndex = safeContentIndex();
@@ -245,7 +247,7 @@ void ServiceEngine::clearContentIndex() {
         setContentPersistence(nullptr);
     }
 
-    std::string cacheDir = config_.cachePath;
+    std::string cacheDir = safeConfig().cachePath;
     std::error_code ec;
     fs::remove(cacheDir + "/content_index.bin", ec);
     ec.clear();
@@ -260,7 +262,7 @@ void ServiceEngine::clearContentIndex() {
         contentIndex_ = newIndex;
     }
 
-    if (config_.contentIndexingEnabled) {
+    if (safeConfig().contentIndexingEnabled) {
         setupContentPersistence();
     }
 
@@ -280,8 +282,9 @@ void ServiceEngine::updateContentForPath(
     const std::string& fullPath, bool removed,
     std::shared_ptr<SearchEngine> engine)
 {
-    if (!config_.contentIndexingEnabled) return;
+    if (!safeConfig().contentIndexingEnabled) return;
     if (!removed && !isPathAllowedByConfig(fullPath, true)) return;
+    if (!removed && isVolumeUnmounting(fullPath)) return;
 
     auto contentIndex = safeContentIndex();
     if (!engine || !contentIndex) return;

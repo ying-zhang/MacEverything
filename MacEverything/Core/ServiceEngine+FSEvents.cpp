@@ -12,6 +12,8 @@ void ServiceEngine::applyFSEvents(
     const std::vector<FileSystemWatcher::Event>& events,
     std::shared_ptr<SearchEngine> engine)
 {
+    auto cfg = safeConfig();
+
     // Collect all mutation ops first, then apply in a single batch lock
     std::vector<SearchEngine::MutationOp> ops;
     ops.reserve(events.size());
@@ -24,7 +26,7 @@ void ServiceEngine::applyFSEvents(
         FSEventStreamEventFlags flags = event.flags;
 
         if (!isPathAllowedByConfig(path, false)) continue;
-        if (!config_.includeAppBundleContents && isInsideAppBundle(path)) continue;
+        if (!cfg.includeAppBundleContents && isInsideAppBundle(path)) continue;
 
         bool itemRemoved = (flags & kFSEventStreamEventFlagItemRemoved) != 0;
         bool itemRenamed = (flags & kFSEventStreamEventFlagItemRenamed) != 0;
@@ -33,7 +35,7 @@ void ServiceEngine::applyFSEvents(
         bool exists = (lstat(path.c_str(), &st) == 0);
 
         if (itemRemoved || (itemRenamed && !exists)) {
-            if (config_.contentIndexingEnabled) {
+            if (cfg.contentIndexingEnabled) {
                 contentUpdates.push_back({path, true});
             }
             ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
@@ -65,7 +67,7 @@ void ServiceEngine::applyFSEvents(
 
             ops.push_back({SearchEngine::MutationOp::UPDATE, path, std::move(record)});
 
-            if (type == 1 && config_.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
+            if (type == 1 && cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
                 contentUpdates.push_back({path, false});
             }
         }
@@ -90,8 +92,9 @@ void ServiceEngine::startMonitoring() {
     auto roots = effectiveScanRoots();
 
     // Exclude app's own cache directory from FSEvents
-    std::vector<std::string> exclusions = config_.excludedPaths;
-    std::string cacheExclusion = config_.cachePath;
+    auto cfg = safeConfig();
+    std::vector<std::string> exclusions = cfg.excludedPaths;
+    std::string cacheExclusion = cfg.cachePath;
     if (cacheExclusion.empty()) {
         const char* home = std::getenv("HOME");
         if (home) cacheExclusion = std::string(home) + "/Library/Caches/com.maceverything.app";
@@ -109,6 +112,8 @@ void ServiceEngine::startMonitoring() {
         auto engine = safeEngine();
         if (!engine) return;
 
+        auto cfg = safeConfig();
+
         std::vector<std::string> rescanDirs;
         std::vector<SearchEngine::MutationOp> ops;
         ops.reserve(events.size());
@@ -120,7 +125,7 @@ void ServiceEngine::startMonitoring() {
             FSEventStreamEventFlags flags = event.flags;
 
             if (!isPathAllowedByConfig(path, false)) continue;
-            if (!config_.includeAppBundleContents && isInsideAppBundle(path)) continue;
+            if (!cfg.includeAppBundleContents && isInsideAppBundle(path)) continue;
 
             if (flags & kFSEventStreamEventFlagMustScanSubDirs) {
                 rescanDirs.push_back(path);
@@ -134,7 +139,7 @@ void ServiceEngine::startMonitoring() {
             bool exists = (lstat(path.c_str(), &st) == 0);
 
             if (itemRemoved || (itemRenamed && !exists)) {
-                if (config_.contentIndexingEnabled) {
+                if (cfg.contentIndexingEnabled) {
                     contentUpdates.push_back({path, true});
                 }
                 ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
@@ -169,7 +174,7 @@ void ServiceEngine::startMonitoring() {
                 changed = true;
 
                 if (type == 1) {
-                    if (config_.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
+                    if (cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
                         contentUpdates.push_back({path, false});
                     }
                 }
@@ -194,6 +199,19 @@ void ServiceEngine::startMonitoring() {
     });
 
     isMonitoring_.store(true, std::memory_order_relaxed);
+}
+
+void ServiceEngine::restartMonitoring() {
+    if (!isMonitoring_.load(std::memory_order_relaxed)) return;
+    LOG_INFO("ServiceEngine", "Restarting monitoring (scan roots changed)");
+    stopMonitoring();
+    startMonitoring();
+    if (safeConfig().automaticMaintenanceEnabled) {
+        auto persistence = safePersistence();
+        if (persistence) {
+            persistence->startAutoCompaction(300.0, watcher_);
+        }
+    }
 }
 
 void ServiceEngine::stopMonitoring() {
@@ -319,24 +337,40 @@ void ServiceEngine::flushPendingRescans() {
     }
 }
 
-void ServiceEngine::rescanSubtree(const std::string& dir) {
+void ServiceEngine::rescanSubtree(const std::string& dir,
+                                   std::function<void()> completion) {
     auto engine = safeEngine();
-    if (!engine) return;
+    if (!engine) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(); });
+        }
+        return;
+    }
+
+    // Copy dir to avoid dangling reference — the caller's temporary may be
+    // destroyed before the async block executes.
+    std::string dirCopy = dir;
+    auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
 
     dispatch_async(mutationQueue_, ^{
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
 
         auto scanner = std::make_shared<DirectoryScanner>();
-        scanner->scan(std::vector<std::string>{dir}, this->scanConfig());
+        std::vector<std::string> roots{dirCopy};
+        scanner->scan(roots, this->scanConfigForRoots(roots));
         auto freshRecords = scanner->takeResults();
+        LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): scanned "
+                 << freshRecords.size() << " records");
 
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
 
-        engine->batchRescanPrefix(dir, std::move(freshRecords));
+        uint32_t removed = engine->batchRescanPrefix(dirCopy, std::move(freshRecords));
 
         // Compact if tombstones exceed 30%
         uint32_t total = engine->recordCount();
         uint32_t live  = engine->liveRecordCount();
+        LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): removed="
+                 << removed << " total=" << total << " live=" << live);
         if (total > live && (total - live) > total * 3 / 10) {
             auto remap = engine->compactRecords();
             if (!remap.empty()) {
@@ -349,6 +383,55 @@ void ServiceEngine::rescanSubtree(const std::string& dir) {
 
         if (onIndexChanged) {
             onIndexChanged();
+        }
+
+        if (completionCopy) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                (*completionCopy)();
+            });
+        }
+    });
+}
+
+void ServiceEngine::removeSubtree(const std::string& pathPrefix,
+                                   std::function<void(uint32_t)> completion) {
+    auto engine = safeEngine();
+    if (!engine) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(0); });
+        }
+        return;
+    }
+
+    // Copy pathPrefix to avoid dangling reference.
+    std::string prefixCopy = pathPrefix;
+    auto completionCopy = completion ? std::make_shared<std::function<void(uint32_t)>>(std::move(completion)) : nullptr;
+
+    dispatch_async(mutationQueue_, ^{
+        if (shuttingDown_.load(std::memory_order_relaxed)) return;
+
+        std::vector<uint32_t> removedIndices;
+        uint32_t removed = engine->removeByPathPrefixCollectingIndices(prefixCopy, &removedIndices);
+        if (safeConfig().contentIndexingEnabled) {
+            auto ci = safeContentIndex();
+            if (ci) {
+                auto cp = safeContentPersistence();
+                for (uint32_t idx : removedIndices) {
+                    ci->removeFile(idx);
+                    if (cp) cp->walAppendRemove(idx);
+                }
+            }
+        }
+        LOG_INFO("ServiceEngine", "removeSubtree(" << prefixCopy << "): removed " << removed << " records");
+
+        if (onIndexChanged) {
+            onIndexChanged();
+        }
+
+        if (completionCopy) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                (*completionCopy)(removed);
+            });
         }
     });
 }

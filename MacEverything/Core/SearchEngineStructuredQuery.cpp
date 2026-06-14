@@ -146,9 +146,9 @@ void SearchEngine::treeWalkDown(uint32_t dirIdx, const ParsedQuery& pq,
 
             if (!namePatternMatches(pq, nd, nl, types_[childIdx])) continue;
 
-            uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
+            uint8_t q = namePriority(nd, nl, namePattern.data(), namePattern.size());
             uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
-            merged.push_back({childIdx, priority, pLen});
+            merged.push_back({childIdx, encodeScore(0, q, pLen)});
         }
         return;
     }
@@ -251,9 +251,9 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
 
                 if (!namePatternMatches(pq, nd, nl, types_[idx])) return;
 
-                uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
+                uint8_t q = namePriority(nd, nl, namePattern.data(), namePattern.size());
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[idx]) + 1 + nl);
-                merged.push_back({idx, priority, pLen});
+                merged.push_back({idx, encodeScore(0, q, pLen)});
             };
 
             if (pi < pathIdxToRecords_.size()) {
@@ -331,10 +331,10 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
 
                 if (!namePatternMatches(pq, namePool_.data(cursor), namePool_.length(cursor), types_[cursor])) continue;
 
-                uint8_t priority = namePriority(namePool_.data(cursor), namePool_.length(cursor),
-                                                 namePattern.data(), namePattern.size());
+                uint8_t q = namePriority(namePool_.data(cursor), namePool_.length(cursor),
+                                        namePattern.data(), namePattern.size());
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[cursor]) + 1 + entries[cursor].length);
-                merged.push_back({cursor, priority, pLen});
+                merged.push_back({cursor, encodeScore(0, q, pLen)});
             }
         } else {
             uint32_t entryCount = namePool_.entryCount();
@@ -344,9 +344,9 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
                 const char* nd = namePool_.data(idx);
                 uint16_t nl = namePool_.length(idx);
                 if (!namePatternMatches(pq, nd, nl, types_[idx])) continue;
-                uint8_t priority = namePriority(nd, nl, namePattern.data(), namePattern.size());
+                uint8_t q = namePriority(nd, nl, namePattern.data(), namePattern.size());
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[idx]) + 1 + nl);
-                merged.push_back({idx, priority, pLen});
+                merged.push_back({idx, encodeScore(0, q, pLen)});
             }
         }
     }
@@ -378,9 +378,9 @@ bool SearchEngine::queryStructuredNameAnchor(const ParsedQuery& pq,
             if (!pathSegmentsMatch(lowerPathStr(pathPool_, pathIndices_[idx]), pq.pathSegments)) continue;
         }
 
-        uint8_t priority = namePriority(nameData, nameLen, namePattern.data(), namePattern.size());
+        uint8_t q = namePriority(nameData, nameLen, namePattern.data(), namePattern.size());
         uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[idx]) + 1 + nameLen);
-        merged.push_back({idx, priority, pLen});
+        merged.push_back({idx, encodeScore(0, q, pLen)});
     }
     return true;
 }

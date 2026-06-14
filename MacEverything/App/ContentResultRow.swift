@@ -56,7 +56,6 @@ struct ContentResultRow: View {
         .contextMenu {
             Button(L10n.tr("Open")) { openFile() }
             Button(L10n.tr("Reveal in Finder")) { revealInFinder() }
-            Button(L10n.tr("Open in Finder")) { openInFinder() }
             Button(L10n.tr("Quick Look")) { quickLook() }
             Divider()
             Button(L10n.tr("Copy File")) { copyFile() }

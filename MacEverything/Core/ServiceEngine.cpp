@@ -122,15 +122,36 @@ ServiceEngine::~ServiceEngine() {
     shutdown();
 }
 
+ServiceConfig ServiceEngine::safeConfig() const {
+    std::shared_lock lock(configMutex_);
+    return config_;
+}
+
 void ServiceEngine::updateConfig(const ServiceConfig& config) {
-    bool restartHttp = config_.httpPort != config.httpPort;
-    config_ = config;
+    bool restartHttp;
+    bool rootsChanged;
+    {
+        std::unique_lock lock(configMutex_);
+        restartHttp = config_.httpPort != config.httpPort;
+        rootsChanged = config_.scanRoots != config.scanRoots ||
+                       config_.scanRoot != config.scanRoot;
+        config_ = config;
+    }
 
     if (restartHttp) {
         stopHttpServer();
-        if (config_.httpPort > 0) {
-            startHttpServer(config_.httpPort);
+        if (config.httpPort > 0) {
+            startHttpServer(config.httpPort);
         }
+    }
+
+    LOG_INFO("ServiceEngine", "updateConfig: rootsChanged=" << rootsChanged
+             << " httpChanged=" << restartHttp
+             << " monitoring=" << isMonitoring_.load(std::memory_order_relaxed)
+             << " liveRecords=" << liveRecordCount());
+
+    if (rootsChanged && isMonitoring_.load(std::memory_order_relaxed)) {
+        restartMonitoring();
     }
 }
 
@@ -195,17 +216,45 @@ IndexMetadata ServiceEngine::buildMetadata() {
     IndexMetadata meta;
     meta.lastEventId = watcher_ ? watcher_->getLastEventId() : 0;
     auto roots = effectiveScanRoots();
+    auto cfg = safeConfig();
     std::string joinedRoots;
     for (size_t i = 0; i < roots.size(); i++) {
         if (i > 0) joinedRoots += ";";
         joinedRoots += roots[i];
     }
-    meta.extra[IndexMetadata::kScanRoot] = joinedRoots.empty() ? config_.scanRoot : joinedRoots;
+    meta.extra[IndexMetadata::kScanRoot] = joinedRoots.empty() ? cfg.scanRoot : joinedRoots;
     meta.extra[IndexMetadata::kAppVersion] = kAppVersion;
     meta.extra[IndexMetadata::kRecordFormat] = "v6_flat";
     meta.extra[IndexMetadata::kOSVersion] = PathUtils::getOSVersionString();
     meta.extra["config_signature"] = configSignature();
     return meta;
+}
+
+// ═══════════════════════════════════════════════════════
+//  Volume unmount protection
+// ═══════════════════════════════════════════════════════
+
+void ServiceEngine::markVolumeUnmounting(const std::string& volumePath) {
+    std::lock_guard<std::mutex> lock(unmountingVolumesMutex_);
+    unmountingVolumes_.insert(volumePath);
+    LOG_INFO("ServiceEngine", "Marked volume as unmounting: " << volumePath);
+}
+
+void ServiceEngine::clearVolumeUnmounting(const std::string& volumePath) {
+    std::lock_guard<std::mutex> lock(unmountingVolumesMutex_);
+    unmountingVolumes_.erase(volumePath);
+}
+
+bool ServiceEngine::isVolumeUnmounting(const std::string& path) const {
+    std::lock_guard<std::mutex> lock(unmountingVolumesMutex_);
+    for (const auto& vol : unmountingVolumes_) {
+        if (path.size() >= vol.size() &&
+            path.compare(0, vol.size(), vol) == 0 &&
+            (path.size() == vol.size() || path[vol.size()] == '/')) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -589,26 +638,39 @@ void ServiceEngine::compactIndex() {
 }
 
 std::vector<std::string> ServiceEngine::effectiveScanRoots() const {
+    std::shared_lock lock(configMutex_);
     if (!config_.scanRoots.empty()) return config_.scanRoots;
     return {config_.scanRoot};
 }
 
-ScanConfig ServiceEngine::scanConfig() const {
+ScanConfig ServiceEngine::scanConfigForRoots(const std::vector<std::string>& roots) const {
+    auto cfg = safeConfig();
     ScanConfig config;
-    auto roots = effectiveScanRoots();
-    config.excludedPaths = exclusionsForRoots(roots, config_.excludedPaths);
-    config.excludedPatterns = config_.excludedPatterns;
+    config.excludedPaths = exclusionsForRoots(roots, cfg.excludedPaths);
+    config.excludedPatterns = cfg.excludedPatterns;
     config.systemAllowedPaths = systemAllowedPathsForRoots(roots);
-    config.includeHidden = config_.includeHidden;
-    config.includeSystem = config_.includeSystem;
-    config.includeAppBundleContents = config_.includeAppBundleContents;
+    config.includeHidden = cfg.includeHidden;
+    config.includeSystem = cfg.includeSystem;
+    config.includeAppBundleContents = cfg.includeAppBundleContents;
     return config;
 }
 
+ScanConfig ServiceEngine::scanConfig() const {
+    return scanConfigForRoots(effectiveScanRoots());
+}
+
 bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forContent) const {
-    const auto& roots = forContent && !config_.contentRoots.empty()
-        ? config_.contentRoots
-        : effectiveScanRoots();
+    auto cfg = safeConfig();
+
+    std::vector<std::string> roots;
+    if (forContent && !cfg.contentRoots.empty()) {
+        roots = cfg.contentRoots;
+    } else if (!cfg.scanRoots.empty()) {
+        roots = cfg.scanRoots;
+    } else {
+        roots = {cfg.scanRoot};
+    }
+
     bool insideRoot = roots.empty();
     for (const auto& root : roots) {
         if (pathContainsOrEquals(root, path)) {
@@ -618,9 +680,9 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
     }
     if (!insideRoot) return false;
 
-    std::vector<std::string> excluded = exclusionsForRoots(roots, config_.excludedPaths);
+    std::vector<std::string> excluded = exclusionsForRoots(roots, cfg.excludedPaths);
     if (forContent) {
-        auto contentExcluded = exclusionsForRoots(roots, config_.contentExcludedPaths);
+        auto contentExcluded = exclusionsForRoots(roots, cfg.contentExcludedPaths);
         excluded.insert(excluded.end(), contentExcluded.begin(), contentExcluded.end());
     }
     for (const auto& ex : excluded) {
@@ -632,14 +694,14 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
 
     size_t slash = path.rfind('/');
     std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
-    if (!config_.includeHidden && !name.empty() && name[0] == '.') return false;
-    if (!config_.includeSystem &&
+    if (!cfg.includeHidden && !name.empty() && name[0] == '.') return false;
+    if (!cfg.includeSystem &&
         isSystemFilteredPath(path) &&
         !hasSystemAllowedPath(roots, path)) {
         return false;
     }
 
-    for (const auto& pattern : config_.excludedPatterns) {
+    for (const auto& pattern : cfg.excludedPatterns) {
         if (!pattern.empty() && fnmatch(pattern.c_str(), name.c_str(), FNM_CASEFOLD) == 0) {
             return false;
         }
@@ -648,6 +710,9 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
 }
 
 std::string ServiceEngine::configSignature() const {
+    auto cfg = safeConfig();
+    auto roots = !cfg.scanRoots.empty() ? cfg.scanRoots : std::vector<std::string>{cfg.scanRoot};
+
     auto appendList = [](std::ostringstream& out, const std::vector<std::string>& values) {
         out << values.size() << ":";
         for (const auto& value : values) {
@@ -657,16 +722,16 @@ std::string ServiceEngine::configSignature() const {
 
     std::ostringstream out;
     out << "v3|roots=";
-    appendList(out, effectiveScanRoots());
+    appendList(out, roots);
     out << "|excludedPaths=";
-    appendList(out, config_.excludedPaths);
+    appendList(out, cfg.excludedPaths);
     out << "|excludedPatterns=";
-    appendList(out, config_.excludedPatterns);
-    out << "|hidden=" << (config_.includeHidden ? 1 : 0);
-    out << "|system=" << (config_.includeSystem ? 1 : 0);
-    out << "|bundles=" << (config_.includeAppBundleContents ? 1 : 0);
-    out << "|pinyin=" << (config_.enablePinyinInitials ? 1 : 0);
-    out << "|pathTrigram=" << (config_.enablePathTrigramIndex ? 1 : 0);
+    appendList(out, cfg.excludedPatterns);
+    out << "|hidden=" << (cfg.includeHidden ? 1 : 0);
+    out << "|system=" << (cfg.includeSystem ? 1 : 0);
+    out << "|bundles=" << (cfg.includeAppBundleContents ? 1 : 0);
+    out << "|pinyin=" << (cfg.enablePinyinInitials ? 1 : 0);
+    out << "|pathTrigram=" << (cfg.enablePathTrigramIndex ? 1 : 0);
     return out.str();
 }
 
