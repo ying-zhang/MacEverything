@@ -23,7 +23,7 @@
 ---
 
 <p align="center">
-  <img src="assets/screen-shot.jpg" alt="MacEverything Screenshot" width="720" />
+  <img src="assets/screen-shot.png" alt="MacEverything Screenshot" width="720" />
 </p>
 
 ## Feature Highlights
