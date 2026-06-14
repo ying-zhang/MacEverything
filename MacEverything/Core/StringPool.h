@@ -58,12 +58,18 @@ public:
 
     /// Pointer to the string data for entry idx.
     const char* data(uint32_t idx) const {
-        return buffer_.data() + entries_[idx].offset;
+        if (idx >= entries_.size()) return "";
+        auto& e = entries_[idx];
+        if (e.offset + e.length > buffer_.size()) return "";
+        return buffer_.data() + e.offset;
     }
 
-    /// Length of entry idx (0 if tombstoned).
+    /// Length of entry idx (0 if tombstoned or out-of-bounds).
     uint16_t length(uint32_t idx) const {
-        return entries_[idx].length;
+        if (idx >= entries_.size()) return 0;
+        auto& e = entries_[idx];
+        if (e.offset + e.length > buffer_.size()) return 0;
+        return e.length;
     }
 
     /// Whether entry idx is live (not tombstoned).
@@ -73,12 +79,18 @@ public:
 
     /// Get a string_view for entry idx.
     std::string_view view(uint32_t idx) const {
-        return {buffer_.data() + entries_[idx].offset, entries_[idx].length};
+        if (idx >= entries_.size()) return {};
+        auto& e = entries_[idx];
+        if (e.offset + e.length > buffer_.size()) return {};
+        return {buffer_.data() + e.offset, e.length};
     }
 
     /// Get a std::string copy for entry idx.
     std::string str(uint32_t idx) const {
-        return std::string(buffer_.data() + entries_[idx].offset, entries_[idx].length);
+        if (idx >= entries_.size()) return {};
+        auto& e = entries_[idx];
+        if (e.offset + e.length > buffer_.size()) return {};
+        return std::string(buffer_.data() + e.offset, e.length);
     }
 
     /// Raw contiguous buffer pointer. All strings are packed here.

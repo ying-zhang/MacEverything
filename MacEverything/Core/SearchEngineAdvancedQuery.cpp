@@ -581,23 +581,64 @@ static std::vector<std::string> extractRegexLiteralsFromAST(const QueryNode& nod
 }
 
 
-/// Extract the first SUBSTRING TERM text from the AST for result scoring.
-/// Returns empty string if no suitable term is found (pure filter queries).
-/// Skips __pathseg filter nodes (they are path constraints, not scoring terms).
-static std::string extractScoringTerm(const QueryNode& node) {
+/// Collect ALL SUBSTRING TERM texts from the AST for multi-term scoring.
+/// Skips __pathseg filter nodes (path constraints, not scoring terms).
+static void collectScoringTerms(const QueryNode& node, std::vector<std::string>& out) {
     if (node.type == QueryNodeType::TERM && node.mode == MatchMode::SUBSTRING) {
-        return node.textLower;
+        out.push_back(node.textLower);
+        return;
     }
     if (node.type == QueryNodeType::FILTER && node.filterName == "__pathseg") {
-        return {}; // path segment constraint, not a scoring term
+        return;
     }
     if (node.type == QueryNodeType::AND || node.type == QueryNodeType::OR) {
         for (auto& child : node.children) {
-            auto t = extractScoringTerm(*child);
-            if (!t.empty()) return t;
+            collectScoringTerms(*child, out);
         }
     }
-    return {};
+}
+
+static std::vector<std::string> extractScoringTerms(const QueryNode& node) {
+    std::vector<std::string> terms;
+    collectScoringTerms(node, terms);
+    return terms;
+}
+
+/// Compute per-term match quality: 0=exact, 1=prefix, 2=word-boundary, 3=substring.
+static uint8_t termQuality(const char* nameData, uint16_t nameLen,
+                           const char* termData, size_t termLen) {
+    if (nameLen == termLen && memcmp(nameData, termData, nameLen) == 0)
+        return 0; // exact
+    if (nameLen >= termLen && memcmp(nameData, termData, termLen) == 0)
+        return 1; // prefix
+    size_t pos = me::simdFind(nameData, nameLen, termData, termLen);
+    if (pos < nameLen) {
+        if (pos > 0 && isWordBoundaryChar(nameData[pos - 1]))
+            return 2; // word-boundary
+    }
+    return 3; // substring
+}
+
+/// Compute composite score for a match given multi-term analysis.
+static uint32_t computeMultiTermScore(const char* nameData, uint16_t nameLen,
+                                      const std::vector<std::string>& terms,
+                                      const char* pinyinData, uint16_t pinyinLen,
+                                      uint32_t pathLen) {
+    if (terms.empty())
+        return SearchEngine::encodeScore(0, 0, pathLen);
+
+    uint8_t missCount = 0;
+    unsigned qualitySum = 0;
+    for (auto& term : terms) {
+        if (me::simdContains(nameData, nameLen, term.data(), term.size())) {
+            qualitySum += termQuality(nameData, nameLen, term.data(), term.size());
+        } else {
+            missCount++;
+            qualitySum += 3;
+        }
+    }
+    uint8_t qs = static_cast<uint8_t>(std::min(qualitySum, 255u));
+    return SearchEngine::encodeScore(missCount, qs, pathLen);
 }
 
 /// Extract the best (longest, >= 3 chars) path segment text from __pathseg filters in the AST.
@@ -976,8 +1017,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     std::vector<Match> merged;
     std::vector<char> pathBuf;
 
-    // Extract scoring term from AST (not raw input) — hoisted out of per-record loop
-    std::string scoringTerm = extractScoringTerm(*ast);
+    // Extract scoring terms from AST — hoisted out of per-record loop
+    std::vector<std::string> scoringTerms = extractScoringTerms(*ast);
 
     auto beforePhase = std::chrono::steady_clock::now();
 
@@ -1009,7 +1050,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             // Per-thread RE2 clones to avoid DFA mutex contention
             auto perThreadCaches = cloneRegexCachePerThread(regexCache, numThreads);
             auto* ptcPtr = perThreadCaches.data();
-            const auto& sTerm = scoringTerm;
+            const auto& sTerms = scoringTerms;
 
             dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
             dispatch_apply(numThreads, queue, ^(size_t t) {
@@ -1048,19 +1089,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   static_cast<time_t>(modTimesPtr[idx]),
                                   nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
-                    uint8_t priority = 2;
-                    if (!sTerm.empty()) {
-                        if (me::simdContains(nd, nl, sTerm.data(), sTerm.size())) {
-                            priority = namePriority(nd, nl, sTerm.data(), sTerm.size());
-                        } else if (isAsciiAlphaNumericQuery(sTerm) &&
-                                   pyd &&
-                                   me::simdContains(pyd, pyl, sTerm.data(), sTerm.size())) {
-                            priority = 3;
-                        } else {
-                            priority = 3;
-                        }
-                    }
-                    local.push_back({idx, priority, static_cast<uint32_t>(opl + 1 + nl)});
+                    uint32_t sc = computeMultiTermScore(nd, nl, sTerms, pyd, pyl,
+                                                        static_cast<uint32_t>(opl + 1 + nl));
+                    local.push_back({idx, sc});
                 }
             });
 
@@ -1103,19 +1134,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                               static_cast<time_t>(smallModTimesPtr[idx]),
                               nd, nl, smallLowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                               pathBuf, regexCache)) continue;
-                uint8_t priority = 2;
-                if (!scoringTerm.empty()) {
-                    if (me::simdContains(nd, nl, scoringTerm.data(), scoringTerm.size())) {
-                        priority = namePriority(nd, nl, scoringTerm.data(), scoringTerm.size());
-                    } else if (isAsciiAlphaNumericQuery(scoringTerm) &&
-                               pyd &&
-                               me::simdContains(pyd, pyl, scoringTerm.data(), scoringTerm.size())) {
-                        priority = 3;
-                    } else {
-                        priority = 3;
-                    }
-                }
-                merged.push_back({idx, priority, static_cast<uint32_t>(opl + 1 + nl)});
+                uint32_t sc = computeMultiTermScore(nd, nl, scoringTerms, pyd, pyl,
+                                                    static_cast<uint32_t>(opl + 1 + nl));
+                merged.push_back({idx, sc});
             }
         }
     } else {
@@ -1145,7 +1166,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         // Per-thread RE2 clones to avoid DFA mutex contention
         auto perThreadCaches = cloneRegexCachePerThread(regexCache, numThreads);
         auto* ptcPtr = perThreadCaches.data();
-        const auto& sTerm = scoringTerm;
+        const auto& sTerms = scoringTerms;
 
         dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
         dispatch_apply(numThreads, queue, ^(size_t t) {
@@ -1172,7 +1193,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   static_cast<time_t>(modTimesPtr[idx]),
                                   nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                   localPathBuf, regCache)) continue;
-                    local.push_back({static_cast<uint32_t>(idx), 2, 0});
+                    local.push_back({static_cast<uint32_t>(idx), SearchEngine::encodeScore(0, 0, 0)});
                 }
 
                 // SIMD main loop: 16 records per iteration
@@ -1189,7 +1210,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                      static_cast<time_t>(modTimesPtr[ri]),
                                      nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                      localPathBuf, regCache)) {
-                            local.push_back({static_cast<uint32_t>(ri), 2, 0});
+                            local.push_back({static_cast<uint32_t>(ri), SearchEngine::encodeScore(0, 0, 0)});
                         }
                         liveMask &= liveMask - 1;
                     }
@@ -1202,7 +1223,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   static_cast<time_t>(modTimesPtr[idx]),
                                   nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                   localPathBuf, regCache)) continue;
-                    local.push_back({static_cast<uint32_t>(idx), 2, 0});
+                    local.push_back({static_cast<uint32_t>(idx), SearchEngine::encodeScore(0, 0, 0)});
                 }
             } else {
                 // ── Full evaluation path (needs string access) ──
@@ -1231,20 +1252,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
 
-                    uint8_t priority = 2;
-                    if (!sTerm.empty()) {
-                        if (me::simdContains(nd, nl, sTerm.data(), sTerm.size())) {
-                            priority = namePriority(nd, nl, sTerm.data(), sTerm.size());
-                        } else if (isAsciiAlphaNumericQuery(sTerm) &&
-                                   pyd &&
-                                   me::simdContains(pyd, pyl, sTerm.data(), sTerm.size())) {
-                            priority = 3;
-                        } else {
-                            priority = 3;
-                        }
-                    }
-                    uint32_t pLen = static_cast<uint32_t>(opl + 1 + nl);
-                    local.push_back({static_cast<uint32_t>(idx), priority, pLen});
+                    uint32_t sc = computeMultiTermScore(nd, nl, sTerms, pyd, pyl,
+                                                        static_cast<uint32_t>(opl + 1 + nl));
+                    local.push_back({static_cast<uint32_t>(idx), sc});
                 }
             }
         });
@@ -1264,11 +1274,10 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     auto beforeUnlock = std::chrono::steady_clock::now();
     lock.unlock();
 
-    // Sort by priority, then path length
+    // Sort by composite score (lower = better)
     auto beforeSort = std::chrono::steady_clock::now();
     auto cmp = [](const Match& a, const Match& b) {
-        if (a.priority != b.priority) return a.priority < b.priority;
-        return a.pathLen < b.pathLen;
+        return a.score < b.score;
     };
 
     size_t resultCount = merged.size();

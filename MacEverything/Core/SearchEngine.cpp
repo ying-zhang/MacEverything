@@ -633,11 +633,19 @@ bool SearchEngine::removeByPath(const std::string& fullPath) {
 }
 
 uint32_t SearchEngine::removeByPathPrefix(const std::string& pathPrefix) {
+    return removeByPathPrefixCollectingIndices(pathPrefix, nullptr);
+}
+
+uint32_t SearchEngine::removeByPathPrefixCollectingIndices(const std::string& pathPrefix,
+                                                           std::vector<uint32_t>* removedIndices) {
     std::unique_lock lock(mutex_);
 
     std::string lowerPrefix = me::toLower(pathPrefix);
     uint32_t removed = 0;
     auto removeIdx = [&](uint32_t idx, const std::string& lowerFullPath) {
+        if (removedIndices) {
+            removedIndices->push_back(idx);
+        }
         if (wal_) {
             std::string fullPath = makeFullPath(pathPool_.str(pathIndices_[idx]), origNamePool_.str(idx));
             wal_->append(WALOp::Remove, fullPath);
@@ -675,8 +683,17 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
     // ── Phase 1: Tombstone old records matching prefix ──
     // Remove trigrams incrementally for each tombstoned record.
     std::string lowerPrefix = me::toLower(pathPrefix);
+    LOG_INFO("SearchEngine", "batchRescanPrefix: prefix='" << pathPrefix
+             << "' lowerPrefix='" << lowerPrefix
+             << "' totalRecords=" << types_.size()
+             << " freshRecords=" << freshRecords.size());
     uint32_t removed = 0;
+    uint32_t checked = 0;
     auto removeIdx = [&](uint32_t idx, const std::string& lowerFullPath) {
+        if (removed < 3) {
+            LOG_INFO("SearchEngine", "batchRescanPrefix: REMOVING idx=" << idx
+                     << " path='" << lowerFullPath << "'");
+        }
         if (wal_) {
             std::string fullPath = makeFullPath(pathPool_.str(pathIndices_[idx]), origNamePool_.str(idx));
             wal_->append(WALOp::Remove, fullPath);
@@ -694,13 +711,21 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
 
     for (uint32_t idx = 0; idx < types_.size(); idx++) {
         if (types_[idx] == 0) continue;
+        checked++;
         std::string path = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]), namePool_.view(idx));
+        if (checked <= 3) {
+            LOG_INFO("SearchEngine", "batchRescanPrefix: CHECK idx=" << idx
+                     << " path='" << path << "' prefixLen=" << lowerPrefix.size()
+                     << " pathLen=" << path.size());
+        }
         if (path.size() >= lowerPrefix.size() &&
             path.compare(0, lowerPrefix.size(), lowerPrefix) == 0 &&
             (path.size() == lowerPrefix.size() || path[lowerPrefix.size()] == '/')) {
             removeIdx(idx, path);
         }
     }
+    LOG_INFO("SearchEngine", "batchRescanPrefix: checked=" << checked
+             << " removed=" << removed);
 
     // ── Phase 2: Add fresh records with incremental trigram insertion ──
     for (auto& record : freshRecords) {

@@ -139,6 +139,30 @@ final class SearchServiceModel: ObservableObject {
                 self?.clearContentIndex()
             }
         })
+        notificationObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.willUnmountNotification,
+                object: nil, queue: .main
+            ) { [weak self] notification in
+                Task { @MainActor in self?.handleVolumeWillUnmount(notification) }
+            }
+        )
+        notificationObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didUnmountNotification,
+                object: nil, queue: .main
+            ) { [weak self] notification in
+                Task { @MainActor in self?.handleVolumeUnmounted(notification) }
+            }
+        )
+        notificationObservers.append(
+            NSWorkspace.shared.notificationCenter.addObserver(
+                forName: NSWorkspace.didMountNotification,
+                object: nil, queue: .main
+            ) { [weak self] notification in
+                Task { @MainActor in self?.handleVolumeMounted(notification) }
+            }
+        )
         startIncremental()
     }
 
@@ -276,6 +300,79 @@ final class SearchServiceModel: ObservableObject {
         contentIndexStorageBytes = total
     }
 
+    private static func normalizeVolumePath(_ url: URL) -> String {
+        var p = url.path
+        if p.count > 1 && p.hasSuffix("/") { p = String(p.dropLast()) }
+        return p
+    }
+
+    private static func volumeOverlapsRoots(_ path: String, _ roots: [String]) -> Bool {
+        roots.contains { root in
+            if root == "/" { return true }
+            return path == root || path.hasPrefix(root + "/") || root.hasPrefix(path + "/")
+        }
+    }
+
+    private func handleVolumeWillUnmount(_ notification: Notification) {
+        guard let url = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+        let path = Self.normalizeVolumePath(url)
+        let roots = settings.indexRoots
+        guard Self.volumeOverlapsRoots(path, roots) else { return }
+        AppLogger.info("VolumeMonitor", "Volume will unmount, pre-removing index: \(path)")
+        bridge.markVolumeUnmounting(path)
+        bridge.removeSubtree(path) { [weak self] removedCount in
+            guard let self else { return }
+            AppLogger.info("VolumeMonitor", "Pre-removed \(removedCount) records for unmounting volume: \(path)")
+            self.performIndexRefresh()
+        }
+    }
+
+    private func handleVolumeUnmounted(_ notification: Notification) {
+        guard let url = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+        let path = Self.normalizeVolumePath(url)
+        let roots = settings.indexRoots
+        guard Self.volumeOverlapsRoots(path, roots) else {
+            AppLogger.info("VolumeMonitor", "Volume unmounted but not overlapping indexRoots: \(path)")
+            return
+        }
+        AppLogger.info("VolumeMonitor", "Volume unmounted, cleaning up: \(path)")
+        bridge.removeSubtree(path) { [weak self] removedCount in
+            guard let self else { return }
+            if removedCount > 0 {
+                AppLogger.info("VolumeMonitor", "Removed \(removedCount) remaining records for unmounted volume: \(path)")
+            }
+            self.performIndexRefresh()
+        }
+        bridge.clearVolumeUnmounting(path)
+    }
+
+    private func handleVolumeMounted(_ notification: Notification) {
+        guard let url = notification.userInfo?[NSWorkspace.volumeURLUserInfoKey] as? URL else { return }
+        let path = Self.normalizeVolumePath(url)
+        let roots = settings.indexRoots
+        let matching = roots.filter { root in
+            if root == "/" { return true }
+            return root == path || root.hasPrefix(path + "/") || path.hasPrefix(root + "/")
+        }
+        guard !matching.isEmpty else {
+            AppLogger.info("VolumeMonitor", "Volume mounted but no overlapping roots: \(path), indexRoots=\(roots)")
+            return
+        }
+        AppLogger.info("VolumeMonitor", "Volume mounted, scheduling rescan: \(path), matching=\(matching)")
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            guard let self else { return }
+            self.applyRuntimeConfiguration()
+            for root in matching {
+                let rescanPath = root.hasPrefix(path + "/") ? root : path
+                AppLogger.info("VolumeMonitor", "Rescanning: \(rescanPath)")
+                self.bridge.rescanSubtree(rescanPath) { [weak self] in
+                    AppLogger.info("VolumeMonitor", "Rescan complete for: \(rescanPath)")
+                    self?.performIndexRefresh()
+                }
+            }
+        }
+    }
+
     func onWindowFocusChanged(_ focused: Bool) {
         if refreshThrottle.focusChanged(focused) {
             performIndexRefresh()
@@ -308,6 +405,7 @@ final class SearchServiceModel: ObservableObject {
         isMonitoring = bridge.isMonitoring
         isSyncing = bridge.isSyncing
         refreshContentIndexInfo()
+        AppLogger.info("ServiceModel", "performIndexRefresh: liveRecords=\(totalRecords), posting .searchServiceDidRefresh")
         NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
     }
 }
@@ -541,13 +639,19 @@ class SearchViewModel: ObservableObject {
             let finalItems = items
 
             await MainActor.run { [weak self] in
-                guard let self, self.searchGeneration == gen else { return }
+                guard let self else { return }
+                let currentGen = self.searchGeneration
+                guard currentGen == gen else {
+                    AppLogger.info("Search", "Discarding results for '\(query)': gen \(gen) != current \(currentGen), \(results.count) results dropped")
+                    return
+                }
                 if finalItems.isEmpty,
                    self.quickFilter != .all,
                    self.settings.snapshot.autoResetQuickFilterOnEmptyResults,
                    self.allowQuickFilterAutoResetForCurrentSearch {
                     self.allowQuickFilterAutoResetForCurrentSearch = false
                     self.quickFilter = .all
+                    AppLogger.info("Search", "Auto-resetting quickFilter for '\(query)' (0 results with filter)")
                     return
                 }
                 self.allowQuickFilterAutoResetForCurrentSearch = false
@@ -557,6 +661,7 @@ class SearchViewModel: ObservableObject {
                 self.totalMatches = self.cachedItems.count
                 self.resultLimitReached = results.count >= Int(maxResults)
                 self.queryTimeMs = elapsed
+                AppLogger.info("Search", "Displaying \(self.totalMatches) results for '\(query)' (engine returned \(results.count), gen=\(gen))")
             }
         }
     }
@@ -930,7 +1035,12 @@ class SearchViewModel: ObservableObject {
     }
 
     func refreshForServiceUpdate() {
-        guard service.scanComplete else { return }
+        guard service.scanComplete else {
+            AppLogger.info("Search", "refreshForServiceUpdate skipped: scanComplete=false")
+            return
+        }
+        let liveCount = bridge.liveRecordCount()
+        AppLogger.info("Search", "refreshForServiceUpdate: liveRecordCount=\(liveCount), searchText='\(searchText)'")
         if !searchText.isEmpty && !isContentSearch {
             searchTask?.cancel()
             recentTask?.cancel()

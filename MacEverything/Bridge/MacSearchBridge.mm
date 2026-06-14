@@ -312,7 +312,39 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
 }
 
 - (void)rescanSubtree:(NSString *)dirPath {
-    _serviceEngine->rescanSubtree(std::string([dirPath UTF8String]));
+    [self rescanSubtree:dirPath completion:nil];
+}
+
+- (void)rescanSubtree:(NSString *)dirPath
+           completion:(nullable void (^)(void))completion {
+    if (completion) {
+        auto block = [completion]() { completion(); };
+        _serviceEngine->rescanSubtree(std::string([dirPath UTF8String]), block);
+    } else {
+        _serviceEngine->rescanSubtree(std::string([dirPath UTF8String]));
+    }
+}
+
+- (void)removeSubtree:(NSString *)pathPrefix {
+    [self removeSubtree:pathPrefix completion:nil];
+}
+
+- (void)removeSubtree:(NSString *)pathPrefix
+           completion:(nullable void (^)(uint32_t removedCount))completion {
+    if (completion) {
+        auto block = [completion](uint32_t removed) { completion(removed); };
+        _serviceEngine->removeSubtree(std::string([pathPrefix UTF8String]), block);
+    } else {
+        _serviceEngine->removeSubtree(std::string([pathPrefix UTF8String]));
+    }
+}
+
+- (void)markVolumeUnmounting:(NSString *)volumePath {
+    _serviceEngine->markVolumeUnmounting(std::string([volumePath UTF8String]));
+}
+
+- (void)clearVolumeUnmounting:(NSString *)volumePath {
+    _serviceEngine->clearVolumeUnmounting(std::string([volumePath UTF8String]));
 }
 
 // ═══════════════════════════════════════════════════════
@@ -398,11 +430,19 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
                                maxResults:(uint32_t)maxResults
                                 sessionId:(uint64_t)sessionId {
     auto engine = _serviceEngine->safeEngine();
-    if (!engine) return @[];
+    if (!engine) {
+        LOG_WARN("MacSearchBridge", "queryResults: engine is nil");
+        return @[];
+    }
 
     std::string key([keyword UTF8String]);
+    uint32_t liveCount = engine->liveRecordCount();
     auto indices = engine->query(key, maxResults, true, sessionId);
-    if (indices.empty()) return @[];
+    if (indices.empty()) {
+        LOG_INFO("MacSearchBridge", "queryResults('" << key << "'): 0 results from "
+                 << liveCount << " live records");
+        return @[];
+    }
 
     NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
     engine->forEachRecordWithPath(indices, [&](uint32_t, const FileRecord& r, const std::string& path) {

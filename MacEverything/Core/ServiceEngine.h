@@ -66,10 +66,18 @@ public:
     void updateConfig(const ServiceConfig& config);
 
     // ── Public operations ──
-    void rescanSubtree(const std::string& dir);
+    void rescanSubtree(const std::string& dir,
+                       std::function<void()> completion = nullptr);
+    void removeSubtree(const std::string& pathPrefix,
+                       std::function<void(uint32_t)> completion = nullptr);
     void rebuildContentIndex();
     void clearContentIndex();
     void compactIndex();
+
+    // ── Volume unmount protection ──
+    void markVolumeUnmounting(const std::string& volumePath);
+    void clearVolumeUnmounting(const std::string& volumePath);
+    bool isVolumeUnmounting(const std::string& path) const;
 
     // ── Thread-safe accessors ──
     std::shared_ptr<SearchEngine> safeEngine();
@@ -115,6 +123,7 @@ private:
                        std::shared_ptr<SearchEngine> engine);
     void startMonitoring();
     void stopMonitoring();
+    void restartMonitoring();
     void scheduleRescanForPaths(const std::vector<std::string>& paths);
     void flushPendingRescans();
 
@@ -124,16 +133,21 @@ private:
     void updateContentForPath(const std::string& fullPath, bool removed,
                               std::shared_ptr<SearchEngine> engine);
 
+    // ── Config snapshot (thread-safe) ──
+    ServiceConfig safeConfig() const;
+
     // ── Static helpers ──
     static bool isInsideAppBundle(const std::string& path);
     static bool pathEndsWithApp(const std::string& path);
     std::vector<std::string> effectiveScanRoots() const;
+    ScanConfig scanConfigForRoots(const std::vector<std::string>& roots) const;
     ScanConfig scanConfig() const;
     bool isPathAllowedByConfig(const std::string& path, bool forContent) const;
     std::string configSignature() const;
 
-    // ── Config ──
+    // ── Config (protected by configMutex_) ──
     ServiceConfig config_;
+    mutable std::shared_mutex configMutex_;
 
     // ── Core objects ──
     std::shared_ptr<SearchEngine> engine_;
@@ -164,6 +178,10 @@ private:
     std::atomic<bool> cancelContentIndexing_{false};
     std::atomic<uint64_t> contentIndexGeneration_{0};
     dispatch_semaphore_t contentIndexingSemaphore_;
+
+    // ── Volume unmount tracking ──
+    mutable std::mutex unmountingVolumesMutex_;
+    std::set<std::string> unmountingVolumes_;
 
     // ── Rescan debounce state ──
     std::mutex pendingRescanMutex_;

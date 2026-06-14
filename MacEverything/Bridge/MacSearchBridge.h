@@ -131,6 +131,24 @@ NS_ASSUME_NONNULL_BEGIN
 /// Rescan a directory subtree and update the index incrementally.
 - (void)rescanSubtree:(NSString *)dirPath;
 
+/// Rescan a directory subtree with completion callback (called on main queue).
+- (void)rescanSubtree:(NSString *)dirPath
+           completion:(nullable void (^)(void))completion;
+
+/// Remove all index entries under the given path prefix (e.g. unmounted volume).
+- (void)removeSubtree:(NSString *)pathPrefix;
+
+/// Remove all index entries under the given path prefix, with completion callback.
+/// The completion block is called on the main queue with the number of records removed.
+- (void)removeSubtree:(NSString *)pathPrefix
+           completion:(nullable void (^)(uint32_t removedCount))completion;
+
+/// Mark a volume path as unmounting (blocks content indexing I/O for paths under it).
+- (void)markVolumeUnmounting:(NSString *)volumePath;
+
+/// Clear the unmounting flag for a volume path.
+- (void)clearVolumeUnmounting:(NSString *)volumePath;
+
 /// Whether a scan is currently in progress.
 @property (nonatomic, readonly) BOOL isScanning;
 

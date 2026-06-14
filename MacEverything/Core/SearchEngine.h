@@ -265,6 +265,8 @@ public:
     /// Remove all records whose full path starts with the given prefix. Thread-safe.
     /// Returns the number of records removed.
     uint32_t removeByPathPrefix(const std::string& pathPrefix);
+    uint32_t removeByPathPrefixCollectingIndices(const std::string& pathPrefix,
+                                                 std::vector<uint32_t>* removedIndices);
 
     /// Batch-replace all records under pathPrefix with freshRecords.
     /// Tombstones old records, adds fresh records, and rebuilds trigram index once.
@@ -518,10 +520,20 @@ private:
 
     static bool globMatch(const std::string& pattern, const std::string& text);
 
-    /// Match result from search: (record index, priority, full path length).
-    /// Priority: 0=exact, 1=starts-with, 2=contains, 3=path-only match.
-    struct Match { uint32_t idx; uint8_t priority; uint32_t pathLen; };
+public:
+    /// Match result from search: (record index, composite score).
+    /// Score encodes (lower = better):
+    ///   bits 24-31: name miss count (query terms NOT found in filename)
+    ///   bits 16-23: match quality sum (per-term: 0=exact,1=prefix,2=boundary,3=substr)
+    ///   bits  0-15: path length (clamped to 65535)
+    struct Match { uint32_t idx; uint32_t score; };
 
+    static uint32_t encodeScore(uint8_t missCount, uint8_t qualitySum, uint32_t pathLen) {
+        return (uint32_t(missCount) << 24) | (uint32_t(qualitySum) << 16)
+             | std::min(pathLen, uint32_t(0xFFFF));
+    }
+
+private:
     static bool segmentTextMatches(std::string_view candidate,
                                    std::string_view needle,
                                    PathSegmentKind kind);

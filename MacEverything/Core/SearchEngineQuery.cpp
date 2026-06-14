@@ -260,18 +260,16 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
             for (uint32_t childIdx : childRecords) {
                 if (types_[childIdx] == 0) continue; // skip tombstones
                 uint16_t nl = namePool_.length(childIdx);
-                uint8_t priority = 2; // children are all "contains" priority
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
-                merged.push_back({childIdx, priority, pLen});
+                merged.push_back({childIdx, encodeScore(0, 2, pLen)});
             }
         } else {
             for (uint32_t childIdx = 0; childIdx < totalSize; childIdx++) {
                 if (types_[childIdx] == 0) continue;
                 if (pathIndices_[childIdx] != childPathIdx) continue;
                 uint16_t nl = namePool_.length(childIdx);
-                uint8_t priority = 2;
                 uint32_t pLen = static_cast<uint32_t>(pathPool_.length(pathIndices_[childIdx]) + 1 + nl);
-                merged.push_back({childIdx, priority, pLen});
+                merged.push_back({childIdx, encodeScore(0, 2, pLen)});
             }
         }
     }
@@ -361,11 +359,10 @@ std::vector<uint32_t> SearchEngine::query(const std::string& keyword, uint32_t m
         auto beforeUnlock = std::chrono::steady_clock::now();
         lock.unlock();
 
-        // Sort by priority then path length
+        // Sort by composite score (lower = better)
         auto beforeSort = std::chrono::steady_clock::now();
         auto cmp = [](const Match& a, const Match& b) {
-            if (a.priority != b.priority) return a.priority < b.priority;
-            return a.pathLen < b.pathLen;
+            return a.score < b.score;
         };
         size_t resultCount = merged.size();
         if (maxResults > 0 && resultCount > maxResults) resultCount = maxResults;

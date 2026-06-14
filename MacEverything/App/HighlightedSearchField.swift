@@ -401,13 +401,13 @@ class HighlightedNSTextView: NSTextView {
             onCmdDelete?()
             return
         }
-        // Handle Tab key for ghost suggestion
-        if event.keyCode == 48 { // Tab key
+        // Handle Tab key for ghost suggestion (skip during IME composition)
+        if event.keyCode == 48 && !hasMarkedText() { // Tab key
             if let handler = onTabKey, handler() {
                 return // Tab was consumed by ghost suggestion
             }
         }
-        if event.keyCode == 36 || event.keyCode == 76 { // Return / Enter
+        if (event.keyCode == 36 || event.keyCode == 76) && !hasMarkedText() {
             onSubmit?()
             return
         }
