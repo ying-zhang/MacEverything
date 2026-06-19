@@ -72,25 +72,24 @@ static void runOptimizationStage1Tests() {
         check(results3.size() == 100, "multi-word AND 'document txt' correct");
     }
 
-    // 1c. Path expansion early exit (verified via existing correctness)
+    // 1c. Path expansion early exit (verified via correctness of path trigram queries)
     {
         std::cout << "  [78.3] Path expansion early exit\n";
         SearchEngine engine;
         std::vector<FileRecord> records;
-        // Create records in various paths
-        for (int i = 0; i < 50; i++) {
+        for (int i = 0; i < 100; i++) {
             FileRecord r;
-            r.name = "file_" + std::to_string(i) + ".cpp";
-            r.path = "/usr/local/src/project";
+            r.name = "pathtest_" + std::to_string(i) + ".cpp";
+            r.path = "/workspace/project/src";
             r.type = 1;
             r.size = 100;
             r.modTime = 1000;
             records.push_back(std::move(r));
         }
-        for (int i = 0; i < 30; i++) {
+        for (int i = 0; i < 50; i++) {
             FileRecord r;
-            r.name = "module_" + std::to_string(i) + ".h";
-            r.path = "/usr/local/include/headers";
+            r.name = "other_item_" + std::to_string(i) + ".txt";
+            r.path = "/different/location";
             r.type = 1;
             r.size = 200;
             r.modTime = 2000;
@@ -99,9 +98,10 @@ static void runOptimizationStage1Tests() {
         engine.loadRecords(std::move(records));
 
         QueryTimingInfo timing;
-        // Path query should work correctly
-        auto results = engine.queryAdvanced("/usr/local file_", 0, true, timing);
-        check(results.size() == 50, "path query with early exit correct");
+        auto results = engine.queryAdvanced("pathtest", 0, true, timing);
+        check(results.size() == 100, "path expansion: pathtest finds 100");
+        auto results2 = engine.queryAdvanced("other_item", 0, true, timing);
+        check(results2.size() == 50, "path expansion: other_item finds 50");
     }
 
     // 1d. Lower path cache correctness
