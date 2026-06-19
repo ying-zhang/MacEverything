@@ -681,6 +681,21 @@ static std::vector<std::string> extractExtFilterValues(const QueryNode& node) {
     return {};
 }
 
+/// Per-thread cache for lowered path strings, keyed by pathIdx.
+/// Many records share the same pathIdx; caching avoids redundant simdToLowerAscii.
+static thread_local std::unordered_map<uint32_t, std::string> tl_lowerPathCache;
+
+static const std::string& cachedLowerPath(const StringPool& pathPool, uint32_t pathIdx) {
+    auto [it, inserted] = tl_lowerPathCache.try_emplace(pathIdx);
+    if (inserted) {
+        const char* data = pathPool.data(pathIdx);
+        uint16_t len = pathPool.length(pathIdx);
+        it->second.assign(data, len);
+        me::simdToLowerAscii(it->second.data(), len);
+    }
+    return it->second;
+}
+
 static void sortUnique(std::vector<uint32_t>& values) {
     std::sort(values.begin(), values.end());
     values.erase(std::unique(values.begin(), values.end()), values.end());
@@ -729,6 +744,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     // If no external generation pointer, create a local dummy (no cancellation)
     std::atomic<uint64_t> dummyGen{myGen};
     if (!genPtr) genPtr = &dummyGen;
+
+    tl_lowerPathCache.clear();
 
     auto queryStart = std::chrono::steady_clock::now();
 
@@ -948,16 +965,23 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 // cannot produce fewer candidates — skip the expensive expansion.
                 bool skipExpansion = nameOk && pathIdxCands.size() >= nameCands.size();
                 if (!skipExpansion) {
+                    const size_t pathThreshold = totalSize / 4;
+                    bool pathTooMany = false;
                     for (uint32_t pi : pathIdxCands) {
                         if (genPtr->load(std::memory_order_relaxed) != myGen) return {};
                         if (pi >= pathIdxToRecords_.size()) continue;
                         const auto& recIds = pathIdxToRecords_[pi];
-                        pathCands.insert(pathCands.end(), recIds.begin(), recIds.end());
+                        if (!appendUntilThreshold(pathCands, recIds, pathThreshold)) {
+                            pathCands.clear();
+                            pathTooMany = true;
+                            break;
+                        }
                     }
-                    std::sort(pathCands.begin(), pathCands.end());
-                    pathCands.erase(std::unique(pathCands.begin(), pathCands.end()), pathCands.end());
-                    pathOk = pathCands.size() <= totalSize / 4;
-                    if (!pathOk) pathCands.clear();
+                    if (!pathTooMany && !pathCands.empty()) {
+                        sortUnique(pathCands);
+                        pathOk = pathCands.size() <= pathThreshold;
+                        if (!pathOk) pathCands.clear();
+                    }
                 }
             }
             afterTrigram = std::chrono::steady_clock::now();
@@ -1059,7 +1083,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 if (start >= end) return;
                 auto& local = threadResults[t];
                 std::vector<char> localPathBuf;
-                std::string lowerPathBuf;
                 const auto& regCache = ptcPtr[t];
                 for (size_t ci = start; ci < end; ci++) {
                     if ((ci & 1023) == 0 && genPtr->load(std::memory_order_relaxed) != capturedGen) return;
@@ -1081,13 +1104,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     uint32_t pi = pIndices[idx];
                     const char* opd = pathPool.data(pi);
                     uint16_t opl = pathPool.length(pi);
-                    lowerPathBuf.assign(opd, opl);
-                    me::simdToLowerAscii(lowerPathBuf.data(), opl);
+                    const auto& lp = cachedLowerPath(pathPool, pi);
                     const char* ond = origNamePool.data(idx);
                     uint16_t onl = origNamePool.length(idx);
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
+                                  nd, nl, lp.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
                     uint32_t sc = computeMultiTermScore(nd, nl, sTerms, pyd, pyl,
                                                         static_cast<uint32_t>(opl + 1 + nl));
@@ -1101,7 +1123,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             }
         } else {
             // Small candidate set — single-threaded with prefetch
-            std::string smallLowerPathBuf;
             const uint32_t* candidatesData = candidates.data();
             const auto* smallTypesPtr = types_.data();
             const auto* smallSizesPtr = sizes_.data();
@@ -1126,13 +1147,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 uint32_t pi = pathIndices_[idx];
                 const char* opd = pathPool_.data(pi);
                 uint16_t opl = pathPool_.length(pi);
-                smallLowerPathBuf.assign(opd, opl);
-                me::simdToLowerAscii(smallLowerPathBuf.data(), opl);
+                const auto& lp = cachedLowerPath(pathPool_, pi);
                 const char* ond = origNamePool_.data(idx);
                 uint16_t onl = origNamePool_.length(idx);
                 if (!evalNode(*ast, smallTypesPtr[idx], smallSizesPtr[idx],
                               static_cast<time_t>(smallModTimesPtr[idx]),
-                              nd, nl, smallLowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
+                              nd, nl, lp.data(), opl, pyd, pyl, ond, onl, opd, opl,
                               pathBuf, regexCache)) continue;
                 uint32_t sc = computeMultiTermScore(nd, nl, scoringTerms, pyd, pyl,
                                                     static_cast<uint32_t>(opl + 1 + nl));
@@ -1176,7 +1196,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
             auto& local = threadResults[t];
             std::vector<char> localPathBuf;
-            std::string lowerPathBuf;
             const auto& regCache = ptcPtr[t];
 
             if (pureFilter) {
@@ -1242,14 +1261,13 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     uint32_t pi = pIndices[idx];
                     const char* opd = pathPool.data(pi);
                     uint16_t opl = pathPool.length(pi);
-                    lowerPathBuf.assign(opd, opl);
-                    me::simdToLowerAscii(lowerPathBuf.data(), opl);
+                    const auto& lp = cachedLowerPath(pathPool, pi);
                     const char* ond = origNamePool.data(static_cast<uint32_t>(idx));
                     uint16_t onl = origNamePool.length(static_cast<uint32_t>(idx));
 
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
+                                  nd, nl, lp.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
 
                     uint32_t sc = computeMultiTermScore(nd, nl, sTerms, pyd, pyl,

@@ -25,20 +25,23 @@ std::vector<uint32_t> SearchEngine::intersectPostingLists(
     std::sort(postings.begin(), postings.end(),
         [](const auto* a, const auto* b) { return a->size() < b->size(); });
 
-    std::vector<uint32_t> result;
-    result.reserve(postings[0]->size());
-    result.assign(postings[0]->begin(), postings[0]->end());
+    thread_local std::vector<uint32_t> tl_buf_a;
+    thread_local std::vector<uint32_t> tl_buf_b;
+    auto* current = &tl_buf_a;
+    auto* next = &tl_buf_b;
+    current->clear();
+    current->assign(postings[0]->begin(), postings[0]->end());
 
-    for (size_t i = 1; i < postings.size() && !result.empty(); i++) {
+    for (size_t i = 1; i < postings.size() && !current->empty(); i++) {
         const auto& other = *postings[i];
-        std::vector<uint32_t> isect;
-        isect.reserve(std::min(result.size(), other.size()));
-        std::set_intersection(result.begin(), result.end(),
+        next->clear();
+        next->reserve(std::min(current->size(), other.size()));
+        std::set_intersection(current->begin(), current->end(),
                               other.begin(), other.end(),
-                              std::back_inserter(isect));
-        result = std::move(isect);
+                              std::back_inserter(*next));
+        std::swap(current, next);
     }
-    return result;
+    return std::vector<uint32_t>(current->begin(), current->end());
 }
 
 std::vector<uint32_t> SearchEngine::intersectPostingListsMulti(
@@ -76,20 +79,23 @@ std::vector<uint32_t> SearchEngine::intersectPostingListsMulti(
     std::sort(postings.begin(), postings.end(),
         [](const auto* a, const auto* b) { return a->size() < b->size(); });
 
-    std::vector<uint32_t> result;
-    result.reserve(postings[0]->size());
-    result.assign(postings[0]->begin(), postings[0]->end());
+    thread_local std::vector<uint32_t> tl_multi_a;
+    thread_local std::vector<uint32_t> tl_multi_b;
+    auto* current = &tl_multi_a;
+    auto* next = &tl_multi_b;
+    current->clear();
+    current->assign(postings[0]->begin(), postings[0]->end());
 
-    for (size_t i = 1; i < postings.size() && !result.empty(); i++) {
+    for (size_t i = 1; i < postings.size() && !current->empty(); i++) {
         const auto& other = *postings[i];
-        std::vector<uint32_t> isect;
-        isect.reserve(std::min(result.size(), other.size()));
-        std::set_intersection(result.begin(), result.end(),
+        next->clear();
+        next->reserve(std::min(current->size(), other.size()));
+        std::set_intersection(current->begin(), current->end(),
                               other.begin(), other.end(),
-                              std::back_inserter(isect));
-        result = std::move(isect);
+                              std::back_inserter(*next));
+        std::swap(current, next);
     }
-    return result;
+    return std::vector<uint32_t>(current->begin(), current->end());
 }
 
 std::vector<uint32_t> SearchEngine::unionPostingListsMulti(
