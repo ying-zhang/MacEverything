@@ -66,21 +66,32 @@ static void runFlatPostingIndexTests() {
         std::cout << "  [80.4] SearchEngine uses flat index after loadRecords\n";
         SearchEngine engine;
         std::vector<FileRecord> records;
-        for (int i = 0; i < 200; i++) {
+        // Create 500 records to have enough headroom for trigram threshold
+        for (int i = 0; i < 500; i++) {
             FileRecord r;
-            r.name = "alpha_beta_" + std::to_string(i) + ".txt";
+            r.name = "generic_file_" + std::to_string(i) + ".dat";
             r.path = "/flat_test";
             r.type = 1;
             r.size = 100;
             r.modTime = 1000;
             records.push_back(std::move(r));
         }
+        // Add 10 with a unique name that will be selective via trigram
+        for (int i = 0; i < 10; i++) {
+            FileRecord r;
+            r.name = "xyztarget_" + std::to_string(i) + ".txt";
+            r.path = "/flat_test";
+            r.type = 1;
+            r.size = 200;
+            r.modTime = 2000;
+            records.push_back(std::move(r));
+        }
         engine.loadRecords(std::move(records));
 
         QueryTimingInfo timing;
-        auto results = engine.queryAdvanced("alpha_beta", 0, true, timing);
-        check(results.size() == 200, "flat index query 'alpha_beta' finds all 200");
-        check(timing.usedTrigram, "used trigram path");
+        auto results = engine.queryAdvanced("xyztarget", 0, true, timing);
+        check(results.size() == 10, "flat index query 'xyztarget' finds 10");
+        check(timing.usedTrigram, "used trigram path with flat index");
     }
 
     // 3b. Delta buffer: add/remove after loadRecords
