@@ -212,6 +212,7 @@ void SearchEngine::completePhase2() {
     auto recentCache = buildRecentCacheFromData(snapTypes, snapModTimes, kRecentCacheSize);
     auto extensionIndex = buildExtensionIndexFromData(snapTypes, snapNamePool);
     auto cjkBigramIndex = buildCJKBigramIndexFromData(snapTypes, snapNamePool);
+    auto bigramIndex = buildBigramIndexFromData(snapTypes, snapNamePool);
 
     LOG_INFO("SearchEngine", "Phase 2: indices built, swapping under lock...");
 
@@ -227,6 +228,7 @@ void SearchEngine::completePhase2() {
         recentCache_ = std::move(recentCache);
         extensionIndex_ = std::move(extensionIndex);
         cjkBigramIndex_ = std::move(cjkBigramIndex);
+        nameBigramIndex_ = std::move(bigramIndex);
 
         // Replay records added during Phase 2 build
         uint32_t currentSize = static_cast<uint32_t>(types_.size());
@@ -251,6 +253,7 @@ void SearchEngine::completePhase2() {
             addPathTrigramsForRecord(i);
             addExtensionForRecord(i);
             addCJKBigramsForRecord(i, namePool_.data(i), namePool_.length(i));
+            addBigramsForRecord(i, namePool_.data(i), namePool_.length(i));
             addToRecentCache(i, static_cast<time_t>(modTimes_[i]));
             replayCount++;
         }

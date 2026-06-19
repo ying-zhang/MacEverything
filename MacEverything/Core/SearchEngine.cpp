@@ -379,6 +379,7 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     // Build extension index for fast ext: filter queries
     buildExtensionIndex();
     cjkBigramIndex_ = buildCJKBigramIndexFromData(types_, namePool_);
+    nameBigramIndex_ = buildBigramIndexFromData(types_, namePool_);
     rebuildRecentCache();
 
     liveCount_.store(actualLive, std::memory_order_relaxed);
@@ -514,6 +515,7 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
     }
     buildExtensionIndex();
     cjkBigramIndex_ = buildCJKBigramIndexFromData(types_, namePool_);
+    nameBigramIndex_ = buildBigramIndexFromData(types_, namePool_);
     rebuildRecentCache();
 
     liveCount_.store(actualLive, std::memory_order_relaxed);
@@ -562,6 +564,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
         removePinyinInitialsForRecord(oldIdx);
         removePathTrigramsForRecord(oldIdx);
         removeCJKBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
+        removeBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
         erasePathIndexUnlocked(lowerFull);
         tombstoneAt(oldIdx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -591,6 +594,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
         addPathTrigramsForRecord(idx);
         addExtensionForRecord(idx);
         addCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+        addBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
     }
 
     // Dirty page tracking
@@ -618,6 +622,7 @@ bool SearchEngine::removeByPathUnlocked(const std::string& fullPath) {
     removePathTrigramsForRecord(idx);
     removeExtensionForRecord(idx);
     removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+    removeBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
     erasePathIndexUnlocked(lowerFull);
     tombstoneAt(idx);
 
@@ -656,6 +661,7 @@ uint32_t SearchEngine::removeByPathPrefixCollectingIndices(const std::string& pa
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
         removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+        removeBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
         erasePathIndexUnlocked(lowerFullPath);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -703,6 +709,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
         removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+        removeBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
         erasePathIndexUnlocked(lowerFullPath);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -755,6 +762,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
             addPathTrigramsForRecord(newIdx);
             addExtensionForRecord(newIdx);
             addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+            addBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
         }
         if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
             dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
@@ -783,6 +791,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
         removePathTrigramsForRecord(idx);
         removeExtensionForRecord(idx);
         removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+        removeBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
         erasePathIndexUnlocked(lowerFull);
         tombstoneAt(idx);
         liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -815,6 +824,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
         addPathTrigramsForRecord(newIdx);
         addExtensionForRecord(newIdx);
         addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+        addBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
     }
     if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
         dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
@@ -1004,6 +1014,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
     }
     auto cdExtensionIndex = buildExtensionIndexFromData(cdTypes, cdNamePool);
     auto cdCJKBigramIndex = buildCJKBigramIndexFromData(cdTypes, cdNamePool);
+    auto cdBigramIndex = buildBigramIndexFromData(cdTypes, cdNamePool);
     auto cdRecentCache = buildRecentCacheFromData(cdTypes, cdModTimes, kRecentCacheSize);
 
     LOG_INFO("SearchEngine", "COW compaction Phase 3: swapping data, compacted "
@@ -1051,6 +1062,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         pathIdxToRecords_ = std::move(cdPathIdxToRecords);
         extensionIndex_ = std::move(cdExtensionIndex);
         cjkBigramIndex_ = std::move(cdCJKBigramIndex);
+        nameBigramIndex_ = std::move(cdBigramIndex);
         recentCache_ = std::move(cdRecentCache);
 
         // Replay new records appended during Phase 2
@@ -1083,6 +1095,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
             addPathTrigramsForRecord(newIdx);
             addExtensionForRecord(newIdx);
             addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+            addBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
             cdLiveCount++;
             replayedAdds++;
         }
@@ -1100,6 +1113,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
                 removePathTrigramsForRecord(newIdx);
                 removeExtensionForRecord(newIdx);
                 removeCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+                removeBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
                 time_t oldMod = static_cast<time_t>(modTimes_[newIdx]);
                 erasePathIndexUnlocked(path);
                 tombstoneAt(newIdx);
@@ -1228,6 +1242,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
                 removeCJKBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
+                removeBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
                 erasePathIndexUnlocked(lowerFull);
                 tombstoneAt(oldIdx);
                 liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -1253,6 +1268,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             addPathTrigramsForRecord(idx);
             addExtensionForRecord(idx);
             addCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+            addBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
             if (idx / kRecordsPerPage >= dirtyPages_.size()) {
                 dirtyPages_.resize(idx / kRecordsPerPage + 1, false);
             }
@@ -1268,6 +1284,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             removePathTrigramsForRecord(idx);
             removeExtensionForRecord(idx);
             removeCJKBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+            removeBigramsForRecord(idx, namePool_.data(idx), namePool_.length(idx));
             erasePathIndexUnlocked(lowerFull);
             tombstoneAt(idx);
             liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -1282,6 +1299,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
                 removePathTrigramsForRecord(oldIdx);
                 removeExtensionForRecord(oldIdx);
                 removeCJKBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
+                removeBigramsForRecord(oldIdx, namePool_.data(oldIdx), namePool_.length(oldIdx));
                 erasePathIndexUnlocked(lowerFull);
                 tombstoneAt(oldIdx);
                 liveCount_.fetch_sub(1, std::memory_order_relaxed);
@@ -1307,6 +1325,7 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
             addPathTrigramsForRecord(newIdx);
             addExtensionForRecord(newIdx);
             addCJKBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
+            addBigramsForRecord(newIdx, namePool_.data(newIdx), namePool_.length(newIdx));
             if (newIdx / kRecordsPerPage >= dirtyPages_.size()) {
                 dirtyPages_.resize(newIdx / kRecordsPerPage + 1, false);
             }

@@ -510,6 +510,65 @@ std::unordered_map<uint64_t, std::vector<uint32_t>> SearchEngine::buildCJKBigram
 }
 
 // ---------------------------------------------------------------------------
+// ASCII Bigram Index (for 2-character keyword queries)
+// ---------------------------------------------------------------------------
+
+std::vector<uint16_t> SearchEngine::extractAsciiBigrams(const char* data, uint16_t len) {
+    if (len < 2) return {};
+    std::vector<uint16_t> result;
+    for (uint16_t i = 0; i + 1 < len; i++) {
+        uint8_t a = me_ascii::kLowerTable[static_cast<uint8_t>(data[i])];
+        uint8_t b = me_ascii::kLowerTable[static_cast<uint8_t>(data[i + 1])];
+        result.push_back(packBigram(a, b));
+    }
+    std::sort(result.begin(), result.end());
+    result.erase(std::unique(result.begin(), result.end()), result.end());
+    return result;
+}
+
+void SearchEngine::addBigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
+    auto bigrams = extractAsciiBigrams(data, len);
+    for (uint16_t bg : bigrams) {
+        auto& list = nameBigramIndex_[bg];
+        auto pos = std::lower_bound(list.begin(), list.end(), idx);
+        if (pos == list.end() || *pos != idx) {
+            list.insert(pos, idx);
+        }
+    }
+}
+
+void SearchEngine::removeBigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
+    auto bigrams = extractAsciiBigrams(data, len);
+    for (uint16_t bg : bigrams) {
+        auto it = nameBigramIndex_.find(bg);
+        if (it == nameBigramIndex_.end()) continue;
+        auto& list = it->second;
+        auto pos = std::lower_bound(list.begin(), list.end(), idx);
+        if (pos != list.end() && *pos == idx) {
+            list.erase(pos);
+            if (list.empty()) nameBigramIndex_.erase(it);
+        }
+    }
+}
+
+std::unordered_map<uint16_t, std::vector<uint32_t>> SearchEngine::buildBigramIndexFromData(
+    const std::vector<uint8_t>& types, const StringPool& namePool) {
+    std::unordered_map<uint16_t, std::vector<uint32_t>> index;
+    for (uint32_t i = 0; i < namePool.entryCount(); i++) {
+        if (i >= types.size() || types[i] == 0) continue;
+        if (!namePool.isLive(i)) continue;
+        auto bigrams = extractAsciiBigrams(namePool.data(i), namePool.length(i));
+        for (uint16_t bg : bigrams) {
+            index[bg].push_back(i);
+        }
+    }
+    for (auto& [bg, list] : index) {
+        std::sort(list.begin(), list.end());
+    }
+    return index;
+}
+
+// ---------------------------------------------------------------------------
 // Dirty page tracking
 // ---------------------------------------------------------------------------
 

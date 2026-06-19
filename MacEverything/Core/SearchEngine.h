@@ -469,6 +469,10 @@ private:
     // CJK character-level bigram index: packed codepoint pair -> sorted record indices
     std::unordered_map<uint64_t, std::vector<uint32_t>> cjkBigramIndex_;
 
+    // ASCII bigram index: packed pair of lowercase ASCII bytes -> sorted record indices
+    // Used for 2-character keywords that are too short for trigram index
+    std::unordered_map<uint16_t, std::vector<uint32_t>> nameBigramIndex_;
+
     /// Intern a directory path into pathPool_. Returns pathPool_ index.
     /// Deduplicates via pathLookup_. Must be called under unique_lock.
     uint32_t internPath(const std::string& path);
@@ -662,6 +666,16 @@ private:
     void addCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     void removeCJKBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     static std::unordered_map<uint64_t, std::vector<uint32_t>> buildCJKBigramIndexFromData(
+        const std::vector<uint8_t>& types, const StringPool& namePool);
+
+    /// ASCII bigram index helpers (for 2-character keyword queries)
+    static uint16_t packBigram(uint8_t a, uint8_t b) {
+        return (static_cast<uint16_t>(a) << 8) | b;
+    }
+    static std::vector<uint16_t> extractAsciiBigrams(const char* data, uint16_t len);
+    void addBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
+    void removeBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
+    static std::unordered_map<uint16_t, std::vector<uint32_t>> buildBigramIndexFromData(
         const std::vector<uint8_t>& types, const StringPool& namePool);
 
     /// Build path trigram index from pathPool (lowercases on-the-fly)

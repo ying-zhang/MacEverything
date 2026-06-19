@@ -1,8 +1,4 @@
 #pragma once
-#include "MacEverything/Core/ContentIndex.h"
-#include "MacEverything/Core/SearchEngine.h"
-#include "tests/test_helpers.h"
-#include <iostream>
 
 static void runOptimizationStage1Tests() {
     std::cout << "\n=== Part 78: Stage 1 Optimization Tests ===\n\n";

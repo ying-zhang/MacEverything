@@ -124,6 +124,7 @@ namespace fs = std::filesystem;
 #include "tests/test_fsevents_search_latency.h"
 #include "tests/test_scanner_config.h"
 #include "tests/test_optimization_stage1.h"
+#include "tests/test_bigram_index.h"
 
 // ═══════════════════════════════════════════════════════
 //  Main
@@ -191,7 +192,8 @@ static void printUsage(const char* prog) {
     std::cout << "  75 (RE2 integration),\n";
     std::cout << "  76 (FSEvents search latency),\n";
     std::cout << "  77 (scanner config overrides),\n";
-    std::cout << "  78 (stage 1 optimizations)\n";
+    std::cout << "  78 (stage 1 optimizations),\n";
+    std::cout << "  79 (bigram index & AND selectivity)\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -207,7 +209,7 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--fast") {
             explicitSelection = true;
             gSkipPerformanceTests = true;
-            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77", "78"});
+            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77", "78", "79"});
         } else if (arg == "--bench") {
             explicitSelection = true;
             selectedParts.insert({"44", "46"});
@@ -342,6 +344,7 @@ int main(int argc, char* argv[]) {
     if (selectedParts.count("76")) runFSEventsSearchLatencyTest();
     if (selectedParts.count("77")) runScannerConfigTests();
     if (selectedParts.count("78")) runOptimizationStage1Tests();
+    if (selectedParts.count("79")) runBigramIndexTests();
 
     // ── Final Summary ──
     std::cout << "╔══════════════════════════════════════════╗\n";

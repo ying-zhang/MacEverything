@@ -726,6 +726,44 @@ static void unionSortedInto(std::vector<uint32_t>& dest,
     dest = std::move(merged);
 }
 
+/// Cost rank for selectivity-based reordering of AND children.
+/// Lower rank = cheaper to evaluate, should be evaluated first for short-circuit.
+static int evalCostRank(const QueryNode& node) {
+    if (node.type == QueryNodeType::FILTER) {
+        const auto& fn = node.filterName;
+        if (fn == "ext" || fn == "size" || fn == "type" || fn == "file" ||
+            fn == "folder" || fn == "dm" || fn == "datemodified" ||
+            fn == "dc" || fn == "datecreated" || fn == "da" || fn == "dateaccessed" ||
+            fn == "depth" || fn == "len") {
+            return 0;
+        }
+        if (fn == "path" || fn == "nopath" || fn == "parent" || fn == "__pathseg") {
+            return 5;
+        }
+        return 3;
+    }
+    if (node.type == QueryNodeType::TERM) {
+        if (node.mode == MatchMode::WHOLEFILENAME) return 1;
+        if (node.nameOnly) return 1;
+        if (node.mode == MatchMode::SUBSTRING) return 2;
+        if (node.mode == MatchMode::GLOB || node.mode == MatchMode::WHOLEWORD) return 3;
+        if (node.mode == MatchMode::REGEX) return 4;
+    }
+    return 6;
+}
+
+/// Reorder AND children by evaluation cost (cheapest first) for better short-circuit.
+static void reorderAndBySelectivity(QueryNode& node) {
+    for (auto& child : node.children) {
+        if (child) reorderAndBySelectivity(*child);
+    }
+    if (node.type != QueryNodeType::AND) return;
+    std::stable_sort(node.children.begin(), node.children.end(),
+        [](const auto& a, const auto& b) {
+            return evalCostRank(*a) < evalCostRank(*b);
+        });
+}
+
 } // anonymous namespace
 
 // Expose extractRegexLiterals for unit testing
@@ -759,6 +797,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
     // Transform TERM nodes containing '*' or '?' from SUBSTRING to GLOB mode.
     ast = transformGlobTerms(std::move(ast));
+
+    // Reorder AND children by evaluation cost for better short-circuit
+    reorderAndBySelectivity(*ast);
 
     // Analyze which record fields the query actually needs
     QueryNeeds needs = analyzeQueryNeeds(*ast);
@@ -932,6 +973,25 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     nameOk = true;
                     stage1AllFound = true;
                 }
+            }
+        }
+    }
+
+    // Stage 1c: ASCII bigram index — for 2-char ASCII queries
+    if (!nameOk && !nameBigramIndex_.empty() && trigramKey.size() == 2) {
+        bool allAscii = true;
+        for (char c : trigramKey) {
+            if (static_cast<unsigned char>(c) >= 128) { allAscii = false; break; }
+        }
+        if (allAscii) {
+            uint8_t a = me_ascii::kLowerTable[static_cast<uint8_t>(trigramKey[0])];
+            uint8_t b = me_ascii::kLowerTable[static_cast<uint8_t>(trigramKey[1])];
+            uint16_t bg = SearchEngine::packBigram(a, b);
+            auto it = nameBigramIndex_.find(bg);
+            if (it != nameBigramIndex_.end() && it->second.size() <= totalSize / 4) {
+                nameCands = it->second;
+                nameOk = true;
+                stage1AllFound = true;
             }
         }
     }
