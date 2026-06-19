@@ -101,9 +101,15 @@ SearchEngine::MemoryBreakdown SearchEngine::memoryBreakdown() const {
     m.pathLookupApproxBytes = stringMapBytes(pathLookup_);
     m.lowerPathLookupEntries = lowerPathLookup_.size();
     m.lowerPathLookupApproxBytes = stringMapBytes(lowerPathLookup_);
-    m.nameTrigramEntries = nameTrigramIndex_.size();
-    m.nameTrigramApproxBytes = trigramMapBytes(nameTrigramIndex_);
-    m.nameTrigramPostingBytes = postingBytes(nameTrigramIndex_);
+    if (!nameTrigramFlat_.empty()) {
+        m.nameTrigramEntries = nameTrigramFlat_.size();
+        m.nameTrigramApproxBytes = nameTrigramFlat_.memoryBytes();
+        m.nameTrigramPostingBytes = nameTrigramFlat_.totalPostings() * sizeof(uint32_t);
+    } else {
+        m.nameTrigramEntries = nameTrigramIndex_.size();
+        m.nameTrigramApproxBytes = trigramMapBytes(nameTrigramIndex_);
+        m.nameTrigramPostingBytes = postingBytes(nameTrigramIndex_);
+    }
     m.pinyinTrigramEntries = pinyinInitialsTrigramIndex_.size();
     m.pinyinTrigramApproxBytes = trigramMapBytes(pinyinInitialsTrigramIndex_);
     m.pinyinTrigramPostingBytes = postingBytes(pinyinInitialsTrigramIndex_);
@@ -366,9 +372,11 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     if (options_.enablePinyinInitials) buildPinyinInitialsPoolFromOrigNames();
     else pinyinInitialsPool_.clear();
     buildTrigramIndex();
+    nameTrigramFlat_.buildMove(std::move(nameTrigramIndex_));
+    nameTrigramIndex_.clear();
+    nameTrigramDelta_.clear();
     if (options_.enablePinyinInitials) buildPinyinInitialsIndex();
     else pinyinInitialsTrigramIndex_.clear();
-    // Build path trigram index for fast path-only search
     if (options_.enablePathTrigramIndex) {
         buildPathTrigramIndex();
         rebuildPathIdxToRecords();
@@ -376,7 +384,6 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
         pathTrigramIndex_.clear();
         pathIdxToRecords_.clear();
     }
-    // Build extension index for fast ext: filter queries
     buildExtensionIndex();
     cjkBigramIndex_ = buildCJKBigramIndexFromData(types_, namePool_);
     nameBigramIndex_ = buildBigramIndexFromData(types_, namePool_);
@@ -497,8 +504,10 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
         }
     }
 
-    // Build trigram index for fast filename search
     buildTrigramIndex();
+    nameTrigramFlat_.buildMove(std::move(nameTrigramIndex_));
+    nameTrigramIndex_.clear();
+    nameTrigramDelta_.clear();
     if (options_.enablePinyinInitials) {
         buildPinyinInitialsPoolFromOrigNames();
         buildPinyinInitialsIndex();
@@ -1056,7 +1065,9 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
         lowerPathLookup_ = std::move(cdLowerPathLookup);
         pathIndex_ = std::move(cdPathIndex);
         pathIndexCollisions_ = std::move(cdPathIndexCollisions);
-        nameTrigramIndex_ = std::move(cdTrigramIndex);
+        nameTrigramFlat_.buildMove(std::move(cdTrigramIndex));
+        nameTrigramIndex_.clear();
+        nameTrigramDelta_.clear();
         pinyinInitialsTrigramIndex_ = std::move(cdPinyinInitialsTrigramIndex);
         pathTrigramIndex_ = std::move(cdPathTrigramIndex);
         pathIdxToRecords_ = std::move(cdPathIdxToRecords);

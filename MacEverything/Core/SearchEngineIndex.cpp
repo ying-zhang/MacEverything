@@ -44,6 +44,81 @@ std::vector<uint32_t> SearchEngine::intersectPostingLists(
     return std::vector<uint32_t>(current->begin(), current->end());
 }
 
+std::vector<uint32_t> SearchEngine::intersectPostingListsFlat(
+    const FlatPostingIndex<Trigram>& flat,
+    const TrigramDelta& delta,
+    const std::string& keyword,
+    bool& allFound) {
+    allFound = true;
+    auto keyTrigrams = ContentIndex::extractTrigrams(keyword);
+    if (keyTrigrams.empty()) { allFound = false; return {}; }
+
+    // For each trigram, merge flat lookup with delta adds/removes
+    std::vector<std::vector<uint32_t>> merged;
+    merged.reserve(keyTrigrams.size());
+    for (Trigram t : keyTrigrams) {
+        auto lr = flat.lookup(t);
+        auto addIt = delta.adds.find(t);
+        auto remIt = delta.removes.find(t);
+
+        bool hasFlat = lr.data != nullptr && lr.count > 0;
+        bool hasAdds = addIt != delta.adds.end() && !addIt->second.empty();
+        bool hasRemoves = remIt != delta.removes.end() && !remIt->second.empty();
+
+        if (!hasFlat && !hasAdds) { allFound = false; return {}; }
+
+        if (!hasAdds && !hasRemoves) {
+            merged.emplace_back(lr.data, lr.data + lr.count);
+            continue;
+        }
+
+        // Merge: (flat UNION adds) MINUS removes
+        std::vector<uint32_t> combined;
+        if (hasFlat && hasAdds) {
+            combined.reserve(lr.count + addIt->second.size());
+            std::set_union(lr.data, lr.data + lr.count,
+                           addIt->second.begin(), addIt->second.end(),
+                           std::back_inserter(combined));
+        } else if (hasFlat) {
+            combined.assign(lr.data, lr.data + lr.count);
+        } else {
+            combined = addIt->second;
+        }
+
+        if (hasRemoves) {
+            std::vector<uint32_t> filtered;
+            filtered.reserve(combined.size());
+            std::set_difference(combined.begin(), combined.end(),
+                                remIt->second.begin(), remIt->second.end(),
+                                std::back_inserter(filtered));
+            combined = std::move(filtered);
+        }
+
+        if (combined.empty()) { allFound = false; return {}; }
+        merged.push_back(std::move(combined));
+    }
+
+    // Sort by size (smallest first) for optimal intersection
+    std::sort(merged.begin(), merged.end(),
+        [](const auto& a, const auto& b) { return a.size() < b.size(); });
+
+    thread_local std::vector<uint32_t> tl_flat_a;
+    thread_local std::vector<uint32_t> tl_flat_b;
+    auto* current = &tl_flat_a;
+    auto* next = &tl_flat_b;
+    *current = std::move(merged[0]);
+
+    for (size_t i = 1; i < merged.size() && !current->empty(); i++) {
+        next->clear();
+        next->reserve(std::min(current->size(), merged[i].size()));
+        std::set_intersection(current->begin(), current->end(),
+                              merged[i].begin(), merged[i].end(),
+                              std::back_inserter(*next));
+        std::swap(current, next);
+    }
+    return std::vector<uint32_t>(current->begin(), current->end());
+}
+
 std::vector<uint32_t> SearchEngine::intersectPostingListsMulti(
     const std::unordered_map<Trigram, std::vector<uint32_t>>& index,
     const std::vector<std::string>& segments,
@@ -216,35 +291,48 @@ void SearchEngine::removePinyinInitialsForRecord(uint32_t idx) {
 
 void SearchEngine::addTrigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
     auto trigrams = ContentIndex::extractTrigrams(std::string(data, len));
-    // P-2 fix: sort+unique instead of unordered_set
     std::sort(trigrams.begin(), trigrams.end());
     trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
 
-    for (Trigram t : trigrams) {
-        auto& list = nameTrigramIndex_[t];
-        // Insert in sorted position to maintain sorted posting lists
-        auto pos = std::lower_bound(list.begin(), list.end(), idx);
-        list.insert(pos, idx);
+    if (!nameTrigramFlat_.empty()) {
+        for (Trigram t : trigrams) {
+            auto& list = nameTrigramDelta_.adds[t];
+            auto pos = std::lower_bound(list.begin(), list.end(), idx);
+            if (pos == list.end() || *pos != idx) list.insert(pos, idx);
+        }
+    } else {
+        for (Trigram t : trigrams) {
+            auto& list = nameTrigramIndex_[t];
+            auto pos = std::lower_bound(list.begin(), list.end(), idx);
+            list.insert(pos, idx);
+        }
     }
 }
 
 void SearchEngine::removeTrigramsForRecord(uint32_t idx) {
     if (idx >= namePool_.entryCount() || !namePool_.isLive(idx)) return;
-    // Recompute trigrams from namePool_ instead of storing per-record lists
     auto trigrams = ContentIndex::extractTrigrams(std::string(namePool_.data(idx), namePool_.length(idx)));
     std::sort(trigrams.begin(), trigrams.end());
     trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
-    for (Trigram t : trigrams) {
-        auto it = nameTrigramIndex_.find(t);
-        if (it != nameTrigramIndex_.end()) {
-            auto& list = it->second;
-            // Binary search in sorted list
+
+    if (!nameTrigramFlat_.empty()) {
+        for (Trigram t : trigrams) {
+            auto& list = nameTrigramDelta_.removes[t];
             auto pos = std::lower_bound(list.begin(), list.end(), idx);
-            if (pos != list.end() && *pos == idx) {
-                list.erase(pos);
-            }
-            if (list.empty()) {
-                nameTrigramIndex_.erase(it);
+            if (pos == list.end() || *pos != idx) list.insert(pos, idx);
+        }
+    } else {
+        for (Trigram t : trigrams) {
+            auto it = nameTrigramIndex_.find(t);
+            if (it != nameTrigramIndex_.end()) {
+                auto& list = it->second;
+                auto pos = std::lower_bound(list.begin(), list.end(), idx);
+                if (pos != list.end() && *pos == idx) {
+                    list.erase(pos);
+                }
+                if (list.empty()) {
+                    nameTrigramIndex_.erase(it);
+                }
             }
         }
     }

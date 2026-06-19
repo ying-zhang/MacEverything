@@ -841,21 +841,24 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     bool nameOk = false;
     bool stage1AllFound = false;
     size_t stage1RawCandCount = 0;
+    bool hasNameTrigramIndex = !nameTrigramFlat_.empty() || !nameTrigramIndex_.empty();
     if (useTrigram && !trigramKey.empty() && trigramKey.size() >= 3 &&
-        !nameTrigramIndex_.empty() && !pathTrigramIndex_.empty()) {
+        hasNameTrigramIndex && !pathTrigramIndex_.empty()) {
         beforeTrigram = std::chrono::steady_clock::now();
 
         const size_t candidateThreshold = totalSize / 10;
         bool anyCovered = false;
         bool stageTooMany = false;
-        if (!nameTrigramIndex_.empty()) {
+        bool useFlat = !nameTrigramFlat_.empty();
+        if (hasNameTrigramIndex) {
             if (allTermKeys.size() > 1) {
-                // Multi-word: intersect candidates of each term independently
                 bool allOk = true;
                 std::vector<uint32_t> intersected;
                 for (size_t ti = 0; ti < allTermKeys.size() && allOk; ti++) {
                     bool found = false;
-                    auto termCands = intersectPostingLists(nameTrigramIndex_, allTermKeys[ti], found);
+                    auto termCands = useFlat
+                        ? intersectPostingListsFlat(nameTrigramFlat_, nameTrigramDelta_, allTermKeys[ti], found)
+                        : intersectPostingLists(nameTrigramIndex_, allTermKeys[ti], found);
                     if (!found) { allOk = false; break; }
                     if (ti == 0) {
                         intersected = std::move(termCands);
@@ -875,7 +878,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 }
             } else {
                 bool nameAllFound = false;
-                auto nameOnlyCands = intersectPostingLists(nameTrigramIndex_, trigramKey, nameAllFound);
+                auto nameOnlyCands = useFlat
+                    ? intersectPostingListsFlat(nameTrigramFlat_, nameTrigramDelta_, trigramKey, nameAllFound)
+                    : intersectPostingLists(nameTrigramIndex_, trigramKey, nameAllFound);
                 if (nameAllFound) {
                     anyCovered = true;
                     unionSortedInto(nameCands, nameOnlyCands);
@@ -928,7 +933,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     // Diagnostic: log why trigram Stage 1 was skipped or failed (for 3+ char queries)
     if (trigramKey.size() >= 3 && !nameOk) {
         bool p2 = phase2Pending_.load(std::memory_order_acquire);
-        bool idxEmpty = nameTrigramIndex_.empty();
+        bool idxEmpty = !hasNameTrigramIndex;
         LOG_INFO("SearchEngine", "DIAG-TRIGRAM key=\"" << trigramKey
             << "\" SKIP reason="
             << (!useTrigram ? "useTrigram=false" :
@@ -937,7 +942,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 stage1RawCandCount > totalSize / 10 ? "tooManyCands" : "unknown")
             << " phase2Pending=" << p2
             << " indexEmpty=" << idxEmpty
-            << " indexBuckets=" << nameTrigramIndex_.size()
+            << " indexBuckets=" << (nameTrigramFlat_.empty() ? nameTrigramIndex_.size() : nameTrigramFlat_.size())
             << " allFound=" << stage1AllFound
             << " rawCands=" << stage1RawCandCount
             << " threshold=" << totalSize / 10
@@ -999,9 +1004,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     // Stage 2: Regex trigram (only if name failed)
     // Uses UNION (not AND) across atoms because FilteredRE2 atoms may have
     // OR semantics (e.g. alternation `foo|bar` → atoms are OR-related).
-    if (useTrigram && !nameOk && !nameTrigramIndex_.empty()) {
+    if (useTrigram && !nameOk && hasNameTrigramIndex) {
         auto regexLiterals = extractRegexLiteralsFromAST(*ast);
-        if (!regexLiterals.empty()) {
+        if (!regexLiterals.empty() && !nameTrigramIndex_.empty()) {
             beforeTrigram = std::chrono::steady_clock::now();
             nameCands = unionPostingListsMulti(nameTrigramIndex_, regexLiterals);
             nameOk = !nameCands.empty() && nameCands.size() <= totalSize / 10;

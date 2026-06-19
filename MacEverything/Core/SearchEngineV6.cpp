@@ -271,10 +271,15 @@ void SearchEngine::completePhase2() {
         }
         recentCache_ = buildRecentCacheFromData(types_, modTimes_, kRecentCacheSize);
 
+        // Convert mutable trigram map to flat index for query performance
+        nameTrigramFlat_.buildMove(std::move(nameTrigramIndex_));
+        nameTrigramIndex_.clear();
+        nameTrigramDelta_.clear();
+
         phase2Pending_.store(false, std::memory_order_release);
 
         LOG_INFO("SearchEngine", "Phase 2 complete: replayed " << replayCount
-                 << " mutations, trigram indices active");
+                 << " mutations, trigram indices active (flat)");
     }
 }
 

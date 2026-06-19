@@ -3,6 +3,7 @@
 #include "ContentIndex.h" // for Trigram type and extractTrigrams/makeTrigram
 #include "StringPool.h"
 #include "SIMDSearch.h"
+#include "FlatPostingIndex.h"
 #include <vector>
 #include <string>
 #include <string_view>
@@ -455,9 +456,21 @@ private:
     std::atomic<uint32_t> liveCount_{0};
     mutable std::shared_mutex mutex_;
 
-    // Trigram inverted index for fast filename search
-    std::unordered_map<Trigram, std::vector<uint32_t>> nameTrigramIndex_; // trigram -> record indices
-    std::unordered_map<Trigram, std::vector<uint32_t>> pinyinInitialsTrigramIndex_; // trigram -> record indices
+    // Trigram inverted index for fast filename search.
+    // nameTrigramIndex_ is the mutable map used during Phase 2 pending mode.
+    // After Phase 2 completes, data is moved to nameTrigramFlat_ and mutations
+    // accumulate in nameTrigramDelta_. Compaction rebuilds the flat index.
+    std::unordered_map<Trigram, std::vector<uint32_t>> nameTrigramIndex_;
+    FlatPostingIndex<Trigram> nameTrigramFlat_;
+    struct TrigramDelta {
+        std::unordered_map<Trigram, std::vector<uint32_t>> adds;
+        std::unordered_map<Trigram, std::vector<uint32_t>> removes;
+        bool empty() const { return adds.empty() && removes.empty(); }
+        void clear() { adds.clear(); removes.clear(); }
+    };
+    TrigramDelta nameTrigramDelta_;
+
+    std::unordered_map<Trigram, std::vector<uint32_t>> pinyinInitialsTrigramIndex_;
 
     // Path trigram index: two-level lookup for fast path-only matching
     std::unordered_map<Trigram, std::vector<uint32_t>> pathTrigramIndex_; // trigram -> sorted pathIdx
@@ -628,6 +641,13 @@ private:
         const std::string& keyword,
         bool& allFound);
 
+    /// Intersect posting lists using FlatPostingIndex + delta buffer.
+    static std::vector<uint32_t> intersectPostingListsFlat(
+        const FlatPostingIndex<Trigram>& flat,
+        const TrigramDelta& delta,
+        const std::string& keyword,
+        bool& allFound);
+
     /// Intersect trigrams from multiple literal segments for complex glob pre-filtering.
     static std::vector<uint32_t> intersectPostingListsMulti(
         const std::unordered_map<Trigram, std::vector<uint32_t>>& index,
@@ -668,11 +688,13 @@ private:
     static std::unordered_map<uint64_t, std::vector<uint32_t>> buildCJKBigramIndexFromData(
         const std::vector<uint8_t>& types, const StringPool& namePool);
 
+public:
     /// ASCII bigram index helpers (for 2-character keyword queries)
     static uint16_t packBigram(uint8_t a, uint8_t b) {
         return (static_cast<uint16_t>(a) << 8) | b;
     }
     static std::vector<uint16_t> extractAsciiBigrams(const char* data, uint16_t len);
+private:
     void addBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     void removeBigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     static std::unordered_map<uint16_t, std::vector<uint32_t>> buildBigramIndexFromData(
