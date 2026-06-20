@@ -661,6 +661,12 @@ private:
         const std::unordered_map<Trigram, std::vector<uint32_t>>& index,
         const std::vector<std::string>& segments);
 
+    /// Union posting lists using FlatPostingIndex + delta buffer.
+    static std::vector<uint32_t> unionPostingListsMultiFlat(
+        const FlatPostingIndex<Trigram>& flat,
+        const TrigramDelta& delta,
+        const std::vector<std::string>& segments);
+
     /// Build full path in a reusable buffer: path + '/' + name.
     /// Lowercases the path portion via SIMD. Returns the full path length.
     /// Buffer is resized if needed (with 2x growth).

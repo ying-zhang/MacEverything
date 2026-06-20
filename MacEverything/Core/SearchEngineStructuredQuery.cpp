@@ -100,8 +100,18 @@ size_t SearchEngine::estimateTrigramCost(const std::string& keyword) const {
     if (!nameTrigramFlat_.empty()) {
         for (Trigram t : unique) {
             auto lr = nameTrigramFlat_.lookup(t);
-            if (lr.data == nullptr) return 0;
-            minSize = std::min(minSize, static_cast<size_t>(lr.count));
+            auto addIt = nameTrigramDelta_.adds.find(t);
+            auto remIt = nameTrigramDelta_.removes.find(t);
+            bool hasFlat = lr.data != nullptr && lr.count > 0;
+            bool hasAdds = addIt != nameTrigramDelta_.adds.end() && !addIt->second.empty();
+            if (!hasFlat && !hasAdds) return 0;
+            size_t cost = 0;
+            if (hasFlat) cost += lr.count;
+            if (hasAdds) cost += addIt->second.size();
+            if (remIt != nameTrigramDelta_.removes.end())
+                cost = (cost > remIt->second.size()) ? cost - remIt->second.size() : 0;
+            if (cost == 0) return 0;
+            minSize = std::min(minSize, cost);
         }
     } else {
         for (Trigram t : unique) {

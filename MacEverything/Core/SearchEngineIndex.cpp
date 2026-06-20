@@ -198,6 +198,29 @@ std::vector<uint32_t> SearchEngine::unionPostingListsMulti(
     return result;
 }
 
+std::vector<uint32_t> SearchEngine::unionPostingListsMultiFlat(
+    const FlatPostingIndex<Trigram>& flat,
+    const TrigramDelta& delta,
+    const std::vector<std::string>& segments) {
+    std::vector<uint32_t> result;
+    for (const auto& seg : segments) {
+        bool allFound = false;
+        auto segCands = intersectPostingListsFlat(flat, delta, seg, allFound);
+        if (!allFound) continue;
+        if (result.empty()) {
+            result = std::move(segCands);
+        } else {
+            std::vector<uint32_t> merged;
+            merged.reserve(result.size() + segCands.size());
+            std::set_union(result.begin(), result.end(),
+                           segCands.begin(), segCands.end(),
+                           std::back_inserter(merged));
+            result = std::move(merged);
+        }
+    }
+    return result;
+}
+
 // ---------------------------------------------------------------------------
 // Name trigram index build / add / remove
 // ---------------------------------------------------------------------------

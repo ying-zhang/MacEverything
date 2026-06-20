@@ -221,6 +221,9 @@ void SearchEngine::completePhase2() {
         std::unique_lock lock(mutex_);
 
         nameTrigramIndex_ = std::move(trigramIndex);
+        nameTrigramFlat_.clear();
+        nameTrigramDelta_.clear();
+
         pinyinInitialsPool_ = std::move(pinyinInitialsPool);
         pinyinInitialsTrigramIndex_ = std::move(pinyinInitialsTrigramIndex);
         pathTrigramIndex_ = std::move(pathTrigramIndex);
@@ -258,23 +261,13 @@ void SearchEngine::completePhase2() {
             replayCount++;
         }
 
-        // Replay tombstones: records that were live in snapshot but deleted during build
-        for (uint32_t i = 0; i < snapSize; i++) {
-            if (i >= types_.size()) break;
-            if (snapTypes[i] != 0 && types_[i] == 0) {
-                // Was live in snapshot, now tombstoned — trigram was built, need to remove
-                // The trigram entry points at index i which is now tombstoned.
-                // Query-time type==0 check will filter it, but we can clean up explicitly.
-                removeTrigramsForRecord(i);  // Safe: namePool_[i] is tombstoned, this is a no-op
-                removePinyinInitialsForRecord(i);
-            }
-        }
+        // Records tombstoned during Phase 2 build have stale index entries, but
+        // query-time types_[i]==0 check filters them. Next compaction rebuilds cleanly.
         recentCache_ = buildRecentCacheFromData(types_, modTimes_, kRecentCacheSize);
 
         // Convert mutable trigram map to flat index for query performance
         nameTrigramFlat_.buildMove(std::move(nameTrigramIndex_));
         nameTrigramIndex_.clear();
-        nameTrigramDelta_.clear();
 
         phase2Pending_.store(false, std::memory_order_release);
 

@@ -1006,9 +1006,11 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     // OR semantics (e.g. alternation `foo|bar` → atoms are OR-related).
     if (useTrigram && !nameOk && hasNameTrigramIndex) {
         auto regexLiterals = extractRegexLiteralsFromAST(*ast);
-        if (!regexLiterals.empty() && !nameTrigramIndex_.empty()) {
+        if (!regexLiterals.empty()) {
             beforeTrigram = std::chrono::steady_clock::now();
-            nameCands = unionPostingListsMulti(nameTrigramIndex_, regexLiterals);
+            nameCands = !nameTrigramFlat_.empty()
+                ? unionPostingListsMultiFlat(nameTrigramFlat_, nameTrigramDelta_, regexLiterals)
+                : unionPostingListsMulti(nameTrigramIndex_, regexLiterals);
             nameOk = !nameCands.empty() && nameCands.size() <= totalSize / 10;
             if (!nameOk) nameCands.clear();
             afterTrigram = std::chrono::steady_clock::now();
@@ -1146,6 +1148,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 size_t start = t * chunkSize;
                 size_t end = std::min(start + chunkSize, candidateCount);
                 if (start >= end) return;
+                tl_lowerPathCache.clear();
                 auto& local = threadResults[t];
                 std::vector<char> localPathBuf;
                 const auto& regCache = ptcPtr[t];
@@ -1258,6 +1261,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             size_t start = t * chunkSize;
             size_t end = std::min(start + chunkSize, totalSize);
             if (start >= end) return;
+            tl_lowerPathCache.clear();
 
             auto& local = threadResults[t];
             std::vector<char> localPathBuf;
