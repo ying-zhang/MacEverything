@@ -25,98 +25,20 @@ std::vector<uint32_t> SearchEngine::intersectPostingLists(
     std::sort(postings.begin(), postings.end(),
         [](const auto* a, const auto* b) { return a->size() < b->size(); });
 
-    thread_local std::vector<uint32_t> tl_buf_a;
-    thread_local std::vector<uint32_t> tl_buf_b;
-    auto* current = &tl_buf_a;
-    auto* next = &tl_buf_b;
-    current->clear();
-    current->assign(postings[0]->begin(), postings[0]->end());
+    std::vector<uint32_t> result;
+    result.reserve(postings[0]->size());
+    result.assign(postings[0]->begin(), postings[0]->end());
 
-    for (size_t i = 1; i < postings.size() && !current->empty(); i++) {
+    for (size_t i = 1; i < postings.size() && !result.empty(); i++) {
         const auto& other = *postings[i];
-        next->clear();
-        next->reserve(std::min(current->size(), other.size()));
-        std::set_intersection(current->begin(), current->end(),
+        std::vector<uint32_t> isect;
+        isect.reserve(std::min(result.size(), other.size()));
+        std::set_intersection(result.begin(), result.end(),
                               other.begin(), other.end(),
-                              std::back_inserter(*next));
-        std::swap(current, next);
+                              std::back_inserter(isect));
+        result = std::move(isect);
     }
-    return std::vector<uint32_t>(current->begin(), current->end());
-}
-
-std::vector<uint32_t> SearchEngine::intersectPostingListsFlat(
-    const FlatPostingIndex<Trigram>& flat,
-    const TrigramDelta& delta,
-    const std::string& keyword,
-    bool& allFound) {
-    allFound = true;
-    auto keyTrigrams = ContentIndex::extractTrigrams(keyword);
-    if (keyTrigrams.empty()) { allFound = false; return {}; }
-
-    // For each trigram, merge flat lookup with delta adds/removes
-    std::vector<std::vector<uint32_t>> merged;
-    merged.reserve(keyTrigrams.size());
-    for (Trigram t : keyTrigrams) {
-        auto lr = flat.lookup(t);
-        auto addIt = delta.adds.find(t);
-        auto remIt = delta.removes.find(t);
-
-        bool hasFlat = lr.data != nullptr && lr.count > 0;
-        bool hasAdds = addIt != delta.adds.end() && !addIt->second.empty();
-        bool hasRemoves = remIt != delta.removes.end() && !remIt->second.empty();
-
-        if (!hasFlat && !hasAdds) { allFound = false; return {}; }
-
-        if (!hasAdds && !hasRemoves) {
-            merged.emplace_back(lr.data, lr.data + lr.count);
-            continue;
-        }
-
-        // Merge: (flat UNION adds) MINUS removes
-        std::vector<uint32_t> combined;
-        if (hasFlat && hasAdds) {
-            combined.reserve(lr.count + addIt->second.size());
-            std::set_union(lr.data, lr.data + lr.count,
-                           addIt->second.begin(), addIt->second.end(),
-                           std::back_inserter(combined));
-        } else if (hasFlat) {
-            combined.assign(lr.data, lr.data + lr.count);
-        } else {
-            combined = addIt->second;
-        }
-
-        if (hasRemoves) {
-            std::vector<uint32_t> filtered;
-            filtered.reserve(combined.size());
-            std::set_difference(combined.begin(), combined.end(),
-                                remIt->second.begin(), remIt->second.end(),
-                                std::back_inserter(filtered));
-            combined = std::move(filtered);
-        }
-
-        if (combined.empty()) { allFound = false; return {}; }
-        merged.push_back(std::move(combined));
-    }
-
-    // Sort by size (smallest first) for optimal intersection
-    std::sort(merged.begin(), merged.end(),
-        [](const auto& a, const auto& b) { return a.size() < b.size(); });
-
-    thread_local std::vector<uint32_t> tl_flat_a;
-    thread_local std::vector<uint32_t> tl_flat_b;
-    auto* current = &tl_flat_a;
-    auto* next = &tl_flat_b;
-    *current = std::move(merged[0]);
-
-    for (size_t i = 1; i < merged.size() && !current->empty(); i++) {
-        next->clear();
-        next->reserve(std::min(current->size(), merged[i].size()));
-        std::set_intersection(current->begin(), current->end(),
-                              merged[i].begin(), merged[i].end(),
-                              std::back_inserter(*next));
-        std::swap(current, next);
-    }
-    return std::vector<uint32_t>(current->begin(), current->end());
+    return result;
 }
 
 std::vector<uint32_t> SearchEngine::intersectPostingListsMulti(
@@ -154,23 +76,20 @@ std::vector<uint32_t> SearchEngine::intersectPostingListsMulti(
     std::sort(postings.begin(), postings.end(),
         [](const auto* a, const auto* b) { return a->size() < b->size(); });
 
-    thread_local std::vector<uint32_t> tl_multi_a;
-    thread_local std::vector<uint32_t> tl_multi_b;
-    auto* current = &tl_multi_a;
-    auto* next = &tl_multi_b;
-    current->clear();
-    current->assign(postings[0]->begin(), postings[0]->end());
+    std::vector<uint32_t> result;
+    result.reserve(postings[0]->size());
+    result.assign(postings[0]->begin(), postings[0]->end());
 
-    for (size_t i = 1; i < postings.size() && !current->empty(); i++) {
+    for (size_t i = 1; i < postings.size() && !result.empty(); i++) {
         const auto& other = *postings[i];
-        next->clear();
-        next->reserve(std::min(current->size(), other.size()));
-        std::set_intersection(current->begin(), current->end(),
+        std::vector<uint32_t> isect;
+        isect.reserve(std::min(result.size(), other.size()));
+        std::set_intersection(result.begin(), result.end(),
                               other.begin(), other.end(),
-                              std::back_inserter(*next));
-        std::swap(current, next);
+                              std::back_inserter(isect));
+        result = std::move(isect);
     }
-    return std::vector<uint32_t>(current->begin(), current->end());
+    return result;
 }
 
 std::vector<uint32_t> SearchEngine::unionPostingListsMulti(
@@ -184,29 +103,6 @@ std::vector<uint32_t> SearchEngine::unionPostingListsMulti(
         bool allFound = false;
         auto segCands = intersectPostingLists(index, seg, allFound);
         if (!allFound) continue;  // skip atoms with no trigram coverage
-        if (result.empty()) {
-            result = std::move(segCands);
-        } else {
-            std::vector<uint32_t> merged;
-            merged.reserve(result.size() + segCands.size());
-            std::set_union(result.begin(), result.end(),
-                           segCands.begin(), segCands.end(),
-                           std::back_inserter(merged));
-            result = std::move(merged);
-        }
-    }
-    return result;
-}
-
-std::vector<uint32_t> SearchEngine::unionPostingListsMultiFlat(
-    const FlatPostingIndex<Trigram>& flat,
-    const TrigramDelta& delta,
-    const std::vector<std::string>& segments) {
-    std::vector<uint32_t> result;
-    for (const auto& seg : segments) {
-        bool allFound = false;
-        auto segCands = intersectPostingListsFlat(flat, delta, seg, allFound);
-        if (!allFound) continue;
         if (result.empty()) {
             result = std::move(segCands);
         } else {
@@ -314,75 +210,35 @@ void SearchEngine::removePinyinInitialsForRecord(uint32_t idx) {
 
 void SearchEngine::addTrigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
     auto trigrams = ContentIndex::extractTrigrams(std::string(data, len));
+    // P-2 fix: sort+unique instead of unordered_set
     std::sort(trigrams.begin(), trigrams.end());
     trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
 
-    if (!nameTrigramFlat_.empty()) {
-        for (Trigram t : trigrams) {
-            // Cancel pending remove if present
-            auto remIt = nameTrigramDelta_.removes.find(t);
-            if (remIt != nameTrigramDelta_.removes.end()) {
-                auto& remList = remIt->second;
-                auto rp = std::lower_bound(remList.begin(), remList.end(), idx);
-                if (rp != remList.end() && *rp == idx) {
-                    remList.erase(rp);
-                    if (remList.empty()) nameTrigramDelta_.removes.erase(remIt);
-                    continue;
-                }
-            }
-            auto& list = nameTrigramDelta_.adds[t];
-            auto pos = std::lower_bound(list.begin(), list.end(), idx);
-            if (pos == list.end() || *pos != idx) list.insert(pos, idx);
-        }
-    } else {
-        for (Trigram t : trigrams) {
-            auto& list = nameTrigramIndex_[t];
-            auto pos = std::lower_bound(list.begin(), list.end(), idx);
-            list.insert(pos, idx);
-        }
+    for (Trigram t : trigrams) {
+        auto& list = nameTrigramIndex_[t];
+        // Insert in sorted position to maintain sorted posting lists
+        auto pos = std::lower_bound(list.begin(), list.end(), idx);
+        list.insert(pos, idx);
     }
 }
 
 void SearchEngine::removeTrigramsForRecord(uint32_t idx) {
     if (idx >= namePool_.entryCount() || !namePool_.isLive(idx)) return;
+    // Recompute trigrams from namePool_ instead of storing per-record lists
     auto trigrams = ContentIndex::extractTrigrams(std::string(namePool_.data(idx), namePool_.length(idx)));
     std::sort(trigrams.begin(), trigrams.end());
     trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
-
-    if (!nameTrigramFlat_.empty()) {
-        for (Trigram t : trigrams) {
-            bool needRemove = true;
-            // Cancel pending add if present
-            auto addIt = nameTrigramDelta_.adds.find(t);
-            if (addIt != nameTrigramDelta_.adds.end()) {
-                auto& addList = addIt->second;
-                auto ap = std::lower_bound(addList.begin(), addList.end(), idx);
-                if (ap != addList.end() && *ap == idx) {
-                    addList.erase(ap);
-                    if (addList.empty()) nameTrigramDelta_.adds.erase(addIt);
-                    // Only need removes entry if idx exists in flat
-                    auto lr = nameTrigramFlat_.lookup(t);
-                    needRemove = lr.data && std::binary_search(lr.data, lr.data + lr.count, idx);
-                }
+    for (Trigram t : trigrams) {
+        auto it = nameTrigramIndex_.find(t);
+        if (it != nameTrigramIndex_.end()) {
+            auto& list = it->second;
+            // Binary search in sorted list
+            auto pos = std::lower_bound(list.begin(), list.end(), idx);
+            if (pos != list.end() && *pos == idx) {
+                list.erase(pos);
             }
-            if (needRemove) {
-                auto& list = nameTrigramDelta_.removes[t];
-                auto pos = std::lower_bound(list.begin(), list.end(), idx);
-                if (pos == list.end() || *pos != idx) list.insert(pos, idx);
-            }
-        }
-    } else {
-        for (Trigram t : trigrams) {
-            auto it = nameTrigramIndex_.find(t);
-            if (it != nameTrigramIndex_.end()) {
-                auto& list = it->second;
-                auto pos = std::lower_bound(list.begin(), list.end(), idx);
-                if (pos != list.end() && *pos == idx) {
-                    list.erase(pos);
-                }
-                if (list.empty()) {
-                    nameTrigramIndex_.erase(it);
-                }
+            if (list.empty()) {
+                nameTrigramIndex_.erase(it);
             }
         }
     }
@@ -641,65 +497,6 @@ std::unordered_map<uint64_t, std::vector<uint32_t>> SearchEngine::buildCJKBigram
         }
     }
     // Sort all posting lists
-    for (auto& [bg, list] : index) {
-        std::sort(list.begin(), list.end());
-    }
-    return index;
-}
-
-// ---------------------------------------------------------------------------
-// ASCII Bigram Index (for 2-character keyword queries)
-// ---------------------------------------------------------------------------
-
-std::vector<uint16_t> SearchEngine::extractAsciiBigrams(const char* data, uint16_t len) {
-    if (len < 2) return {};
-    std::vector<uint16_t> result;
-    for (uint16_t i = 0; i + 1 < len; i++) {
-        uint8_t a = me_ascii::kLowerTable[static_cast<uint8_t>(data[i])];
-        uint8_t b = me_ascii::kLowerTable[static_cast<uint8_t>(data[i + 1])];
-        result.push_back(packBigram(a, b));
-    }
-    std::sort(result.begin(), result.end());
-    result.erase(std::unique(result.begin(), result.end()), result.end());
-    return result;
-}
-
-void SearchEngine::addBigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
-    auto bigrams = extractAsciiBigrams(data, len);
-    for (uint16_t bg : bigrams) {
-        auto& list = nameBigramIndex_[bg];
-        auto pos = std::lower_bound(list.begin(), list.end(), idx);
-        if (pos == list.end() || *pos != idx) {
-            list.insert(pos, idx);
-        }
-    }
-}
-
-void SearchEngine::removeBigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
-    auto bigrams = extractAsciiBigrams(data, len);
-    for (uint16_t bg : bigrams) {
-        auto it = nameBigramIndex_.find(bg);
-        if (it == nameBigramIndex_.end()) continue;
-        auto& list = it->second;
-        auto pos = std::lower_bound(list.begin(), list.end(), idx);
-        if (pos != list.end() && *pos == idx) {
-            list.erase(pos);
-            if (list.empty()) nameBigramIndex_.erase(it);
-        }
-    }
-}
-
-std::unordered_map<uint16_t, std::vector<uint32_t>> SearchEngine::buildBigramIndexFromData(
-    const std::vector<uint8_t>& types, const StringPool& namePool) {
-    std::unordered_map<uint16_t, std::vector<uint32_t>> index;
-    for (uint32_t i = 0; i < namePool.entryCount(); i++) {
-        if (i >= types.size() || types[i] == 0) continue;
-        if (!namePool.isLive(i)) continue;
-        auto bigrams = extractAsciiBigrams(namePool.data(i), namePool.length(i));
-        for (uint16_t bg : bigrams) {
-            index[bg].push_back(i);
-        }
-    }
     for (auto& [bg, list] : index) {
         std::sort(list.begin(), list.end());
     }

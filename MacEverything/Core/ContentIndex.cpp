@@ -124,9 +124,9 @@ std::vector<Trigram> ContentIndex::extractTrigrams(const std::string& text) {
     std::vector<Trigram> result;
 
     for (size_t i = 0; i + 2 < text.size(); i++) {
-        uint8_t a = me_ascii::kLowerTable[static_cast<uint8_t>(text[i])];
-        uint8_t b = me_ascii::kLowerTable[static_cast<uint8_t>(text[i + 1])];
-        uint8_t c = me_ascii::kLowerTable[static_cast<uint8_t>(text[i + 2])];
+        uint8_t a = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(text[i])));
+        uint8_t b = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(text[i + 1])));
+        uint8_t c = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(text[i + 2])));
         Trigram t = makeTrigram(a, b, c);
         if (!seen[t]) {
             seen[t] = true;

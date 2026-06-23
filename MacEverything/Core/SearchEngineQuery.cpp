@@ -190,11 +190,9 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
     // Find directory records whose name exactly matches dirName
     std::vector<uint32_t> dirIndices;
 
-    if (dirName.size() >= 3 && (!nameTrigramFlat_.empty() || !nameTrigramIndex_.empty())) {
+    if (dirName.size() >= 3 && !nameTrigramIndex_.empty()) {
         bool allFound = false;
-        auto candidates = !nameTrigramFlat_.empty()
-            ? intersectPostingListsFlat(nameTrigramFlat_, nameTrigramDelta_, dirName, allFound)
-            : intersectPostingLists(nameTrigramIndex_, dirName, allFound);
+        auto candidates = intersectPostingLists(nameTrigramIndex_, dirName, allFound);
         if (allFound && candidates.size() <= totalSize / 4) {
             for (uint32_t idx : candidates) {
                 if (types_[idx] != 2) continue; // must be directory

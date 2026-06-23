@@ -90,35 +90,16 @@ bool SearchEngine::pathSegmentsMatch(std::string_view dirPath,
 // estimateTrigramCost: cheap upper-bound for trigram candidate count
 // ---------------------------------------------------------------------------
 size_t SearchEngine::estimateTrigramCost(const std::string& keyword) const {
-    bool hasIndex = !nameTrigramFlat_.empty() || !nameTrigramIndex_.empty();
-    if (keyword.size() < 3 || !hasIndex) return SIZE_MAX;
+    if (keyword.size() < 3 || nameTrigramIndex_.empty()) return SIZE_MAX;
     auto trigrams = ContentIndex::extractTrigrams(keyword);
     std::unordered_set<Trigram> unique(trigrams.begin(), trigrams.end());
     if (unique.empty()) return SIZE_MAX;
 
     size_t minSize = SIZE_MAX;
-    if (!nameTrigramFlat_.empty()) {
-        for (Trigram t : unique) {
-            auto lr = nameTrigramFlat_.lookup(t);
-            auto addIt = nameTrigramDelta_.adds.find(t);
-            auto remIt = nameTrigramDelta_.removes.find(t);
-            bool hasFlat = lr.data != nullptr && lr.count > 0;
-            bool hasAdds = addIt != nameTrigramDelta_.adds.end() && !addIt->second.empty();
-            if (!hasFlat && !hasAdds) return 0;
-            size_t cost = 0;
-            if (hasFlat) cost += lr.count;
-            if (hasAdds) cost += addIt->second.size();
-            if (remIt != nameTrigramDelta_.removes.end())
-                cost = (cost > remIt->second.size()) ? cost - remIt->second.size() : 0;
-            if (cost == 0) return 0;
-            minSize = std::min(minSize, cost);
-        }
-    } else {
-        for (Trigram t : unique) {
-            auto it = nameTrigramIndex_.find(t);
-            if (it == nameTrigramIndex_.end()) return 0;
-            minSize = std::min(minSize, it->second.size());
-        }
+    for (Trigram t : unique) {
+        auto it = nameTrigramIndex_.find(t);
+        if (it == nameTrigramIndex_.end()) return 0; // trigram absent → 0 candidates
+        minSize = std::min(minSize, it->second.size());
     }
     return minSize;
 }
@@ -380,9 +361,7 @@ bool SearchEngine::queryStructuredNameAnchor(const ParsedQuery& pq,
                                              std::vector<Match>& merged) const {
     const auto& namePattern = pq.namePattern;
     bool allFound = false;
-    auto candidates = !nameTrigramFlat_.empty()
-        ? intersectPostingListsFlat(nameTrigramFlat_, nameTrigramDelta_, namePattern, allFound)
-        : intersectPostingLists(nameTrigramIndex_, namePattern, allFound);
+    auto candidates = intersectPostingLists(nameTrigramIndex_, namePattern, allFound);
     if (!allFound) return false;
 
     for (size_t ci = 0; ci < candidates.size(); ci++) {
@@ -425,9 +404,7 @@ bool SearchEngine::queryStructuredPathAnchor(const ParsedQuery& pq,
 
     const auto& anchorText = pq.pathSegments[anchorIdx].text;
     bool allFound = false;
-    auto candidates = !nameTrigramFlat_.empty()
-        ? intersectPostingListsFlat(nameTrigramFlat_, nameTrigramDelta_, anchorText, allFound)
-        : intersectPostingLists(nameTrigramIndex_, anchorText, allFound);
+    auto candidates = intersectPostingLists(nameTrigramIndex_, anchorText, allFound);
     if (!allFound) return false;
 
     int walkFrom = static_cast<int>(anchorIdx) + 1;
