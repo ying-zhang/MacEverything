@@ -2,6 +2,7 @@
 #include <vector>
 #include <cstdint>
 #include <algorithm>
+#include <cassert>
 #include <unordered_map>
 
 /// A read-only flat posting index: sorted keys with concatenated posting lists.
@@ -26,13 +27,15 @@ public:
 
         size_t totalPostings = 0;
         for (const auto& [_, list] : map) totalPostings += list.size();
+        assert(totalPostings <= UINT32_MAX);
         postings_.reserve(totalPostings);
 
         offsets_.reserve(keys_.size() + 1);
         uint32_t offset = 0;
         for (const auto& key : keys_) {
             offsets_.push_back(offset);
-            auto& list = map[key];
+            auto it = map.find(key);
+            auto& list = it->second;
             postings_.insert(postings_.end(), list.begin(), list.end());
             offset += static_cast<uint32_t>(list.size());
         }
@@ -53,6 +56,7 @@ public:
 
         size_t totalPostings = 0;
         for (const auto& [_, list] : map) totalPostings += list.size();
+        assert(totalPostings <= UINT32_MAX);
         postings_.reserve(totalPostings);
 
         offsets_.reserve(keys_.size() + 1);

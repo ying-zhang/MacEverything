@@ -127,6 +127,7 @@ namespace fs = std::filesystem;
 #include "tests/test_bigram_index.h"
 #include "tests/test_flat_posting_index.h"
 #include "tests/test_flat_delta_fixes.h"
+#include "tests/test_review_fixes.h"
 
 // ═══════════════════════════════════════════════════════
 //  Main
@@ -197,7 +198,8 @@ static void printUsage(const char* prog) {
     std::cout << "  78 (stage 1 optimizations),\n";
     std::cout << "  79 (bigram index & AND selectivity),\n";
     std::cout << "  80 (flat posting index & delta buffer),\n";
-    std::cout << "  81 (flat+delta bug fixes)\n";
+    std::cout << "  81 (flat+delta bug fixes),\n";
+    std::cout << "  82 (code review fixes)\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -213,7 +215,7 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--fast") {
             explicitSelection = true;
             gSkipPerformanceTests = true;
-            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77", "78", "79", "80", "81"});
+            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77", "78", "79", "80", "81", "82"});
         } else if (arg == "--bench") {
             explicitSelection = true;
             selectedParts.insert({"44", "46"});
@@ -351,6 +353,7 @@ int main(int argc, char* argv[]) {
     if (selectedParts.count("79")) runBigramIndexTests();
     if (selectedParts.count("80")) runFlatPostingIndexTests();
     if (selectedParts.count("81")) runFlatDeltaFixTests();
+    if (selectedParts.count("82")) runReviewFixTests();
 
     // ── Final Summary ──
     std::cout << "╔══════════════════════════════════════════╗\n";

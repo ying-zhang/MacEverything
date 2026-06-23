@@ -843,7 +843,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     size_t stage1RawCandCount = 0;
     bool hasNameTrigramIndex = !nameTrigramFlat_.empty() || !nameTrigramIndex_.empty();
     if (useTrigram && !trigramKey.empty() && trigramKey.size() >= 3 &&
-        hasNameTrigramIndex && !pathTrigramIndex_.empty()) {
+        hasNameTrigramIndex) {
         beforeTrigram = std::chrono::steady_clock::now();
 
         const size_t candidateThreshold = totalSize / 10;
@@ -1060,7 +1060,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     bool extOk = false;
     {
         auto extValues = extractExtFilterValues(*ast);
-        if (!extValues.empty()) {
+        if (!extValues.empty() && !extensionIndex_.empty()) {
             // Union posting lists for all requested extensions
             for (const auto& ext : extValues) {
                 auto it = extensionIndex_.find(ext);
@@ -1072,7 +1072,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 std::sort(extCands.begin(), extCands.end());
                 extCands.erase(std::unique(extCands.begin(), extCands.end()), extCands.end());
             }
-            extOk = true; // Extension index is precise — empty means no matches
+            extOk = true;
         }
     }
 

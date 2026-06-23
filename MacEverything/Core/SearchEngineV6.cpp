@@ -29,6 +29,14 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     namePool_ = std::move(namePool);
     pinyinInitialsPool_.clear();
     pinyinInitialsTrigramIndex_.clear();
+    nameTrigramFlat_.clear();
+    nameTrigramIndex_.clear();
+    nameTrigramDelta_.clear();
+    pathTrigramIndex_.clear();
+    pathIdxToRecords_.clear();
+    extensionIndex_.clear();
+    cjkBigramIndex_.clear();
+    nameBigramIndex_.clear();
     pathIndices_ = std::move(pathIndices);
     pathPool_ = std::move(pathPool);
     types_ = std::move(types);

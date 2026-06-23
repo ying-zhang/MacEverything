@@ -319,6 +319,17 @@ void SearchEngine::addTrigramsForRecord(uint32_t idx, const char* data, uint16_t
 
     if (!nameTrigramFlat_.empty()) {
         for (Trigram t : trigrams) {
+            // Cancel pending remove if present
+            auto remIt = nameTrigramDelta_.removes.find(t);
+            if (remIt != nameTrigramDelta_.removes.end()) {
+                auto& remList = remIt->second;
+                auto rp = std::lower_bound(remList.begin(), remList.end(), idx);
+                if (rp != remList.end() && *rp == idx) {
+                    remList.erase(rp);
+                    if (remList.empty()) nameTrigramDelta_.removes.erase(remIt);
+                    continue;
+                }
+            }
             auto& list = nameTrigramDelta_.adds[t];
             auto pos = std::lower_bound(list.begin(), list.end(), idx);
             if (pos == list.end() || *pos != idx) list.insert(pos, idx);
@@ -340,9 +351,25 @@ void SearchEngine::removeTrigramsForRecord(uint32_t idx) {
 
     if (!nameTrigramFlat_.empty()) {
         for (Trigram t : trigrams) {
-            auto& list = nameTrigramDelta_.removes[t];
-            auto pos = std::lower_bound(list.begin(), list.end(), idx);
-            if (pos == list.end() || *pos != idx) list.insert(pos, idx);
+            bool needRemove = true;
+            // Cancel pending add if present
+            auto addIt = nameTrigramDelta_.adds.find(t);
+            if (addIt != nameTrigramDelta_.adds.end()) {
+                auto& addList = addIt->second;
+                auto ap = std::lower_bound(addList.begin(), addList.end(), idx);
+                if (ap != addList.end() && *ap == idx) {
+                    addList.erase(ap);
+                    if (addList.empty()) nameTrigramDelta_.adds.erase(addIt);
+                    // Only need removes entry if idx exists in flat
+                    auto lr = nameTrigramFlat_.lookup(t);
+                    needRemove = lr.data && std::binary_search(lr.data, lr.data + lr.count, idx);
+                }
+            }
+            if (needRemove) {
+                auto& list = nameTrigramDelta_.removes[t];
+                auto pos = std::lower_bound(list.begin(), list.end(), idx);
+                if (pos == list.end() || *pos != idx) list.insert(pos, idx);
+            }
         }
     } else {
         for (Trigram t : trigrams) {
