@@ -19,7 +19,8 @@ void ServiceEngine::applyFSEvents(
     ops.reserve(events.size());
 
     // Content index updates are collected separately (they use their own lock)
-    std::vector<std::pair<std::string, bool>> contentUpdates; // path, isRemove
+    std::vector<std::string> contentRemovals;
+    std::vector<std::string> contentUpserts;
 
     for (const auto& event : events) {
         const std::string& path = event.path;
@@ -36,7 +37,7 @@ void ServiceEngine::applyFSEvents(
 
         if (itemRemoved || (itemRenamed && !exists)) {
             if (cfg.contentIndexingEnabled) {
-                contentUpdates.push_back({path, true});
+                contentRemovals.push_back(path);
             }
             ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
         } else if (exists) {
@@ -68,18 +69,19 @@ void ServiceEngine::applyFSEvents(
             ops.push_back({SearchEngine::MutationOp::UPDATE, path, std::move(record)});
 
             if (type == 1 && cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
-                contentUpdates.push_back({path, false});
+                contentUpserts.push_back(path);
             }
         }
     }
 
-    // Apply content index updates (uses its own lock)
-    for (const auto& [path, isRemove] : contentUpdates) {
-        updateContentForPath(path, isRemove, engine);
+    // Removals need the old fileIndex, while upserts need the new record metadata.
+    for (const auto& path : contentRemovals) {
+        updateContentForPath(path, true, engine);
     }
-
-    // Apply all search engine mutations in a single lock acquisition
     engine->batchMutate(std::move(ops));
+    for (const auto& path : contentUpserts) {
+        updateContentForPath(path, false, engine);
+    }
 }
 
 // ═══════════════════════════════════════════════════════
@@ -117,7 +119,8 @@ void ServiceEngine::startMonitoring() {
         std::vector<std::string> rescanDirs;
         std::vector<SearchEngine::MutationOp> ops;
         ops.reserve(events.size());
-        std::vector<std::pair<std::string, bool>> contentUpdates;
+        std::vector<std::string> contentRemovals;
+        std::vector<std::string> contentUpserts;
         bool changed = false;
 
         for (const auto& event : events) {
@@ -140,7 +143,7 @@ void ServiceEngine::startMonitoring() {
 
             if (itemRemoved || (itemRenamed && !exists)) {
                 if (cfg.contentIndexingEnabled) {
-                    contentUpdates.push_back({path, true});
+                    contentRemovals.push_back(path);
                 }
                 ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
                 changed = true;
@@ -175,19 +178,19 @@ void ServiceEngine::startMonitoring() {
 
                 if (type == 1) {
                     if (cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
-                        contentUpdates.push_back({path, false});
+                        contentUpserts.push_back(path);
                     }
                 }
             }
         }
 
-        // Apply content index updates (uses its own lock)
-        for (const auto& [path, isRemove] : contentUpdates) {
-            updateContentForPath(path, isRemove, engine);
+        for (const auto& path : contentRemovals) {
+            updateContentForPath(path, true, engine);
         }
-
-        // Apply all search engine mutations in a single lock acquisition
         engine->batchMutate(std::move(ops));
+        for (const auto& path : contentUpserts) {
+            updateContentForPath(path, false, engine);
+        }
 
         if (!rescanDirs.empty()) {
             scheduleRescanForPaths(rescanDirs);
@@ -351,18 +354,21 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
     // destroyed before the async block executes.
     std::string dirCopy = dir;
     auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
+    uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
 
     dispatch_async(mutationQueue_, ^{
-        if (shuttingDown_.load(std::memory_order_relaxed)) return;
+        if (!this->isGenerationCurrent(generation)) return;
 
         auto scanner = std::make_shared<DirectoryScanner>();
+        if (!this->registerScanner(scanner, generation)) return;
         std::vector<std::string> roots{dirCopy};
         scanner->scan(roots, this->scanConfigForRoots(roots));
+        this->unregisterScanner(scanner);
         auto freshRecords = scanner->takeResults();
         LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): scanned "
                  << freshRecords.size() << " records");
 
-        if (shuttingDown_.load(std::memory_order_relaxed)) return;
+        if (!this->isGenerationCurrent(generation)) return;
 
         uint32_t removed = engine->batchRescanPrefix(dirCopy, std::move(freshRecords));
 

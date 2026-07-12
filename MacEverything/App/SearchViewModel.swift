@@ -254,16 +254,19 @@ final class SearchServiceModel: ObservableObject {
         isMonitoring = false
         isSyncing = false
 
-        try? FileManager.default.removeItem(atPath: SearchViewModel.cachePath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.walPath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.pagesPath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.ptablePath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.v6Path)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.contentIndexPath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.contentWalPath)
-
         applyRuntimeConfiguration()
-        startIncremental()
+        isScanning = true
+        bridge.rebuildIndex { [weak self] count in
+            guard let self else { return }
+            self.totalRecords = count
+            self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
+            self.isScanning = false
+            self.scanComplete = true
+            self.isMonitoring = self.bridge.isMonitoring
+            self.isSyncing = self.bridge.isSyncing
+            self.refreshContentIndexInfo()
+            NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+        }
         NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
     }
 
@@ -425,6 +428,7 @@ class SearchViewModel: ObservableObject {
     @Published var selectedItemID: String? = nil
     @Published var selectedItemIDs: Set<String> = []
     @Published var selectionAnchorID: String? = nil
+    @Published var scrollTargetItemID: String? = nil
     @Published var renameRequestedItemID: String? = nil
     @Published var quickFilter: QuickFilter = .all
     @Published var pathFilter: String = ""
@@ -824,6 +828,7 @@ class SearchViewModel: ObservableObject {
         selectedItemID = nil
         selectedItemIDs = []
         selectionAnchorID = nil
+        scrollTargetItemID = nil
     }
 
     func selectNext() -> Bool {
@@ -831,9 +836,9 @@ class SearchViewModel: ObservableObject {
         if let currentID = selectedItemID,
            let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
             let nextIdx = min(idx + 1, displayItems.count - 1)
-            select(displayItems[nextIdx])
+            selectForKeyboard(displayItems[nextIdx])
         } else {
-            if let first = displayItems.first { select(first) }
+            if let first = displayItems.first { selectForKeyboard(first) }
         }
         return true
     }
@@ -843,9 +848,9 @@ class SearchViewModel: ObservableObject {
         if let currentID = selectedItemID,
            let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
             if idx == 0 { return false }
-            select(displayItems[idx - 1])
+            selectForKeyboard(displayItems[idx - 1])
         } else {
-            if let last = displayItems.last { select(last) }
+            if let last = displayItems.last { selectForKeyboard(last) }
         }
         return true
     }
@@ -1012,15 +1017,16 @@ class SearchViewModel: ObservableObject {
     private static let fileTypeApplication: UInt8 = 5
 
     private func openFile(_ item: FileItem) {
-        let fullPath = item.fullPath
-        if item.type == Self.fileTypeApplication {
-            let url = URL(fileURLWithPath: fullPath)
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                if error != nil { NSSound.beep() }
-            }
-        } else if !NSWorkspace.shared.open(URL(fileURLWithPath: fullPath)) {
-            NSSound.beep()
-        }
+        FileActions.open(
+            URL(fileURLWithPath: item.fullPath),
+            isApplication: item.type == Self.fileTypeApplication
+                || item.name.lowercased().hasSuffix(".app")
+        )
+    }
+
+    private func selectForKeyboard(_ item: FileItem) {
+        select(item)
+        scrollTargetItemID = item.id
     }
 
     func onWindowFocusChanged(_ focused: Bool) {
@@ -1036,7 +1042,21 @@ class SearchViewModel: ObservableObject {
 
     func refreshForServiceUpdate() {
         guard service.scanComplete else {
-            AppLogger.info("Search", "refreshForServiceUpdate skipped: scanComplete=false")
+            searchTask?.cancel()
+            recentTask?.cancel()
+            searchGeneration &+= 1
+            bridge.cancelSession(sessionId)
+            cachedResults = []
+            sourceItems = []
+            cachedItems = []
+            displayItems = []
+            contentResults = []
+            loadedCount = 0
+            totalMatches = 0
+            resultLimitReached = false
+            showingRecent = false
+            clearSelection()
+            AppLogger.info("Search", "Cleared results while index rebuild is in progress")
             return
         }
         let liveCount = bridge.liveRecordCount()

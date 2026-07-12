@@ -35,18 +35,23 @@ static void runContentIndexTests() {
     ContentIndex ci;
     ci.setExtensions({"txt", "bin"});
 
-    bool indexed = ci.indexFile(0, tmpDir + "/text.txt");
-    check(indexed, "ContentIndex: indexFile succeeds for text file");
+    auto indexed = ci.indexFile(0, tmpDir + "/text.txt");
+    check(indexed == ContentIndexUpdate::Upserted, "ContentIndex: indexFile succeeds for text file");
 
-    bool binaryIndexed = ci.indexFile(1, tmpDir + "/binary.bin");
-    check(!binaryIndexed, "ContentIndex: indexFile rejects binary file");
+    auto binaryIndexed = ci.indexFile(1, tmpDir + "/binary.bin");
+    check(binaryIndexed == ContentIndexUpdate::Unchanged, "ContentIndex: indexFile rejects binary file");
     check(ci.indexedFileCount() == 1, "ContentIndex: 1 file indexed");
 
-    auto matches = ci.query("trigram");
+    auto resolver = [&](uint32_t idx, std::string& path) {
+        if (idx != 0) return false;
+        path = tmpDir + "/text.txt";
+        return true;
+    };
+    auto matches = ci.query("trigram", 100, resolver);
     check(!matches.empty(), "ContentIndex: query 'trigram' returns matches");
     check(matches[0].fileIndex == 0, "ContentIndex: match has correct fileIndex");
 
-    auto noMatch = ci.query("zzzznotfound");
+    auto noMatch = ci.query("zzzznotfound", 100, resolver);
     check(noMatch.empty(), "ContentIndex: query for non-existent keyword returns empty");
 
     // Test persistence
@@ -59,16 +64,16 @@ static void runContentIndexTests() {
     check(loaded, "ContentIndex: loadFromFile succeeds");
     check(ci2.indexedFileCount() == 1, "ContentIndex: loaded index has 1 file");
 
-    auto matches2 = ci2.query("trigram");
+    auto matches2 = ci2.query("trigram", 100, resolver);
     check(!matches2.empty(), "ContentIndex: loaded index can query successfully");
 
     // Test: indexFile returns false for unchanged file (no spurious WAL writes)
     ContentIndex ci3;
     ci3.setExtensions({"txt"});
-    bool first = ci3.indexFile(0, tmpDir + "/text.txt");
-    check(first, "ContentIndex: first indexFile returns true");
-    bool second = ci3.indexFile(0, tmpDir + "/text.txt");
-    check(!second, "ContentIndex: second indexFile (unchanged) returns false");
+    auto first = ci3.indexFile(0, tmpDir + "/text.txt");
+    check(first == ContentIndexUpdate::Upserted, "ContentIndex: first indexFile returns updated");
+    auto second = ci3.indexFile(0, tmpDir + "/text.txt");
+    check(second == ContentIndexUpdate::Unchanged, "ContentIndex: second indexFile (unchanged) returns unchanged");
     check(ci3.indexedFileCount() == 1, "ContentIndex: still 1 file indexed after duplicate call");
 
     fs::remove_all(tmpDir);

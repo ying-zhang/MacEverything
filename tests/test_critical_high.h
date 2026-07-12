@@ -165,13 +165,18 @@ static void testContentIndexBulkLoad() {
     loaded->setExtensions({"txt"});
     ContentIndexPersistence loader(loaded, savePath, tmpDir + "/content2.wal");
     loader.load();
+    auto resolveContentPath = [&](uint32_t idx, std::string& path) {
+        if (idx >= 5) return false;
+        path = tmpDir + "/file" + std::to_string(idx) + ".txt";
+        return true;
+    };
 
     // Query for common keyword — should find all 5 files
-    auto results = loaded->query("common_keyword");
+    auto results = loaded->query("common_keyword", 100, resolveContentPath);
     check(results.size() == 5, "CH4: Bulk-loaded posting lists find all 5 files for common keyword");
 
     // Query for unique keyword — should find exactly 1 file
-    auto unique = loaded->query("unique_word_3");
+    auto unique = loaded->query("unique_word_3", 100, resolveContentPath);
     check(unique.size() == 1 && unique[0].fileIndex == 3,
           "CH4: Bulk-loaded posting lists find correct file for unique keyword");
 

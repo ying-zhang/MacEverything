@@ -46,7 +46,10 @@ public:
 
     void scan(const std::string& rootPath);
     void scan(const std::vector<std::string>& rootPaths, const ScanConfig& config = {});
-    void cancel() { cancelled_.store(true, std::memory_order_relaxed); }
+    void cancel() {
+        cancelled_.store(true, std::memory_order_relaxed);
+        queueCV_.notify_all();
+    }
     bool isCancelled() const { return cancelled_.load(std::memory_order_relaxed); }
     const Stats& getStats() const { return stats_; }
 
@@ -54,7 +57,11 @@ public:
     std::vector<FileRecord> takeResults();
 
 private:
-    std::queue<std::string> workQueue_;
+    struct WorkItem {
+        std::string path;
+        dev_t rootDev;
+    };
+    std::queue<WorkItem> workQueue_;
     std::mutex queueMutex_;
     std::condition_variable queueCV_;
     std::atomic<int> activeTasks_{0};
@@ -63,14 +70,14 @@ private:
 
     std::unordered_set<InodeKey, InodeKeyHash> visitedDirs_;
     std::mutex dedupMutex_;
-    dev_t rootDevId_{0};  // device ID of root path — skip cross-mount directories
     ScanConfig config_;
 
     std::vector<std::vector<FileRecord>> threadResults_;
     Stats stats_;
 
     void workerThread(int threadIndex);
-    void scanDirectory(const std::string& dirPath, char* buffer, int threadIndex);
+    void scanDirectory(const std::string& dirPath, dev_t rootDev,
+                       char* buffer, int threadIndex);
     bool tryVisitDirectory(dev_t dev, uint64_t ino);
     bool shouldExclude(const std::string& fullPath, const std::string& name, bool isDirectory) const;
 };

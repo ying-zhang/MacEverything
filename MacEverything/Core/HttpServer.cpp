@@ -14,6 +14,7 @@
 #include <cstdlib>
 #include <cerrno>
 #include <thread>
+#include <charconv>
 
 // ---------------------------------------------------------------------------
 // JSON helpers
@@ -90,14 +91,15 @@ bool HttpServer::start(uint16_t port,
     getEngine_ = std::move(engineGetter);
     getContentIndex_ = std::move(contentIndexGetter);
 
-    serverFd_ = ::socket(AF_INET, SOCK_STREAM, 0);
-    if (serverFd_ < 0) {
+    int serverFd = ::socket(AF_INET, SOCK_STREAM, 0);
+    serverFd_.store(serverFd, std::memory_order_release);
+    if (serverFd < 0) {
         LOG_ERROR("HttpServer", "socket() failed: " << strerror(errno));
         return false;
     }
 
     int opt = 1;
-    ::setsockopt(serverFd_, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
+    ::setsockopt(serverFd, SOL_SOCKET, SO_REUSEADDR, &opt, sizeof(opt));
 
     struct sockaddr_in addr{};
     addr.sin_family = AF_INET;
@@ -108,15 +110,15 @@ bool HttpServer::start(uint16_t port,
     constexpr int kMaxBindRetries = 5;
     bool bound = false;
     for (int attempt = 0; attempt < kMaxBindRetries; attempt++) {
-        if (::bind(serverFd_, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
+        if (::bind(serverFd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) == 0) {
             bound = true;
             break;
         }
         if (errno != EADDRINUSE || attempt == kMaxBindRetries - 1) {
             LOG_ERROR("HttpServer", "bind() failed on port " << port
                 << " after " << (attempt + 1) << " attempt(s): " << strerror(errno));
-            ::close(serverFd_);
-            serverFd_ = -1;
+            ::close(serverFd);
+            serverFd_.store(-1, std::memory_order_release);
             return false;
         }
         LOG_WARN("HttpServer", "bind() EADDRINUSE on port " << port
@@ -125,20 +127,24 @@ bool HttpServer::start(uint16_t port,
     }
 
     if (!bound) {
-        ::close(serverFd_);
-        serverFd_ = -1;
+        ::close(serverFd);
+        serverFd_.store(-1, std::memory_order_release);
         return false;
     }
 
-    if (::listen(serverFd_, 16) < 0) {
+    if (::listen(serverFd, 16) < 0) {
         LOG_ERROR("HttpServer", "listen() failed: " << strerror(errno));
-        ::close(serverFd_);
-        serverFd_ = -1;
+        ::close(serverFd);
+        serverFd_.store(-1, std::memory_order_release);
         return false;
     }
 
     port_ = port;
     running_.store(true, std::memory_order_release);
+    workerThreads_.reserve(kWorkerCount);
+    for (size_t i = 0; i < kWorkerCount; ++i) {
+        workerThreads_.emplace_back(&HttpServer::workerLoop, this);
+    }
     acceptThread_ = std::thread(&HttpServer::acceptLoop, this);
 
     LOG_INFO("HttpServer", "Listening on 127.0.0.1:" << port_);
@@ -148,20 +154,30 @@ bool HttpServer::start(uint16_t port,
 void HttpServer::stop() {
     if (!running_.exchange(false, std::memory_order_acq_rel)) return;
 
-    if (serverFd_ >= 0) {
-        ::close(serverFd_);
-        serverFd_ = -1;
+    int serverFd = serverFd_.exchange(-1, std::memory_order_acq_rel);
+    if (serverFd >= 0) {
+        ::shutdown(serverFd, SHUT_RDWR);
+        ::close(serverFd);
     }
 
     if (acceptThread_.joinable()) {
         acceptThread_.join();
     }
     {
-        std::lock_guard<std::mutex> lock(connectionThreadsMutex_);
-        for (auto& thread : connectionThreads_) {
-            if (thread.joinable()) thread.join();
+        std::lock_guard<std::mutex> lock(activeClientsMutex_);
+        for (int fd : activeClients_) ::shutdown(fd, SHUT_RDWR);
+    }
+    connectionQueueCV_.notify_all();
+    for (auto& worker : workerThreads_) {
+        if (worker.joinable()) worker.join();
+    }
+    workerThreads_.clear();
+    {
+        std::lock_guard<std::mutex> lock(connectionQueueMutex_);
+        while (!connectionQueue_.empty()) {
+            ::close(connectionQueue_.front());
+            connectionQueue_.pop();
         }
-        connectionThreads_.clear();
     }
 
     LOG_INFO("HttpServer", "Stopped");
@@ -176,7 +192,13 @@ uint16_t HttpServer::port() const {
 }
 
 void HttpServer::setAdminCallbacks(AdminCallbacks callbacks) {
+    std::lock_guard<std::mutex> lock(adminCallbacksMutex_);
     adminCallbacks_ = std::move(callbacks);
+}
+
+HttpServer::AdminCallbacks HttpServer::adminCallbacksSnapshot() {
+    std::lock_guard<std::mutex> lock(adminCallbacksMutex_);
+    return adminCallbacks_;
 }
 
 // ---------------------------------------------------------------------------
@@ -186,7 +208,9 @@ void HttpServer::setAdminCallbacks(AdminCallbacks callbacks) {
 void HttpServer::acceptLoop() {
     while (running_.load(std::memory_order_relaxed)) {
         struct pollfd pfd{};
-        pfd.fd = serverFd_;
+        int serverFd = serverFd_.load(std::memory_order_acquire);
+        if (serverFd < 0) break;
+        pfd.fd = serverFd;
         pfd.events = POLLIN;
 
         int ret = ::poll(&pfd, 1, 500);
@@ -196,13 +220,51 @@ void HttpServer::acceptLoop() {
         }
         if (ret == 0) continue; // timeout, check running_
 
-        int clientFd = ::accept(serverFd_, nullptr, nullptr);
+        int clientFd = ::accept(serverFd, nullptr, nullptr);
         if (clientFd < 0) continue;
 
-        std::lock_guard<std::mutex> lock(connectionThreadsMutex_);
-        connectionThreads_.emplace_back([this, clientFd] {
-            handleConnection(clientFd);
-        });
+        std::unique_lock<std::mutex> lock(connectionQueueMutex_);
+        if (connectionQueue_.size() >= kMaxPendingConnections) {
+            lock.unlock();
+            std::string response = errorResponse(503, "Server busy");
+            ::send(clientFd, response.data(), response.size(), 0);
+            ::close(clientFd);
+            continue;
+        }
+        connectionQueue_.push(clientFd);
+        lock.unlock();
+        connectionQueueCV_.notify_one();
+    }
+}
+
+void HttpServer::workerLoop() {
+    for (;;) {
+        int clientFd = -1;
+        {
+            std::unique_lock<std::mutex> lock(connectionQueueMutex_);
+            connectionQueueCV_.wait(lock, [this] {
+                return !running_.load(std::memory_order_acquire) || !connectionQueue_.empty();
+            });
+            if (connectionQueue_.empty()) {
+                if (!running_.load(std::memory_order_acquire)) return;
+                continue;
+            }
+            clientFd = connectionQueue_.front();
+            connectionQueue_.pop();
+        }
+        if (!running_.load(std::memory_order_acquire)) {
+            ::close(clientFd);
+            continue;
+        }
+        {
+            std::lock_guard<std::mutex> lock(activeClientsMutex_);
+            activeClients_.insert(clientFd);
+        }
+        handleConnection(clientFd);
+        {
+            std::lock_guard<std::mutex> lock(activeClientsMutex_);
+            activeClients_.erase(clientFd);
+        }
     }
 }
 
@@ -459,7 +521,13 @@ std::string HttpServer::handleContentSearch(
     auto engine = getEngine_();
     if (!engine) return errorResponse(503, "Engine not available");
 
-    auto matches = contentIndex->query(keyword, limit);
+    auto matches = contentIndex->query(keyword, limit,
+        [engine](uint32_t fileIndex, std::string& fullPath) {
+            auto record = engine->getRecord(fileIndex);
+            if (record.type != 1) return false;
+            fullPath = SearchEngine::makeFullPath(record.path, record.name);
+            return true;
+        });
 
     std::ostringstream json;
     json << "{\"results\":[";
@@ -600,28 +668,31 @@ std::string HttpServer::handleHealth() {
 // ---------------------------------------------------------------------------
 
 std::string HttpServer::handleRebuildIndex() {
-    if (!adminCallbacks_.onRebuildIndex) {
+    auto callbacks = adminCallbacksSnapshot();
+    if (!callbacks.onRebuildIndex) {
         return errorResponse(503, "Admin callbacks not configured");
     }
-    adminCallbacks_.onRebuildIndex();
+    callbacks.onRebuildIndex();
     return jsonResponse(202, "{\"message\":\"Index rebuild started\"}");
 }
 
 std::string HttpServer::handleRebuildContentIndex() {
-    if (!adminCallbacks_.onRebuildContentIndex) {
+    auto callbacks = adminCallbacksSnapshot();
+    if (!callbacks.onRebuildContentIndex) {
         return errorResponse(503, "Admin callbacks not configured");
     }
-    adminCallbacks_.onRebuildContentIndex();
+    callbacks.onRebuildContentIndex();
     return jsonResponse(202, "{\"message\":\"Content index rebuild started\"}");
 }
 
 std::string HttpServer::handleGetContentConfig() {
-    if (!adminCallbacks_.onGetContentExtensions || !adminCallbacks_.onGetContentMaxFileSize) {
+    auto callbacks = adminCallbacksSnapshot();
+    if (!callbacks.onGetContentExtensions || !callbacks.onGetContentMaxFileSize) {
         return errorResponse(503, "Admin callbacks not configured");
     }
 
-    auto exts = adminCallbacks_.onGetContentExtensions();
-    uint64_t maxSize = adminCallbacks_.onGetContentMaxFileSize();
+    auto exts = callbacks.onGetContentExtensions();
+    uint64_t maxSize = callbacks.onGetContentMaxFileSize();
 
     std::ostringstream json;
     json << "{\"extensions\":[";
@@ -634,16 +705,17 @@ std::string HttpServer::handleGetContentConfig() {
 }
 
 std::string HttpServer::handleSetContentConfig(const std::string& body) {
-    if (!adminCallbacks_.onSetContentConfig ||
-        !adminCallbacks_.onGetContentExtensions ||
-        !adminCallbacks_.onGetContentMaxFileSize) {
+    auto callbacks = adminCallbacksSnapshot();
+    if (!callbacks.onSetContentConfig ||
+        !callbacks.onGetContentExtensions ||
+        !callbacks.onGetContentMaxFileSize) {
         return errorResponse(503, "Admin callbacks not configured");
     }
 
     // Simple JSON parsing for {"extensions":["a","b"],"maxFileSize":123}
     // Supports partial updates: only set fields present in the body.
-    auto currentExts = adminCallbacks_.onGetContentExtensions();
-    uint64_t currentMaxSize = adminCallbacks_.onGetContentMaxFileSize();
+    auto currentExts = callbacks.onGetContentExtensions();
+    uint64_t currentMaxSize = callbacks.onGetContentMaxFileSize();
 
     bool hasExtensions = false;
     std::vector<std::string> newExts;
@@ -680,13 +752,22 @@ std::string HttpServer::handleSetContentConfig(const std::string& body) {
             size_t numEnd = numStart;
             while (numEnd < body.size() && body[numEnd] >= '0' && body[numEnd] <= '9') ++numEnd;
             if (numEnd > numStart) {
-                newMaxSize = std::stoull(body.substr(numStart, numEnd - numStart));
+                uint64_t parsed = 0;
+                const char* begin = body.data() + numStart;
+                const char* end = body.data() + numEnd;
+                auto conversion = std::from_chars(begin, end, parsed);
+                if (conversion.ec != std::errc{} || conversion.ptr != end) {
+                    return errorResponse(400, "Invalid maxFileSize");
+                }
+                newMaxSize = parsed;
+            } else {
+                return errorResponse(400, "Invalid maxFileSize");
             }
         }
     }
 
     const auto& finalExts = hasExtensions ? newExts : currentExts;
-    adminCallbacks_.onSetContentConfig(finalExts, newMaxSize);
+    callbacks.onSetContentConfig(finalExts, newMaxSize);
 
     // Build response
     std::ostringstream json;

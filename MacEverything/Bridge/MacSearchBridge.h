@@ -61,6 +61,9 @@ NS_ASSUME_NONNULL_BEGIN
                      walPath:(NSString *)walPath
                   completion:(void (^)(uint32_t totalRecords, BOOL didFullScan))completion;
 
+/// Discard all persisted data and rebuild from an empty in-memory index.
+- (void)rebuildIndexWithCompletion:(void (^)(uint32_t totalRecords))completion;
+
 - (void)updateConfigurationWithScanRoots:(NSArray<NSString *> *)scanRoots
                            excludedPaths:(NSArray<NSString *> *)excludedPaths
                          excludedPatterns:(NSArray<NSString *> *)excludedPatterns

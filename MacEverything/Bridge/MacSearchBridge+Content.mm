@@ -13,7 +13,13 @@
     std::string key([keyword UTF8String]);
     if (key.empty()) return @[];
 
-    auto matches = contentIndex->query(key, maxResults);
+    auto matches = contentIndex->query(key, maxResults,
+        [engine](uint32_t fileIndex, std::string& fullPath) {
+            auto record = engine->getRecord(fileIndex);
+            if (record.type != 1) return false;
+            fullPath = SearchEngine::makeFullPath(record.path, record.name);
+            return true;
+        });
     if (matches.empty()) return @[];
 
     // Pre-resolve file paths
@@ -21,6 +27,8 @@
         uint32_t fileIndex;
         std::string name;
         std::string fullPath;
+        std::string snippet;
+        uint32_t matchOffset;
         uint8_t fileType;
     };
     std::vector<CandidateInfo> candidates;
@@ -32,43 +40,25 @@
         info.fileIndex = match.fileIndex;
         info.name = std::move(record.name);
         info.fullPath = SearchEngine::makeFullPath(record.path, info.name);
+        info.snippet = match.snippet;
+        info.matchOffset = match.matchOffset;
         info.fileType = record.type;
         candidates.push_back(std::move(info));
     }
 
     if (candidates.empty()) return @[];
 
-    // Parallel snippet generation
-    struct SnippetResult {
-        std::string snippet;
-        uint32_t offset = 0;
-        bool valid = false;
-    };
-    __block std::vector<SnippetResult> snippetResults(candidates.size());
-
-    dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-    dispatch_apply(candidates.size(), queue, ^(size_t i) {
-        uint32_t offset = 0;
-        std::string snippet = ContentIndex::generateSnippet(candidates[i].fullPath, key, offset);
-        if (!snippet.empty()) {
-            snippetResults[i].snippet = std::move(snippet);
-            snippetResults[i].offset = offset;
-            snippetResults[i].valid = true;
-        }
-    });
-
     NSMutableArray<MEContentResult *> *results = [NSMutableArray arrayWithCapacity:candidates.size()];
     for (size_t i = 0; i < candidates.size(); i++) {
-        if (!snippetResults[i].valid) continue;
         NSString *nsFileName = [NSString stringWithUTF8String:candidates[i].name.c_str()];
         NSString *nsFilePath = [NSString stringWithUTF8String:candidates[i].fullPath.c_str()];
-        NSString *nsSnippet = [NSString stringWithUTF8String:snippetResults[i].snippet.c_str()];
+        NSString *nsSnippet = [NSString stringWithUTF8String:candidates[i].snippet.c_str()];
         if (!nsFileName || !nsFilePath || !nsSnippet) continue;
         [results addObject:[[MEContentResult alloc]
             initWithFileName:nsFileName
                     filePath:nsFilePath
                      snippet:nsSnippet
-                 matchOffset:snippetResults[i].offset
+                 matchOffset:candidates[i].matchOffset
                     fileType:candidates[i].fileType]];
     }
 

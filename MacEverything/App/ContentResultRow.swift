@@ -6,6 +6,7 @@ struct ContentResultRow: View {
     let hints: [HighlightHint]
     var onDelete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var iconCache = FileIconCache.shared
     @State private var isHovered = false
 
     var body: some View {
@@ -67,18 +68,11 @@ struct ContentResultRow: View {
         .onDrag {
             return NSItemProvider(object: NSURL(fileURLWithPath: item.filePath))
         }
-        .onTapGesture(count: 2) {
-            if NSEvent.modifierFlags.contains(.command) {
-                revealInFinder()
-            } else {
-                openFile()
+        .background(
+            ResultClickMonitor(enabled: true) { clickCount, modifiers in
+                handleClick(clickCount: clickCount, modifiers: modifiers)
             }
-        }
-        .onTapGesture(count: 1) {
-            if NSEvent.modifierFlags.contains(.command) {
-                revealInFinder()
-            }
-        }
+        )
         .accessibilityIdentifier("contentResultRow")
     }
 
@@ -90,13 +84,15 @@ struct ContentResultRow: View {
     }
 
     private func fileIcon(for path: String) -> Image {
-        Image(nsImage: FileIconCache.shared.icon(forPath: path))
+        _ = iconCache.revision
+        return Image(nsImage: iconCache.icon(forPath: path))
     }
 
     private func openFile() {
-        if !NSWorkspace.shared.open(URL(fileURLWithPath: item.filePath)) {
-            NSSound.beep()
-        }
+        FileActions.open(
+            URL(fileURLWithPath: item.filePath),
+            isApplication: item.filePath.lowercased().hasSuffix(".app")
+        )
     }
 
     private func revealInFinder() {
@@ -104,7 +100,24 @@ struct ContentResultRow: View {
     }
 
     private func openInFinder() {
-        NSWorkspace.shared.open(URL(fileURLWithPath: directoryPath(item.filePath)))
+        FileActions.open(URL(fileURLWithPath: directoryPath(item.filePath)))
+    }
+
+    private func handleClick(clickCount: Int, modifiers: NSEvent.ModifierFlags) {
+        for action in ResultClickResolver.actions(
+            clickCount: clickCount,
+            modifiers: modifiers,
+            supportsSelection: false
+        ) {
+            switch action {
+            case .open:
+                openFile()
+            case .reveal:
+                revealInFinder()
+            case .selectExclusive, .selectRange, .toggleSelection:
+                break
+            }
+        }
     }
 
 

@@ -8,6 +8,9 @@
 #include <vector>
 #include <unordered_map>
 #include <mutex>
+#include <queue>
+#include <condition_variable>
+#include <unordered_set>
 
 class SearchEngine;
 class ContentIndex;
@@ -42,7 +45,9 @@ public:
 
 private:
     void acceptLoop();
+    void workerLoop();
     void handleConnection(int clientFd);
+    AdminCallbacks adminCallbacksSnapshot();
 
     struct HttpRequest {
         std::string method;
@@ -73,10 +78,18 @@ private:
     EngineGetter getEngine_;
     ContentIndexGetter getContentIndex_;
     AdminCallbacks adminCallbacks_;
+    std::mutex adminCallbacksMutex_;
     std::atomic<bool> running_{false};
-    int serverFd_{-1};
+    std::atomic<int> serverFd_{-1};
     uint16_t port_{0};
     std::thread acceptThread_;
-    std::mutex connectionThreadsMutex_;
-    std::vector<std::thread> connectionThreads_;
+    std::vector<std::thread> workerThreads_;
+    std::mutex connectionQueueMutex_;
+    std::condition_variable connectionQueueCV_;
+    std::queue<int> connectionQueue_;
+    std::mutex activeClientsMutex_;
+    std::unordered_set<int> activeClients_;
+
+    static constexpr size_t kWorkerCount = 8;
+    static constexpr size_t kMaxPendingConnections = 64;
 };
