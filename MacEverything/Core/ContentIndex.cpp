@@ -143,7 +143,8 @@ std::vector<Trigram> ContentIndex::extractTrigrams(const std::string& text) {
 std::string ContentIndex::generateSnippet(const std::string& path,
                                            const std::string& keyword,
                                            uint32_t& outOffset,
-                                           uint32_t contextChars) {
+                                           uint32_t contextChars,
+                                           uint64_t maxReadBytes) {
     outOffset = 0;
 
     FILE* f = fopen(path.c_str(), "rb");
@@ -157,7 +158,7 @@ std::string ContentIndex::generateSnippet(const std::string& path,
     // H5 fix: Read in 64KB chunks instead of 1MB at once.
     // Most matches are in the first chunk, reducing average I/O by ~16x.
     static constexpr size_t kChunkSize = 64 * 1024;
-    size_t maxRead = std::min(static_cast<size_t>(fileSize), size_t(1024 * 1024));
+    size_t maxRead = std::min(static_cast<uint64_t>(fileSize), maxReadBytes);
     size_t overlapSize = keyword.size() > 1 ? keyword.size() - 1 : 0;
 
     // Pre-compute lowercase keyword once (SIMD for ASCII)
@@ -479,6 +480,7 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
     std::string lowerKey = me::toLower(keyword);
 
     std::shared_lock lock(mutex_);
+    const uint64_t maxVerificationBytes = maxFileSize_;
 
     std::vector<uint32_t> candidates;
 
@@ -554,7 +556,8 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
             if (!resolvePath || !resolvePath(fileIdx, fullPath)) return;
 
             uint32_t offset = 0;
-            std::string snippet = generateSnippet(fullPath, keyword, offset);
+            std::string snippet = generateSnippet(
+                fullPath, keyword, offset, 80, maxVerificationBytes);
             if (snippet.empty()) return;
 
             batch[i].fileIndex = fileIdx;

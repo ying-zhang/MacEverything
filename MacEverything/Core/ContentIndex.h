@@ -45,7 +45,7 @@ public:
     // --- Indexing ---
 
     /// Index a single file's content. Reads the file, extracts trigrams, updates inverted index.
-    /// Returns true if the file was newly indexed or updated (false if binary, too large, unreadable, or unchanged).
+    /// Reports whether the entry was unchanged, upserted, or removed after validation.
     /// If modTime > 0 and matches the stored lastModTime, skips I/O entirely (incremental optimization).
     ContentIndexUpdate indexFile(uint32_t fileIndex, const std::string& fullPath,
                                  time_t modTime = 0);
@@ -133,7 +133,8 @@ public:
     static std::string generateSnippet(const std::string& path,
                                        const std::string& keyword,
                                        uint32_t& outOffset,
-                                       uint32_t contextChars = 80);
+                                       uint32_t contextChars = 80,
+                                       uint64_t maxReadBytes = 1 * 1024 * 1024);
 
 private:
     // Inverted index: trigram → sorted list of fileIndices

@@ -137,6 +137,25 @@ static bool runPart39() {
     }
     check(allHealthRequestsSucceeded, "Worker pool serves sequential health requests");
 
+    // A connected client that sends no request bytes must not hold stop() until
+    // the five-second receive timeout expires.
+    int slowFd = ::socket(AF_INET, SOCK_STREAM, 0);
+    bool slowConnected = false;
+    if (slowFd >= 0) {
+        struct sockaddr_in slowAddr{};
+        slowAddr.sin_family = AF_INET;
+        slowAddr.sin_port = htons(port);
+        slowAddr.sin_addr.s_addr = inet_addr("127.0.0.1");
+        slowConnected = ::connect(slowFd,
+            reinterpret_cast<struct sockaddr*>(&slowAddr), sizeof(slowAddr)) == 0;
+    }
+    check(slowConnected, "Slow client connects before HTTP shutdown");
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    auto stopStart = std::chrono::steady_clock::now();
     server.stop();
+    auto stopElapsed = std::chrono::duration<double>(
+        std::chrono::steady_clock::now() - stopStart).count();
+    check(stopElapsed < 2.0, "HTTP stop promptly interrupts a slow client");
+    if (slowFd >= 0) ::close(slowFd);
     return true;
 }

@@ -89,5 +89,36 @@ static void runReviewRegressionTests() {
         fs::remove_all(tmpDir);
     }
 
+    // Verification must honor the configured index size, not stop at the 1 MiB default.
+    {
+        auto tmpDir = fs::temp_directory_path() /
+            ("maceverything_large_content_" + std::to_string(getpid()));
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+        auto path = (tmpDir / "large.txt").string();
+        constexpr size_t kMatchOffset = 1024 * 1024 + 128 * 1024;
+        {
+            std::ofstream out(path, std::ios::binary);
+            std::string padding(kMatchOffset, 'a');
+            out.write(padding.data(), static_cast<std::streamsize>(padding.size()));
+            out << "needle_beyond_one_mib";
+        }
+
+        ContentIndex index;
+        index.setExtensions({"txt"});
+        index.setMaxFileSize(2 * 1024 * 1024);
+        check(index.indexFile(0, path) == ContentIndexUpdate::Upserted,
+              "Review: large content fixture is indexed");
+        auto matches = index.query("needle_beyond_one_mib", 1,
+            [&](uint32_t idx, std::string& resolved) {
+                if (idx != 0) return false;
+                resolved = path;
+                return true;
+            });
+        check(matches.size() == 1 && matches[0].matchOffset == kMatchOffset,
+              "Review: content verification honors configured max file size");
+        fs::remove_all(tmpDir);
+    }
+
     std::cout << "\n";
 }

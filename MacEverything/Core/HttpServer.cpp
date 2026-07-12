@@ -258,6 +258,13 @@ void HttpServer::workerLoop() {
         }
         {
             std::lock_guard<std::mutex> lock(activeClientsMutex_);
+            // stop() flips running_ before taking this lock. Rechecking here
+            // closes the pop-to-register window where a slow client could
+            // otherwise escape shutdown and delay worker joins until timeout.
+            if (!running_.load(std::memory_order_acquire)) {
+                ::close(clientFd);
+                continue;
+            }
             activeClients_.insert(clientFd);
         }
         handleConnection(clientFd);
