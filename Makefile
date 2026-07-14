@@ -8,7 +8,7 @@ RE2_CFLAGS = -I$(RE2_PREFIX)/include
 RE2_LDFLAGS = -L$(RE2_PREFIX)/lib -Wl,-rpath,$(RE2_PREFIX)/lib -lre2
 
 # === Build targets ===
-.PHONY: test test-fast test-slow test-all test-asan test-tsan build clean app dmg daemon help
+.PHONY: test test-fast test-swift-interaction test-slow test-all test-asan test-tsan build clean app dmg daemon help
 
 test_all: test_all.cpp $(CORE_SRCS)
 	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o $@
@@ -40,8 +40,15 @@ test-tsan: test_all.cpp $(CORE_SRCS)
 # === Test targets ===
 test: test-fast
 
-test-fast: test_all lint-bridge
+test-fast: test_all lint-bridge test-swift-interaction
 	./test_all --fast
+
+test-swift-interaction:
+	mkdir -p build/tests
+	xcrun swiftc -framework AppKit -framework SwiftUI \
+		MacEverything/App/ResultInteraction.swift tests/test_result_interaction.swift \
+		-o build/tests/test_result_interaction
+	./build/tests/test_result_interaction
 
 test-slow: test_all
 	./test_all --slow

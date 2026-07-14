@@ -43,6 +43,8 @@
 		A1000037 /* AppSettings.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000053; };
 		A1000038 /* GeneralSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000054; };
 		A1000039 /* ResultListKeyHandler.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000055; };
+		A100003A /* ResultInteraction.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000056; };
+		A100003B /* FileActions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000057; };
 		A100001A /* StringUtils.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A2000028; };
 		A100001B /* Logger.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A200002A; };
 		A100001C /* AppLogger.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200002B; };
@@ -161,6 +163,8 @@
 		A2000053 /* AppSettings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSettings.swift; sourceTree = "<group>"; };
 		A2000054 /* GeneralSettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GeneralSettingsView.swift; sourceTree = "<group>"; };
 		A2000055 /* ResultListKeyHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultListKeyHandler.swift; sourceTree = "<group>"; };
+		A2000056 /* ResultInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultInteraction.swift; sourceTree = "<group>"; };
+		A2000057 /* FileActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileActions.swift; sourceTree = "<group>"; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2000001 /* mcp_main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mcp_main.cpp; sourceTree = "<group>"; };
@@ -322,6 +326,8 @@
 				A2000053 /* AppSettings.swift */,
 				A2000054 /* GeneralSettingsView.swift */,
 				A2000055 /* ResultListKeyHandler.swift */,
+				A2000056 /* ResultInteraction.swift */,
+				A2000057 /* FileActions.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -546,6 +552,8 @@
 				A1000037 /* AppSettings.swift in Sources */,
 				A1000038 /* GeneralSettingsView.swift in Sources */,
 				A1000039 /* ResultListKeyHandler.swift in Sources */,
+				A100003A /* ResultInteraction.swift in Sources */,
+				A100003B /* FileActions.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -425,6 +425,7 @@ class SearchViewModel: ObservableObject {
     @Published var selectedItemID: String? = nil
     @Published var selectedItemIDs: Set<String> = []
     @Published var selectionAnchorID: String? = nil
+    @Published var scrollTargetItemID: String? = nil
     @Published var renameRequestedItemID: String? = nil
     @Published var quickFilter: QuickFilter = .all
     @Published var pathFilter: String = ""
@@ -824,6 +825,7 @@ class SearchViewModel: ObservableObject {
         selectedItemID = nil
         selectedItemIDs = []
         selectionAnchorID = nil
+        scrollTargetItemID = nil
     }
 
     func selectNext() -> Bool {
@@ -831,9 +833,9 @@ class SearchViewModel: ObservableObject {
         if let currentID = selectedItemID,
            let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
             let nextIdx = min(idx + 1, displayItems.count - 1)
-            select(displayItems[nextIdx])
+            selectForKeyboard(displayItems[nextIdx])
         } else {
-            if let first = displayItems.first { select(first) }
+            if let first = displayItems.first { selectForKeyboard(first) }
         }
         return true
     }
@@ -843,9 +845,9 @@ class SearchViewModel: ObservableObject {
         if let currentID = selectedItemID,
            let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
             if idx == 0 { return false }
-            select(displayItems[idx - 1])
+            selectForKeyboard(displayItems[idx - 1])
         } else {
-            if let last = displayItems.last { select(last) }
+            if let last = displayItems.last { selectForKeyboard(last) }
         }
         return true
     }
@@ -1012,15 +1014,16 @@ class SearchViewModel: ObservableObject {
     private static let fileTypeApplication: UInt8 = 5
 
     private func openFile(_ item: FileItem) {
-        let fullPath = item.fullPath
-        if item.type == Self.fileTypeApplication {
-            let url = URL(fileURLWithPath: fullPath)
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration()) { _, error in
-                if error != nil { NSSound.beep() }
-            }
-        } else if !NSWorkspace.shared.open(URL(fileURLWithPath: fullPath)) {
-            NSSound.beep()
-        }
+        FileActions.open(
+            URL(fileURLWithPath: item.fullPath),
+            isApplication: item.type == Self.fileTypeApplication
+                || item.name.lowercased().hasSuffix(".app")
+        )
+    }
+
+    private func selectForKeyboard(_ item: FileItem) {
+        select(item)
+        scrollTargetItemID = item.id
     }
 
     func onWindowFocusChanged(_ focused: Bool) {

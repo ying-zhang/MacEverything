@@ -1,58 +1,83 @@
 import SwiftUI
 import AppKit
 import Quartz
+import UniformTypeIdentifiers
 
-/// Shared icon cache to avoid repeated NSWorkspace.shared.icon(forFile:) calls.
-/// - App bundles (type=5): cached by full path (each app has a unique icon)
-/// - Regular files (type=1): cached by file extension (same ext → same icon)
-/// - Directories/symlinks/other: cached by type (one icon per type)
-final class FileIconCache {
+/// Returns generic type icons synchronously and loads app-specific icons off the UI thread.
+final class FileIconCache: ObservableObject {
     static let shared = FileIconCache()
     private let cache = NSCache<NSString, NSImage>()
+    private let appIconQueue = DispatchQueue(label: "com.maceverything.app-icons", qos: .utility)
+    private var loadingAppKeys: Set<String> = []
+    @Published private(set) var revision: UInt64 = 0
 
     private init() {
         cache.countLimit = 500
     }
 
     func icon(for item: FileItem) -> NSImage {
-        // Detect app bundles by name suffix (handles both type=5 and legacy type=2)
         let isApp = item.name.hasSuffix(".app")
-
-        let key: String
         if isApp {
-            // App bundles — unique icon per app
-            key = "app:" + item.path + "/" + item.name
-        } else if item.type == 1 {
-            // Regular file — same icon per extension
-            let ext = (item.name as NSString).pathExtension.lowercased()
-            key = "ext:" + (ext.isEmpty ? "__no_ext__" : ext)
-        } else {
-            // Dir, symlink, other — one icon per type
-            key = "type:\(item.type)"
+            return appIcon(forPath: item.fullPath)
         }
 
-        let nsKey = key as NSString
-        if let cached = cache.object(forKey: nsKey) {
-            return cached
+        if item.type == 2 {
+            return genericIcon(key: "type:folder", contentType: .folder)
         }
 
-        let fullPath = item.path + "/" + item.name
-        let nsImage = NSWorkspace.shared.icon(forFile: fullPath).copy() as! NSImage
-        nsImage.size = NSSize(width: 24, height: 24)
-        cache.setObject(nsImage, forKey: nsKey)
-        return nsImage
+        return extensionIcon((item.name as NSString).pathExtension.lowercased())
     }
 
     func icon(forPath path: String) -> NSImage {
+        if path.lowercased().hasSuffix(".app") {
+            return appIcon(forPath: path)
+        }
         let ext = (path as NSString).pathExtension.lowercased()
-        let key = "ext:" + (ext.isEmpty ? "__no_ext__" : ext) as NSString
+        return extensionIcon(ext)
+    }
+
+    private func extensionIcon(_ ext: String) -> NSImage {
+        let key = "ext:" + (ext.isEmpty ? "__no_ext__" : ext)
+        let contentType = ext.isEmpty ? UTType.data : (UTType(filenameExtension: ext) ?? .data)
+        return genericIcon(key: key, contentType: contentType)
+    }
+
+    private func genericIcon(key: String, contentType: UTType) -> NSImage {
+        let key = key as NSString
         if let cached = cache.object(forKey: key) {
             return cached
         }
-        let nsImage = NSWorkspace.shared.icon(forFile: path).copy() as! NSImage
-        nsImage.size = NSSize(width: 24, height: 24)
-        cache.setObject(nsImage, forKey: key)
-        return nsImage
+        let image = sizedCopy(of: NSWorkspace.shared.icon(for: contentType))
+        cache.setObject(image, forKey: key)
+        return image
+    }
+
+    private func appIcon(forPath path: String) -> NSImage {
+        let key = "app:" + path
+        if let cached = cache.object(forKey: key as NSString) {
+            return cached
+        }
+
+        let placeholder = genericIcon(key: "type:application", contentType: .applicationBundle)
+        guard loadingAppKeys.insert(key).inserted else { return placeholder }
+
+        appIconQueue.async { [weak self] in
+            guard let self else { return }
+            let image = self.sizedCopy(of: NSWorkspace.shared.icon(forFile: path))
+            self.cache.setObject(image, forKey: key as NSString)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.loadingAppKeys.remove(key)
+                self.revision &+= 1
+            }
+        }
+        return placeholder
+    }
+
+    private func sizedCopy(of source: NSImage) -> NSImage {
+        let image = (source.copy() as? NSImage) ?? source
+        image.size = NSSize(width: 24, height: 24)
+        return image
     }
 }
 
@@ -67,11 +92,11 @@ struct ResultRow: View {
     var onRenameSuccess: ((_ oldID: String, _ newName: String) -> Void)?
     var onDeleteItems: ((_ ids: [String]) -> Void)?
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var iconCache = FileIconCache.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
     @State private var isHovered = false
     @State private var localRenaming = false
     @State private var editingName = ""
-    @State private var lastSelectTime: Date?
     @State private var renameError: String?
     @State private var showRenameError = false
 
@@ -177,32 +202,11 @@ struct ResultRow: View {
             let fullPath = item.path + "/" + item.name
             return NSItemProvider(object: NSURL(fileURLWithPath: fullPath))
         }
-        .onTapGesture(count: 2) {
-            cancelRename()
-            onSelect(false, false)
-            if NSEvent.modifierFlags.contains(.command) {
-                revealInFinder(item)
-            } else {
-                openFile(item)
+        .background(
+            ResultClickMonitor(enabled: !isActivelyRenaming) { clickCount, modifiers in
+                handleClick(clickCount: clickCount, modifiers: modifiers)
             }
-        }
-        .onTapGesture(count: 1) {
-            if NSEvent.modifierFlags.contains(.command) {
-                onSelect(false, true)
-                return
-            }
-            if NSEvent.modifierFlags.contains(.shift) {
-                onSelect(true, false)
-                return
-            }
-            if isSelected, let last = lastSelectTime, Date().timeIntervalSince(last) > 0.5 {
-                startRename()
-            } else {
-                cancelRename()
-                onSelect(false, false)
-            }
-            lastSelectTime = Date()
-        }
+        )
         .onChange(of: requestedRename) {
             if requestedRename {
                 startRename()
@@ -216,7 +220,8 @@ struct ResultRow: View {
     }
 
     private func fileIcon(for item: FileItem) -> Image {
-        Image(nsImage: FileIconCache.shared.icon(for: item))
+        _ = iconCache.revision
+        return Image(nsImage: iconCache.icon(for: item))
     }
 
     private var rowBackground: Color {
@@ -227,7 +232,7 @@ struct ResultRow: View {
     }
 
     private var contextActionItems: [FileItem] {
-        selectedItems.isEmpty || !selectedItems.contains(where: { $0.id == item.id })
+        selectedItems.isEmpty || !isSelected
             ? [item]
             : selectedItems
     }
@@ -242,15 +247,10 @@ struct ResultRow: View {
     }
 
     private func openFile(_ item: FileItem) {
-        let fullPath = item.path + "/" + item.name
-        if item.type == 5 {
-            let url = URL(fileURLWithPath: fullPath)
-            NSWorkspace.shared.openApplication(at: url, configuration: NSWorkspace.OpenConfiguration())
-        } else {
-            if !NSWorkspace.shared.open(URL(fileURLWithPath: fullPath)) {
-                NSSound.beep()
-            }
-        }
+        FileActions.open(
+            URL(fileURLWithPath: item.fullPath),
+            isApplication: item.type == 5 || item.name.lowercased().hasSuffix(".app")
+        )
     }
 
     private func revealInFinder(_ item: FileItem) {
@@ -258,7 +258,29 @@ struct ResultRow: View {
     }
 
     private func openInFinder(_ item: FileItem) {
-        NSWorkspace.shared.open(URL(fileURLWithPath: item.fullPath))
+        FileActions.open(URL(fileURLWithPath: item.fullPath))
+    }
+
+    private func handleClick(clickCount: Int, modifiers: NSEvent.ModifierFlags) {
+        let actions = ResultClickResolver.actions(
+            clickCount: clickCount,
+            modifiers: modifiers,
+            supportsSelection: true
+        )
+        for action in actions {
+            switch action {
+            case .selectExclusive:
+                onSelect(false, false)
+            case .selectRange:
+                onSelect(true, false)
+            case .toggleSelection:
+                onSelect(false, true)
+            case .open:
+                openFile(item)
+            case .reveal:
+                revealInFinder(item)
+            }
+        }
     }
 
     private var isActivelyRenaming: Bool {

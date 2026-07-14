@@ -299,6 +299,7 @@ struct ContentView: View {
                 }
 
                 ScrollViewReader { scrollProxy in
+                    let selectedItems = viewModel.selectedItemsInDisplayOrder()
                     ScrollView {
                         LazyVStack(spacing: 0) {
                             ForEach(viewModel.displayItems) { item in
@@ -307,7 +308,7 @@ struct ContentView: View {
                                     hints: viewModel.highlightHints,
                                     isSelected: viewModel.selectedItemIDs.contains(item.id),
                                     requestedRename: viewModel.renameRequestedItemID == item.id,
-                                    selectedItems: viewModel.selectedItemsInDisplayOrder(),
+                                    selectedItems: selectedItems,
                                     onSelect: { extending, toggling in
                                         viewModel.select(item, extending: extending, toggling: toggling)
                                         resultListFocused = true
@@ -369,8 +370,8 @@ struct ContentView: View {
                         )
                         .frame(width: 0, height: 0)
                     )
-                    .onChange(of: viewModel.selectedItemID) {
-                        if let id = viewModel.selectedItemID {
+                    .onChange(of: viewModel.scrollTargetItemID) {
+                        if let id = viewModel.scrollTargetItemID {
                             scrollProxy.scrollTo(id, anchor: .center)
                         }
                     }
