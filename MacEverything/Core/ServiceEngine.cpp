@@ -115,7 +115,8 @@ ServiceEngine::ServiceEngine(const ServiceConfig& config)
     contentIndex_ = std::make_shared<ContentIndex>();
     mutationQueue_ = dispatch_queue_create("com.maceverything.mutation", DISPATCH_QUEUE_SERIAL);
     backgroundGroup_ = dispatch_group_create();
-    contentIndexingSemaphore_ = dispatch_semaphore_create(0);
+    contentIndexingGroup_ = dispatch_group_create();
+    lifecycleQueue_ = dispatch_queue_create("com.maceverything.lifecycle", DISPATCH_QUEUE_SERIAL);
 }
 
 ServiceEngine::~ServiceEngine() {
@@ -152,6 +153,67 @@ void ServiceEngine::updateConfig(const ServiceConfig& config) {
 
     if (rootsChanged && isMonitoring_.load(std::memory_order_relaxed)) {
         restartMonitoring();
+    }
+}
+
+void ServiceEngine::setAdminCallbacks(HttpServer::AdminCallbacks callbacks) {
+    std::shared_ptr<HttpServer> server;
+    {
+        std::lock_guard<std::mutex> lock(httpMutex_);
+        adminCallbacks_ = callbacks;
+        server = httpServer_;
+    }
+    if (server) server->setAdminCallbacks(std::move(callbacks));
+}
+
+bool ServiceEngine::isGenerationCurrent(uint64_t generation) const {
+    return !shuttingDown_.load(std::memory_order_acquire) &&
+           lifecycleGeneration_.load(std::memory_order_acquire) == generation;
+}
+
+bool ServiceEngine::registerScanner(const std::shared_ptr<DirectoryScanner>& scanner,
+                                    uint64_t generation) {
+    std::lock_guard<std::mutex> lock(activeScannersMutex_);
+    if (!isGenerationCurrent(generation)) {
+        scanner->cancel();
+        return false;
+    }
+    activeScanners_.erase(
+        std::remove_if(activeScanners_.begin(), activeScanners_.end(),
+                       [](const auto& weak) { return weak.expired(); }),
+        activeScanners_.end());
+    activeScanners_.push_back(scanner);
+    return true;
+}
+
+void ServiceEngine::unregisterScanner(const std::shared_ptr<DirectoryScanner>& scanner) {
+    std::lock_guard<std::mutex> lock(activeScannersMutex_);
+    activeScanners_.erase(
+        std::remove_if(activeScanners_.begin(), activeScanners_.end(),
+                       [&](const auto& weak) {
+                           auto current = weak.lock();
+                           return !current || current == scanner;
+                       }),
+        activeScanners_.end());
+}
+
+void ServiceEngine::cancelActiveScanners() {
+    std::lock_guard<std::mutex> lock(activeScannersMutex_);
+    for (auto& weak : activeScanners_) {
+        if (auto scanner = weak.lock()) scanner->cancel();
+    }
+}
+
+void ServiceEngine::removeIndexFiles(const ServiceConfig& config) {
+    const std::vector<std::string> names = {
+        "index.bin", "index.wal", "index.wal.new", "index.pages",
+        "index.ptable", "index.v6", "content_index.bin",
+        "content_index.wal", "content_index.wal.new"
+    };
+    for (const auto& name : names) {
+        std::error_code ec;
+        fs::remove(config.cachePath + "/" + name, ec);
+        if (ec) LOG_WARN("ServiceEngine", "Failed to remove " << name << ": " << ec.message());
     }
 }
 
@@ -262,15 +324,19 @@ bool ServiceEngine::isVolumeUnmounting(const std::string& path) const {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startFullScan(StartupCallback completion) {
+    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+    const ServiceConfig config = safeConfig();
     isScanning_.store(true, std::memory_order_relaxed);
     stopMonitoring();
 
     auto roots = effectiveScanRoots();
+    auto scannerConfig = scanConfigForRoots(roots);
     LOG_INFO("ServiceEngine", "startFullScan from " << roots.size() << " root(s)");
 
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         auto scanStart = std::chrono::steady_clock::now();
         auto scanner = std::make_shared<DirectoryScanner>();
+        if (!this->registerScanner(scanner, generation)) return;
 
         // Progress polling timer
         dispatch_source_t timer = dispatch_source_create(DISPATCH_SOURCE_TYPE_TIMER, 0, 0,
@@ -289,11 +355,15 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
         });
         dispatch_resume(timer);
 
-        scanner->scan(roots, this->scanConfig());
+        scanner->scan(roots, scannerConfig);
         dispatch_source_cancel(timer);
+        dispatch_release(timer);
+        this->unregisterScanner(scanner);
+
+        if (!this->isGenerationCurrent(generation)) return;
 
         auto results = scanner->takeResults();
-        auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(this->config_));
+        auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(config));
         engine->loadRecords(std::move(results));
         uint32_t count = engine->liveRecordCount();
 
@@ -301,19 +371,23 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
             std::chrono::steady_clock::now() - scanStart).count();
         LOG_INFO("ServiceEngine", "Scan completed: " << count << " records in " << elapsed << "s");
 
-        this->setEngine(engine);
-        this->isScanning_.store(false, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+            if (!this->isGenerationCurrent(generation)) return;
+            this->setEngine(engine);
+            this->isScanning_.store(false, std::memory_order_relaxed);
+        }
 
         if (completion) completion(count, true);
 
-        if (this->config_.realtimeMonitoring) {
+        if (config.realtimeMonitoring && this->isGenerationCurrent(generation)) {
             this->startMonitoring();
         }
 
         // Content indexing in background
         dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-            if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-            if (this->config_.contentIndexingEnabled) {
+            if (!this->isGenerationCurrent(generation)) return;
+            if (config.contentIndexingEnabled) {
                 this->setupContentPersistence();
                 this->startContentIndexing();
             }
@@ -326,6 +400,8 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startIncremental(StartupCallback completion) {
+    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+    const ServiceConfig config = safeConfig();
     isScanning_.store(true, std::memory_order_relaxed);
     startupCompleted_.store(false, std::memory_order_relaxed);
     isSyncing_.store(false, std::memory_order_relaxed);
@@ -333,7 +409,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
 
     // Acquire single-instance lock
     {
-        std::string cacheDir = config_.cachePath;
+        std::string cacheDir = config.cachePath;
         fs::create_directories(cacheDir);
         std::string lockPath = cacheDir + "/.instance.lock";
         if (!instanceLock_.tryLock(lockPath)) {
@@ -344,19 +420,21 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
     LOG_INFO("ServiceEngine", "startIncremental from " << effectiveScanRoots().size() << " root(s)");
 
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (!this->isGenerationCurrent(generation)) return;
         auto incrementalStart = std::chrono::steady_clock::now();
-        auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(this->config_));
+        auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(config));
 
-        std::string cacheStr = config_.cachePath + "/index.bin";
-        std::string walStr   = config_.cachePath + "/index.wal";
-        std::string pagesStr = config_.cachePath + "/index.pages";
-        std::string ptableStr = config_.cachePath + "/index.ptable";
-        std::string v6Str    = config_.cachePath + "/index.v6";
+        std::string cacheStr = config.cachePath + "/index.bin";
+        std::string walStr   = config.cachePath + "/index.wal";
+        std::string pagesStr = config.cachePath + "/index.pages";
+        std::string ptableStr = config.cachePath + "/index.ptable";
+        std::string v6Str    = config.cachePath + "/index.v6";
 
         auto persistence = std::make_unique<IndexPersistence>(
             engine, cacheStr, walStr, pagesStr, ptableStr, v6Str);
 
         uint64_t lastEventId = persistence->load(this->configSignature());
+        if (!this->isGenerationCurrent(generation)) return;
         auto indexLoadDone = std::chrono::steady_clock::now();
         uint32_t loadedCount = engine->liveRecordCount();
 
@@ -370,18 +448,23 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
                 return;
             }
 
-            this->setEngine(engine);
-            this->setPersistence(sharedPersistence);
-            this->isScanning_.store(false, std::memory_order_relaxed);
-            this->isSyncing_.store(true, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+                if (!this->isGenerationCurrent(generation)) return;
+                this->setEngine(engine);
+                this->setPersistence(sharedPersistence);
+                this->isScanning_.store(false, std::memory_order_relaxed);
+                this->isSyncing_.store(true, std::memory_order_relaxed);
+            }
 
             // Auto-start HTTP server once engine is available
-            if (config_.httpPort > 0) {
-                this->startHttpServer(config_.httpPort);
+            if (config.httpPort > 0) {
+                this->startHttpServer(config.httpPort);
             }
 
             sharedPersistence->attachWAL();
             sharedPersistence->setContentIndex(this->safeContentIndex());
+            if (config.contentIndexingEnabled) this->setupContentPersistence();
 
             uint32_t count = engine->liveRecordCount();
             if (completion) completion(count, false);
@@ -389,35 +472,40 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
             // Dispatch Phase 2: build trigram indices in background
             if (engine->isPhase2Pending()) {
                 dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                    if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-                    this->runPhase2Completion();
+                    if (!this->isGenerationCurrent(generation)) return;
+                    this->runPhase2Completion(generation);
                 });
             }
 
-            this->backgroundSyncEngine(engine, sharedPersistence, lastEventId, incrementalStart, indexLoadDone);
+            this->backgroundSyncEngine(engine, sharedPersistence, lastEventId,
+                                       incrementalStart, indexLoadDone, generation);
             return;
         }
 
         // No cache: full scan
-        this->startFullScan([this, completion](uint32_t count, bool) {
+        if (!this->isGenerationCurrent(generation)) return;
+        this->startFullScan([this, completion, generation](uint32_t count, bool) {
+            if (!this->isGenerationCurrent(generation)) return;
             bool expected = false;
             if (!this->startupCompleted_.compare_exchange_strong(expected, true,
                     std::memory_order_acq_rel)) {
                 return;
             }
 
-            std::string cacheStr = config_.cachePath + "/index.bin";
-            std::string walStr   = config_.cachePath + "/index.wal";
-            std::string pagesStr = config_.cachePath + "/index.pages";
-            std::string ptableStr = config_.cachePath + "/index.ptable";
-            std::string v6Str    = config_.cachePath + "/index.v6";
+            auto currentConfig = safeConfig();
+            std::string cacheStr = currentConfig.cachePath + "/index.bin";
+            std::string walStr   = currentConfig.cachePath + "/index.wal";
+            std::string pagesStr = currentConfig.cachePath + "/index.pages";
+            std::string ptableStr = currentConfig.cachePath + "/index.ptable";
+            std::string v6Str    = currentConfig.cachePath + "/index.v6";
 
             auto newPersistence = std::make_shared<IndexPersistence>(
                 this->safeEngine(), cacheStr, walStr, pagesStr, ptableStr, v6Str);
+            if (!this->isGenerationCurrent(generation)) return;
             this->setPersistence(newPersistence);
             newPersistence->attachWAL();
             newPersistence->setContentIndex(this->safeContentIndex());
-            if (this->config_.automaticMaintenanceEnabled) {
+            if (currentConfig.automaticMaintenanceEnabled) {
                 newPersistence->startAutoCompaction(300.0, this->watcher_);
             }
 
@@ -425,11 +513,75 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
             newPersistence->flush(meta, /*force=*/true);
 
             // Auto-start HTTP server once engine is available
-            if (config_.httpPort > 0) {
-                this->startHttpServer(config_.httpPort);
+            if (currentConfig.httpPort > 0) {
+                this->startHttpServer(currentConfig.httpPort);
             }
 
             if (completion) completion(count, true);
+        });
+    });
+}
+
+void ServiceEngine::rebuildIndex(StartupCallback completion) {
+    bool expected = false;
+    if (!rebuilding_.compare_exchange_strong(expected, true, std::memory_order_acq_rel) ||
+        shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
+
+    auto config = safeConfig();
+    auto oldContent = safeContentIndex();
+    auto newContent = std::make_shared<ContentIndex>();
+    if (oldContent) {
+        newContent->setExtensions(oldContent->getExtensions());
+        newContent->setMaxFileSize(oldContent->getMaxFileSize());
+    }
+    {
+        std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+        lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        isScanning_.store(true, std::memory_order_relaxed);
+        isSyncing_.store(false, std::memory_order_relaxed);
+        startupCompleted_.store(false, std::memory_order_relaxed);
+        setEngine(std::make_shared<SearchEngine>(searchOptionsFromConfig(config)));
+        {
+            std::unique_lock contentLock(contentMutex_);
+            contentIndex_ = newContent;
+        }
+    }
+    if (onIndexChanged) onIndexChanged();
+
+    dispatch_async(lifecycleQueue_, ^{
+        LOG_INFO("ServiceEngine", "rebuildIndex: draining previous lifecycle");
+        this->stopMonitoring();
+        this->contentIndexGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        this->cancelContentIndexing_.store(true, std::memory_order_relaxed);
+        this->cancelActiveScanners();
+
+        dispatch_sync(this->mutationQueue_, ^{});
+        dispatch_group_wait(this->contentIndexingGroup_, DISPATCH_TIME_FOREVER);
+        dispatch_group_wait(this->backgroundGroup_, DISPATCH_TIME_FOREVER);
+        if (this->shuttingDown_.load(std::memory_order_acquire)) {
+            this->rebuilding_.store(false, std::memory_order_release);
+            return;
+        }
+
+        auto oldPersistence = this->safePersistence();
+        if (oldPersistence) oldPersistence->stopAutoCompactionAndWait();
+        this->setPersistence(nullptr);
+        oldPersistence.reset();
+
+        auto oldContentPersistence = this->safeContentPersistence();
+        if (oldContentPersistence) oldContentPersistence->stopAutoCompactionAndWait();
+        this->setContentPersistence(nullptr);
+        oldContentPersistence.reset();
+
+        this->removeIndexFiles(config);
+        this->cancelContentIndexing_.store(false, std::memory_order_relaxed);
+        this->isContentIndexing_.store(false, std::memory_order_relaxed);
+
+        this->startIncremental([this, completion](uint32_t count, bool didFullScan) {
+            this->rebuilding_.store(false, std::memory_order_release);
+            if (completion) completion(count, didFullScan);
         });
     });
 }
@@ -438,7 +590,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
 //  Background sync (FSEvents replay or full scan)
 // ═══════════════════════════════════════════════════════
 
-void ServiceEngine::runPhase2Completion() {
+void ServiceEngine::runPhase2Completion(uint64_t generation) {
     // completePhase2() may defer (return with phase2Pending_ still true) when it
     // estimates the secondary indices won't fit in available memory. Without a
     // retry, a single transient memory spike at startup would permanently leave
@@ -448,7 +600,7 @@ void ServiceEngine::runPhase2Completion() {
     dispatch_semaphore_t sleeper = dispatch_semaphore_create(0);
 
     for (int attempt = 0; attempt < kMaxAttempts; ++attempt) {
-        if (this->shuttingDown_.load(std::memory_order_acquire)) break;
+        if (!this->isGenerationCurrent(generation)) break;
 
         auto eng = this->safeEngine();
         if (!eng || !eng->isPhase2Pending()) break;  // already built or no engine
@@ -472,7 +624,7 @@ void ServiceEngine::runPhase2Completion() {
         // Shutdown-responsive sleep: wake every second to re-check shuttingDown_
         // so teardown isn't blocked waiting out a long backoff interval.
         for (int64_t elapsed = 0; elapsed < delaySec; ++elapsed) {
-            if (this->shuttingDown_.load(std::memory_order_acquire)) break;
+            if (!this->isGenerationCurrent(generation)) break;
             dispatch_semaphore_wait(sleeper, dispatch_time(DISPATCH_TIME_NOW, NSEC_PER_SEC));
         }
     }
@@ -485,9 +637,12 @@ void ServiceEngine::backgroundSyncEngine(
     std::shared_ptr<IndexPersistence> sharedPersistence,
     uint64_t lastEventId,
     std::chrono::steady_clock::time_point incrementalStart,
-    std::chrono::steady_clock::time_point indexLoadDone)
+    std::chrono::steady_clock::time_point indexLoadDone,
+    uint64_t generation)
 {
+    const ServiceConfig config = safeConfig();
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
+        if (!this->isGenerationCurrent(generation)) return;
         // Try FSEvents replay
         auto replayDone = std::make_shared<std::atomic<bool>>(false);
         auto journalTruncated = std::make_shared<std::atomic<bool>>(false);
@@ -501,8 +656,8 @@ void ServiceEngine::backgroundSyncEngine(
         watcherPtr->start(
             roots,
             lastEventId,
-            [this, engine](std::vector<FileSystemWatcher::Event> events) {
-                this->applyFSEvents(events, engine);
+            [this, engine, generation](std::vector<FileSystemWatcher::Event> events) {
+                if (this->isGenerationCurrent(generation)) this->applyFSEvents(events, engine);
             },
             [replayDone, journalTruncated, watcherPtr, sem] {
                 replayDone->store(true);
@@ -513,6 +668,7 @@ void ServiceEngine::backgroundSyncEngine(
 
         long result = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
         watcherForReplay->stop();
+        if (!this->isGenerationCurrent(generation)) return;
 
         if (result == 0 && replayDone->load() && !journalTruncated->load()) {
             // Replay succeeded
@@ -527,17 +683,16 @@ void ServiceEngine::backgroundSyncEngine(
                      << "total " << totalTime << "s");
 
             this->isSyncing_.store(false, std::memory_order_relaxed);
-            if (this->config_.realtimeMonitoring) {
+            if (config.realtimeMonitoring) {
                 this->startMonitoring();
             }
-            if (this->config_.automaticMaintenanceEnabled) {
+            if (config.automaticMaintenanceEnabled) {
                 sharedPersistence->startAutoCompaction(300.0, this->watcher_);
             }
 
-            if (this->config_.contentIndexingEnabled) {
+            if (config.contentIndexingEnabled) {
                 dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                    if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-                    this->setupContentPersistence();
+                    if (!this->isGenerationCurrent(generation)) return;
                     this->startContentIndexing();
                 });
             }
@@ -549,6 +704,7 @@ void ServiceEngine::backgroundSyncEngine(
         LOG_WARN("ServiceEngine", "FSEvents replay failed — background full scan");
 
         auto scanner = std::make_shared<DirectoryScanner>();
+        if (!this->registerScanner(scanner, generation)) return;
 
         // Progress reporting
         std::weak_ptr<DirectoryScanner> scannerWeak = scanner;
@@ -569,10 +725,36 @@ void ServiceEngine::backgroundSyncEngine(
 
         scanner->scan(this->effectiveScanRoots(), this->scanConfig());
         dispatch_source_cancel(timer);
+        dispatch_release(timer);
+        this->unregisterScanner(scanner);
+        if (!this->isGenerationCurrent(generation)) return;
 
         auto freshRecords = scanner->takeResults();
         engine->loadRecords(std::move(freshRecords));
         uint32_t finalCount = engine->liveRecordCount();
+
+        // A full replacement can reorder record indices, so persisted content
+        // entries cannot be safely reused by numeric fileIndex.
+        if (config.contentIndexingEnabled) {
+            auto previousContent = this->safeContentIndex();
+            auto replacementContent = std::make_shared<ContentIndex>();
+            if (previousContent) {
+                replacementContent->setExtensions(previousContent->getExtensions());
+                replacementContent->setMaxFileSize(previousContent->getMaxFileSize());
+            }
+            auto previousCP = this->safeContentPersistence();
+            if (previousCP) previousCP->stopAutoCompactionAndWait();
+            this->setContentPersistence(nullptr);
+            previousCP.reset();
+            {
+                std::unique_lock contentLock(this->contentMutex_);
+                this->contentIndex_ = replacementContent;
+            }
+            std::error_code ec;
+            fs::remove(config.cachePath + "/content_index.bin", ec);
+            ec.clear();
+            fs::remove(config.cachePath + "/content_index.wal", ec);
+        }
 
         auto scanNow = std::chrono::steady_clock::now();
         auto loadTime = std::chrono::duration<double>(indexLoadDone - incrementalStart).count();
@@ -588,11 +770,11 @@ void ServiceEngine::backgroundSyncEngine(
 
         sharedPersistence->stopAutoCompactionAndWait();
 
-        std::string cacheStr = config_.cachePath + "/index.bin";
-        std::string walStr   = config_.cachePath + "/index.wal";
-        std::string pagesStr = config_.cachePath + "/index.pages";
-        std::string ptableStr = config_.cachePath + "/index.ptable";
-        std::string v6Str    = config_.cachePath + "/index.v6";
+        std::string cacheStr = config.cachePath + "/index.bin";
+        std::string walStr   = config.cachePath + "/index.wal";
+        std::string pagesStr = config.cachePath + "/index.pages";
+        std::string ptableStr = config.cachePath + "/index.ptable";
+        std::string v6Str    = config.cachePath + "/index.v6";
 
         auto newPersistence = std::make_shared<IndexPersistence>(
             engine, cacheStr, walStr, pagesStr, ptableStr, v6Str);
@@ -600,19 +782,19 @@ void ServiceEngine::backgroundSyncEngine(
         newPersistence->attachWAL();
         newPersistence->setContentIndex(this->safeContentIndex());
 
-        if (this->config_.realtimeMonitoring) {
+        if (config.realtimeMonitoring) {
             this->startMonitoring();
         }
-        if (this->config_.automaticMaintenanceEnabled) {
+        if (config.automaticMaintenanceEnabled) {
             newPersistence->startAutoCompaction(300.0, this->watcher_);
         }
 
         auto meta = this->buildMetadata();
         newPersistence->flush(meta, /*force=*/true);
 
-        if (this->config_.contentIndexingEnabled) {
+        if (config.contentIndexingEnabled) {
             dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+                if (!this->isGenerationCurrent(generation)) return;
                 this->setupContentPersistence();
                 this->startContentIndexing();
             });
@@ -740,10 +922,11 @@ std::string ServiceEngine::configSignature() const {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startHttpServer(uint16_t port) {
-    std::unique_lock lock(engineMutex_); // unique_lock: creates/mutates httpServer_
+    std::lock_guard<std::mutex> lock(httpMutex_);
     if (!httpServer_) {
         httpServer_ = std::make_shared<HttpServer>();
     }
+    httpServer_->setAdminCallbacks(adminCallbacks_);
     bool ok = httpServer_->start(port,
         [this]() -> std::shared_ptr<SearchEngine> { return this->safeEngine(); },
         [this]() -> std::shared_ptr<ContentIndex> { return this->safeContentIndex(); });
@@ -751,14 +934,10 @@ void ServiceEngine::startHttpServer(uint16_t port) {
         LOG_ERROR("ServiceEngine", "HTTP server failed to start on port " << port);
         return;
     }
-
-    if (adminCallbacks.onRebuildIndex || adminCallbacks.onRebuildContentIndex) {
-        httpServer_->setAdminCallbacks(adminCallbacks);
-    }
 }
 
 void ServiceEngine::stopHttpServer() {
-    std::unique_lock lock(engineMutex_); // unique_lock: mutates httpServer_
+    std::lock_guard<std::mutex> lock(httpMutex_);
     if (httpServer_) {
         httpServer_->stop();
     }
@@ -774,25 +953,28 @@ void ServiceEngine::shutdown() {
         return; // Already shutting down or shut down
     }
 
+    lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel);
     stopHttpServer();
     LOG_INFO("ServiceEngine", "shutdown started");
 
     cancelContentIndexing_.store(true, std::memory_order_relaxed);
     contentIndexGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    cancelActiveScanners();
 
-    // Wait for background GCD blocks with a timeout.
-    // Background blocks check shuttingDown_ and bail quickly, so this typically completes in < 500ms.
-    // The 3s timeout prevents infinite hangs if a block is stuck in I/O, ensuring the critical
-    // flush below can proceed before macOS's termination watchdog kills the process.
-    long waitResult = dispatch_group_wait(backgroundGroup_,
-        dispatch_time(DISPATCH_TIME_NOW, 3 * NSEC_PER_SEC));
-    if (waitResult != 0) {
-        LOG_WARN("ServiceEngine", "Background tasks did not complete within 3s — proceeding with flush");
+    if (lifecycleQueue_) dispatch_sync(lifecycleQueue_, ^{});
+    stopMonitoring();
+    if (mutationQueue_) dispatch_sync(mutationQueue_, ^{});
+    if (contentIndexingGroup_) {
+        dispatch_group_wait(contentIndexingGroup_, DISPATCH_TIME_FOREVER);
     }
+    if (backgroundGroup_) {
+        dispatch_group_wait(backgroundGroup_, DISPATCH_TIME_FOREVER);
+    }
+    isScanning_.store(false, std::memory_order_relaxed);
+    isSyncing_.store(false, std::memory_order_relaxed);
+    isContentIndexing_.store(false, std::memory_order_relaxed);
 
     uint64_t lastEventId = watcher_ ? watcher_->getLastEventId() : 0;
-
-    stopMonitoring();
 
     // Final compaction
     auto persistence = safePersistence();
@@ -815,9 +997,13 @@ void ServiceEngine::shutdown() {
         dispatch_release(backgroundGroup_);
         backgroundGroup_ = nullptr;
     }
-    if (contentIndexingSemaphore_) {
-        dispatch_release(contentIndexingSemaphore_);
-        contentIndexingSemaphore_ = nullptr;
+    if (contentIndexingGroup_) {
+        dispatch_release(contentIndexingGroup_);
+        contentIndexingGroup_ = nullptr;
+    }
+    if (lifecycleQueue_) {
+        dispatch_release(lifecycleQueue_);
+        lifecycleQueue_ = nullptr;
     }
 
     LOG_INFO("ServiceEngine", "shutdown completed");

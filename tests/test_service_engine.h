@@ -80,12 +80,25 @@ static bool runPart40() {
         check(!se->isScanning(), "Not scanning after scan completion");
         check(se->liveRecordCount() == finalCount, "liveRecordCount matches finalCount");
 
-        // Test 5: Shutdown
+        // Test 5: Controlled rebuild immediately exposes an empty engine, then repopulates it.
+        dispatch_semaphore_t rebuildSem = dispatch_semaphore_create(0);
+        uint32_t rebuiltCount = 0;
+        se->rebuildIndex([&](uint32_t count, bool) {
+            rebuiltCount = count;
+            dispatch_semaphore_signal(rebuildSem);
+        });
+        check(se->liveRecordCount() == 0, "Rebuild immediately clears visible index");
+        long rebuildResult = dispatch_semaphore_wait(
+            rebuildSem, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC));
+        check(rebuildResult == 0, "Rebuild completed within timeout");
+        check(rebuiltCount >= 4, "Rebuild repopulated scanned records");
+
+        // Test 6: Shutdown
         se->shutdown();
         check(!se->isScanning(), "Not scanning after shutdown");
     }
 
-    // Test 6: Incremental load (cold start = full scan fallback)
+    // Test 7: Incremental load (cold start = full scan fallback)
     {
         // Use a fresh cache so there's no cached index
         std::string freshCache = (tmpBase / "cache_incr").string();

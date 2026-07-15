@@ -125,8 +125,6 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
     stats_.otherCount.store(0, std::memory_order_relaxed);
     stats_.errorCount.store(0, std::memory_order_relaxed);
 
-    rootDevId_ = 0;
-
     unsigned numThreads = std::thread::hardware_concurrency();
     if (numThreads < 4) numThreads = 4;
     if (numThreads > 32) numThreads = 32;
@@ -146,7 +144,7 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
             if (stat(rootPath.c_str(), &rootStat) != 0) continue;
             if (!S_ISDIR(rootStat.st_mode)) continue;
             if (!tryVisitDirectory(rootStat.st_dev, rootStat.st_ino)) continue;
-            workQueue_.push(rootPath);
+            workQueue_.push({rootPath, rootStat.st_dev});
         }
     }
 
@@ -183,7 +181,7 @@ void DirectoryScanner::workerThread(int threadIndex) {
     auto buffer = std::make_unique<char[]>(ATTR_BUF_SIZE);
 
     for (;;) {
-        std::string dirPath;
+        WorkItem work;
 
         {
             std::unique_lock<std::mutex> lock(queueMutex_);
@@ -207,7 +205,7 @@ void DirectoryScanner::workerThread(int threadIndex) {
 
             if (done_) return;
 
-            dirPath = std::move(workQueue_.front());
+            work = std::move(workQueue_.front());
             workQueue_.pop();
             // INVARIANT: activeTasks_ is incremented inside queueMutex_ (before
             // popping work), and decremented outside the lock (after scanDirectory
@@ -217,14 +215,15 @@ void DirectoryScanner::workerThread(int threadIndex) {
             activeTasks_.fetch_add(1, std::memory_order_acq_rel);
         }
 
-        scanDirectory(dirPath, buffer.get(), threadIndex);
+        scanDirectory(work.path, work.rootDev, buffer.get(), threadIndex);
 
         activeTasks_.fetch_sub(1, std::memory_order_acq_rel);
         queueCV_.notify_all();
     }
 }
 
-void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, int threadIndex) {
+void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
+                                     char* buffer, int threadIndex) {
     if (cancelled_.load(std::memory_order_relaxed)) return;
 
     int dirfd = open(dirPath.c_str(), O_RDONLY | O_DIRECTORY);
@@ -251,7 +250,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
 
     // Collect subdirectories locally, then batch-push to work queue
     // to reduce queueMutex_ contention (one lock per batch, not per directory).
-    std::vector<std::string> pendingDirs;
+    std::vector<WorkItem> pendingDirs;
 
     for (;;) {
         if (cancelled_.load(std::memory_order_relaxed)) break;
@@ -359,7 +358,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
             if (objtype == VDIR) {
                 // Skip cross-mount directories (autofs, devfs, NFS, etc.)
                 // These can block indefinitely on open() or produce irrelevant results.
-                if (rootDevId_ != 0 && devid != rootDevId_) {
+                if (devid != rootDev) {
                     entry = nextEntry;
                     continue;
                 }
@@ -379,7 +378,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, char* buffer, i
                         tolower(name[nameLen-1]) == 'p');
 
                     if (!isAppBundle || config_.includeAppBundleContents) {
-                        pendingDirs.push_back(std::move(childPath));
+                        pendingDirs.push_back({std::move(childPath), rootDev});
                     }
 
                     stats_.dirCount.fetch_add(1, std::memory_order_relaxed);

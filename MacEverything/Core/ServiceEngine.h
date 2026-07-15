@@ -58,12 +58,14 @@ public:
     // ── Lifecycle ──
     void startFullScan(StartupCallback completion);
     void startIncremental(StartupCallback completion);
+    void rebuildIndex(StartupCallback completion);
     void shutdown();
 
     // ── HTTP ──
     void startHttpServer(uint16_t port);
     void stopHttpServer();
     void updateConfig(const ServiceConfig& config);
+    void setAdminCallbacks(HttpServer::AdminCallbacks callbacks);
 
     // ── Public operations ──
     void rescanSubtree(const std::string& dir,
@@ -99,9 +101,6 @@ public:
     ContentProgressCallback onContentIndexProgress;
     ContentCompleteCallback onContentIndexComplete;
 
-    // ── Admin callbacks for HttpServer ──
-    HttpServer::AdminCallbacks adminCallbacks;
-
 private:
     // ── Internal methods (ServiceEngine.cpp) ──
     void setEngine(std::shared_ptr<SearchEngine> engine);
@@ -111,11 +110,12 @@ private:
                               std::shared_ptr<IndexPersistence> persistence,
                               uint64_t lastEventId,
                               std::chrono::steady_clock::time_point incrementalStart,
-                              std::chrono::steady_clock::time_point indexLoadDone);
+                              std::chrono::steady_clock::time_point indexLoadDone,
+                              uint64_t generation);
     // Build Phase 2 secondary indices, retrying with backoff when
     // SearchEngine::completePhase2() defers due to transient memory pressure.
     // Runs as a single background block tracked by backgroundGroup_.
-    void runPhase2Completion();
+    void runPhase2Completion(uint64_t generation);
     IndexMetadata buildMetadata();
 
     // ── FSEvents methods (ServiceEngine+FSEvents.cpp) ──
@@ -144,6 +144,12 @@ private:
     ScanConfig scanConfig() const;
     bool isPathAllowedByConfig(const std::string& path, bool forContent) const;
     std::string configSignature() const;
+    bool isGenerationCurrent(uint64_t generation) const;
+    bool registerScanner(const std::shared_ptr<DirectoryScanner>& scanner,
+                         uint64_t generation);
+    void unregisterScanner(const std::shared_ptr<DirectoryScanner>& scanner);
+    void cancelActiveScanners();
+    void removeIndexFiles(const ServiceConfig& config);
 
     // ── Config (protected by configMutex_) ──
     ServiceConfig config_;
@@ -156,6 +162,7 @@ private:
     std::shared_ptr<IndexPersistence> persistence_;
     std::shared_ptr<ContentIndexPersistence> contentPersistence_;
     std::shared_ptr<HttpServer> httpServer_;
+    HttpServer::AdminCallbacks adminCallbacks_;
     InstanceLock instanceLock_;
 
     // ── Thread safety ──
@@ -163,10 +170,16 @@ private:
     std::shared_mutex contentMutex_;
     std::shared_mutex persistenceMutex_;
     std::shared_mutex contentPersistenceMutex_;
+    std::mutex httpMutex_;
+    std::mutex lifecycleStateMutex_;
+    std::mutex activeScannersMutex_;
+    std::vector<std::weak_ptr<DirectoryScanner>> activeScanners_;
 
     // ── Dispatch queues & groups ──
     dispatch_queue_t mutationQueue_;
     dispatch_group_t backgroundGroup_;
+    dispatch_group_t contentIndexingGroup_;
+    dispatch_queue_t lifecycleQueue_;
 
     // ── Atomic flags ──
     std::atomic<bool> isScanning_{false};
@@ -177,7 +190,8 @@ private:
     std::atomic<bool> isSyncing_{false};
     std::atomic<bool> cancelContentIndexing_{false};
     std::atomic<uint64_t> contentIndexGeneration_{0};
-    dispatch_semaphore_t contentIndexingSemaphore_;
+    std::atomic<uint64_t> lifecycleGeneration_{1};
+    std::atomic<bool> rebuilding_{false};
 
     // ── Volume unmount tracking ──
     mutable std::mutex unmountingVolumesMutex_;

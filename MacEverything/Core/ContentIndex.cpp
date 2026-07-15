@@ -248,14 +248,22 @@ std::string ContentIndex::generateSnippet(const std::string& path,
 
 // --- Indexing ---
 
-bool ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath, time_t modTime) {
+ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath,
+                                           time_t modTime) {
     // Check extension (read lock for config)
+    bool allowedExtension = false;
     {
         std::shared_lock lock(mutex_);
         // Extract filename from path
         size_t lastSlash = fullPath.rfind('/');
         std::string filename = (lastSlash != std::string::npos) ? fullPath.substr(lastSlash + 1) : fullPath;
-        if (extensions_.empty() || !hasAllowedExtensionLocked(filename)) return false;
+        allowedExtension = !extensions_.empty() && hasAllowedExtensionLocked(filename);
+    }
+    if (!allowedExtension) {
+        std::unique_lock lock(mutex_);
+        if (fileInfos_.find(fileIndex) == fileInfos_.end()) return ContentIndexUpdate::Unchanged;
+        removeFileInternal(fileIndex);
+        return ContentIndexUpdate::Removed;
     }
 
     // Early exit: if modTime unchanged, skip expensive I/O
@@ -263,7 +271,7 @@ bool ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath, ti
         std::shared_lock lock(mutex_);
         auto it = fileInfos_.find(fileIndex);
         if (it != fileInfos_.end() && it->second.lastModTime == modTime) {
-            return false; // file not modified
+            return ContentIndexUpdate::Unchanged;
         }
     }
 
@@ -277,22 +285,12 @@ bool ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath, ti
     // Single-pass read: open file once, read content, check for binary
     std::string content = readFileIfText(fullPath, maxSize);
     if (content.empty()) {
-        // File unreadable (deleted/binary/too large) but already indexed:
-        // update lastModTime so future runs skip I/O via early exit
-        if (modTime > 0) {
-            std::shared_lock lock(mutex_);
-            auto it = fileInfos_.find(fileIndex);
-            if (it != fileInfos_.end() && it->second.lastModTime != modTime) {
-                lock.unlock();
-                std::unique_lock wlock(mutex_);
-                auto wit = fileInfos_.find(fileIndex);
-                if (wit != fileInfos_.end()) {
-                    wit->second.lastModTime = modTime;
-                }
-                return true; // signal WAL persist
-            }
+        std::unique_lock lock(mutex_);
+        if (fileInfos_.find(fileIndex) == fileInfos_.end()) {
+            return ContentIndexUpdate::Unchanged;
         }
-        return false;
+        removeFileInternal(fileIndex);
+        return ContentIndexUpdate::Removed;
     }
 
     uint64_t hash = hashContent(content);
@@ -311,9 +309,9 @@ bool ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath, ti
                 if (wit != fileInfos_.end()) {
                     wit->second.lastModTime = modTime;
                 }
-                return true; // signal caller to persist updated modTime
+                return ContentIndexUpdate::Upserted;
             }
-            return false; // already up-to-date, no change made
+            return ContentIndexUpdate::Unchanged;
         }
     }
 
@@ -352,7 +350,7 @@ bool ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath, ti
     info.lastModTime = modTime;
     fileInfos_[fileIndex] = std::move(info);
 
-    return true;
+    return ContentIndexUpdate::Upserted;
 }
 
 void ContentIndex::removeFile(uint32_t fileIndex) {
@@ -473,7 +471,9 @@ bool ContentIndex::getFileInfo(uint32_t fileIndex, ContentFileInfo& info) const 
 
 // --- Querying ---
 
-std::vector<ContentMatch> ContentIndex::query(const std::string& keyword, uint32_t maxResults) const {
+std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
+                                              uint32_t maxResults,
+                                              const PathResolver& resolvePath) const {
     if (keyword.empty()) return {};
 
     std::string lowerKey = me::toLower(keyword);
@@ -538,33 +538,36 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword, uint32
     // Release shared lock before doing file I/O for verification
     lock.unlock();
 
-    // Verify candidates by actually reading files and generate snippets
-    // Use dispatch_apply for parallelism
     std::vector<ContentMatch> results;
-    std::mutex resultMutex;
-    std::atomic<uint32_t> found{0};
+    constexpr size_t kVerificationBatchSize = 32;
+    results.reserve(std::min<size_t>(candidates.size(), maxResults == 0 ? candidates.size() : maxResults));
 
-    unsigned numThreads = std::min(static_cast<unsigned>(candidates.size()),
-                                    std::max(1u, std::thread::hardware_concurrency()));
-    if (numThreads > 16) numThreads = 16;
+    for (size_t base = 0; base < candidates.size(); base += kVerificationBatchSize) {
+        if (maxResults > 0 && results.size() >= maxResults) break;
 
-    // We need the SearchEngine to resolve fileIndex → path.
-    // Since we can't access SearchEngine from here, the bridge layer will need to
-    // provide path resolution. For now, store the candidates and let the bridge
-    // layer do verification + snippet generation.
-    //
-    // Actually, we return candidates as ContentMatch with empty snippets.
-    // The bridge layer fills in snippets using SearchEngine::getRecord().
+        const size_t count = std::min(kVerificationBatchSize, candidates.size() - base);
+        __block std::vector<ContentMatch> batch(count);
+        __block std::vector<uint8_t> valid(count, 0);
+        dispatch_apply(count, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
+            const uint32_t fileIdx = candidates[base + i];
+            std::string fullPath;
+            if (!resolvePath || !resolvePath(fileIdx, fullPath)) return;
 
-    for (uint32_t fileIdx : candidates) {
-        if (maxResults > 0 && found.load(std::memory_order_relaxed) >= maxResults) break;
+            uint32_t offset = 0;
+            std::string snippet = generateSnippet(fullPath, keyword, offset);
+            if (snippet.empty()) return;
 
-        ContentMatch match;
-        match.fileIndex = fileIdx;
-        match.matchOffset = 0;
-        // snippet will be filled by the bridge layer which has access to file paths
-        results.push_back(std::move(match));
-        found.fetch_add(1, std::memory_order_relaxed);
+            batch[i].fileIndex = fileIdx;
+            batch[i].snippet = std::move(snippet);
+            batch[i].matchOffset = offset;
+            valid[i] = 1;
+        });
+
+        for (size_t i = 0; i < count; ++i) {
+            if (!valid[i]) continue;
+            results.push_back(std::move(batch[i]));
+            if (maxResults > 0 && results.size() >= maxResults) break;
+        }
     }
 
     return results;

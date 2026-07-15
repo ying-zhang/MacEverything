@@ -254,16 +254,19 @@ final class SearchServiceModel: ObservableObject {
         isMonitoring = false
         isSyncing = false
 
-        try? FileManager.default.removeItem(atPath: SearchViewModel.cachePath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.walPath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.pagesPath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.ptablePath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.v6Path)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.contentIndexPath)
-        try? FileManager.default.removeItem(atPath: SearchViewModel.contentWalPath)
-
         applyRuntimeConfiguration()
-        startIncremental()
+        isScanning = true
+        bridge.rebuildIndex { [weak self] count in
+            guard let self else { return }
+            self.totalRecords = count
+            self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
+            self.isScanning = false
+            self.scanComplete = true
+            self.isMonitoring = self.bridge.isMonitoring
+            self.isSyncing = self.bridge.isSyncing
+            self.refreshContentIndexInfo()
+            NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+        }
         NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
     }
 
@@ -1039,7 +1042,21 @@ class SearchViewModel: ObservableObject {
 
     func refreshForServiceUpdate() {
         guard service.scanComplete else {
-            AppLogger.info("Search", "refreshForServiceUpdate skipped: scanComplete=false")
+            searchTask?.cancel()
+            recentTask?.cancel()
+            searchGeneration &+= 1
+            bridge.cancelSession(sessionId)
+            cachedResults = []
+            sourceItems = []
+            cachedItems = []
+            displayItems = []
+            contentResults = []
+            loadedCount = 0
+            totalMatches = 0
+            resultLimitReached = false
+            showingRecent = false
+            clearSelection()
+            AppLogger.info("Search", "Cleared results while index rebuild is in progress")
             return
         }
         let liveCount = bridge.liveRecordCount()

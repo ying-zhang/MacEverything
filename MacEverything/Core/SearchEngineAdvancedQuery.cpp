@@ -784,7 +784,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     bool stage1AllFound = false;
     size_t stage1RawCandCount = 0;
     if (useTrigram && !trigramKey.empty() && trigramKey.size() >= 3 &&
-        !nameTrigramIndex_.empty() && !pathTrigramIndex_.empty()) {
+        !nameTrigramIndex_.empty()) {
         beforeTrigram = std::chrono::steady_clock::now();
 
         const size_t candidateThreshold = totalSize / 10;
@@ -969,7 +969,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     bool extOk = false;
     {
         auto extValues = extractExtFilterValues(*ast);
-        if (!extValues.empty()) {
+        if (!extValues.empty() && !extensionIndex_.empty()) {
             // Union posting lists for all requested extensions
             for (const auto& ext : extValues) {
                 auto it = extensionIndex_.find(ext);

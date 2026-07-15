@@ -40,6 +40,28 @@ static std::string httpGet(uint16_t port, const std::string& path) {
     return response;
 }
 
+static std::string httpPost(uint16_t port, const std::string& path, const std::string& body) {
+    int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0) return "";
+    struct sockaddr_in addr{};
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons(port);
+    addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+    if (::connect(fd, reinterpret_cast<struct sockaddr*>(&addr), sizeof(addr)) < 0) {
+        ::close(fd);
+        return "";
+    }
+    std::string req = "POST " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
+        std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
+    ::send(fd, req.data(), req.size(), 0);
+    std::string response;
+    char buf[4096];
+    ssize_t n;
+    while ((n = ::recv(fd, buf, sizeof(buf), 0)) > 0) response.append(buf, static_cast<size_t>(n));
+    ::close(fd);
+    return response;
+}
+
 static bool runPart39() {
     std::cout << "\n=== Part 39: HttpServer engine swap ===\n";
     // Create two engines with different data
@@ -61,6 +83,11 @@ static bool runPart39() {
     server.start(port,
         [currentEngine]() -> std::shared_ptr<SearchEngine> { return *currentEngine; },
         [contentIndex]() -> std::shared_ptr<ContentIndex> { return contentIndex; });
+    HttpServer::AdminCallbacks callbacks;
+    callbacks.onSetContentConfig = [](const std::vector<std::string>&, uint64_t) {};
+    callbacks.onGetContentExtensions = [] { return std::vector<std::string>{"txt"}; };
+    callbacks.onGetContentMaxFileSize = [] { return uint64_t{1024}; };
+    server.setAdminCallbacks(std::move(callbacks));
 
     // Wait for server to start
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
@@ -93,6 +120,22 @@ static bool runPart39() {
         check(resp.find("\"status\":\"ok\"") != std::string::npos,
               "Health endpoint returns ok status");
     }
+
+    // Oversized numbers must produce a client error instead of throwing.
+    {
+        auto resp = httpPost(port, "/api/content/config",
+            "{\"maxFileSize\":999999999999999999999999999999999999}");
+        check(resp.find("400 Bad Request") != std::string::npos,
+              "Oversized content config number returns HTTP 400");
+    }
+
+    // Completed connections are handled by the fixed worker pool and stop remains prompt.
+    bool allHealthRequestsSucceeded = true;
+    for (int i = 0; i < 100; ++i) {
+        auto resp = httpGet(port, "/api/health");
+        if (resp.empty()) allHealthRequestsSucceeded = false;
+    }
+    check(allHealthRequestsSucceeded, "Worker pool serves sequential health requests");
 
     server.stop();
     return true;

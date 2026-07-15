@@ -29,6 +29,11 @@ static void runContentIndexQueryBenchmark() {
         }
         ci.indexFile(static_cast<uint32_t>(i), path);
     }
+    auto resolver = [&](uint32_t idx, std::string& path) {
+        if (idx >= static_cast<uint32_t>(numFiles)) return false;
+        path = tmpDir + "/file_" + std::to_string(idx) + ".txt";
+        return true;
+    };
 
     check(ci.indexedFileCount() == numFiles,
           "CI-Bench: all files indexed");
@@ -38,7 +43,7 @@ static void runContentIndexQueryBenchmark() {
     const int iterations = 1000;
     int totalMatches = 0;
     for (int run = 0; run < iterations; run++) {
-        auto results = ci.query("alpha", 100);
+        auto results = ci.query("alpha", 100, resolver);
         totalMatches += results.size();
     }
     auto t1 = std::chrono::steady_clock::now();
@@ -49,7 +54,7 @@ static void runContentIndexQueryBenchmark() {
               << queryTime << "ms (" << queryTime / iterations << "ms/query)\n";
 
     // Verify correctness: 'alpha' appears in files where i%3==0
-    auto results = ci.query("alpha", 1000);
+    auto results = ci.query("alpha", 1000, resolver);
     int expectedCount = 0;
     for (int i = 0; i < numFiles; i++) {
         if (i % 3 == 0) expectedCount++;
@@ -60,7 +65,7 @@ static void runContentIndexQueryBenchmark() {
     // Benchmark: query with no matches (should short-circuit via trigram miss)
     t0 = std::chrono::steady_clock::now();
     for (int run = 0; run < iterations; run++) {
-        auto res = ci.query("xyznonexistent", 100);
+        auto res = ci.query("xyznonexistent", 100, resolver);
         (void)res;
     }
     t1 = std::chrono::steady_clock::now();
@@ -76,7 +81,7 @@ static void runContentIndexQueryBenchmark() {
 
     ContentIndex ci2;
     ci2.loadFromFile(savePath);
-    auto results2 = ci2.query("alpha", 1000);
+    auto results2 = ci2.query("alpha", 1000, resolver);
     check(results2.size() == results.size(),
           "CI-Bench: loaded index returns same results as original");
 

@@ -238,6 +238,15 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     });
 }
 
+- (void)rebuildIndexWithCompletion:(void (^)(uint32_t totalRecords))completion {
+    [self _installCallbacks];
+    _serviceEngine->rebuildIndex([completion](uint32_t count, bool) {
+        dispatch_async(dispatch_get_main_queue(), ^{
+            if (completion) completion(count);
+        });
+    });
+}
+
 - (void)compactIndex {
     _serviceEngine->compactIndex();
 }
@@ -286,7 +295,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
         return ci->getMaxFileSize();
     };
 
-    _serviceEngine->adminCallbacks = std::move(callbacks);
+    _serviceEngine->setAdminCallbacks(std::move(callbacks));
 }
 
 - (void)startHttpServer:(uint16_t)port {

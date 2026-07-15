@@ -133,9 +133,8 @@ int main(int argc, char* argv[]) {
     // Set up admin callbacks for HttpServer
     HttpServer::AdminCallbacks callbacks;
     callbacks.onRebuildIndex = [&engine] {
-        // Trigger full rescan (not directly available — use startFullScan)
         LOG_INFO("Daemon", "Rebuild index requested via HTTP");
-        engine.startFullScan([](uint32_t count, bool) {
+        engine.rebuildIndex([](uint32_t count, bool) {
             LOG_INFO("Daemon", "Rebuild index completed: " << count << " records");
         });
     };
@@ -162,7 +161,7 @@ int main(int argc, char* argv[]) {
         return ci->getMaxFileSize();
     };
 
-    engine.adminCallbacks = std::move(callbacks);
+    engine.setAdminCallbacks(std::move(callbacks));
 
     // Set up progress logging
     engine.onScanProgress = [](uint64_t scanned, uint64_t dirs) {

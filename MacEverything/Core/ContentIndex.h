@@ -7,6 +7,7 @@
 #include <unordered_set>
 #include <mutex>
 #include <cstdio>
+#include <functional>
 
 /// A trigram is 3 consecutive lowercase ASCII bytes packed into the low 24 bits of a uint32_t.
 using Trigram = uint32_t;
@@ -25,6 +26,12 @@ struct ContentFileInfo {
     time_t lastModTime = 0;   // file modification time for incremental indexing
 };
 
+enum ContentIndexUpdate {
+    Unchanged,
+    Upserted,
+    Removed,
+};
+
 /// Trigram-based inverted index for full-text content search.
 ///
 /// Indexes file contents by extracting all 3-byte trigrams and building
@@ -40,7 +47,8 @@ public:
     /// Index a single file's content. Reads the file, extracts trigrams, updates inverted index.
     /// Returns true if the file was newly indexed or updated (false if binary, too large, unreadable, or unchanged).
     /// If modTime > 0 and matches the stored lastModTime, skips I/O entirely (incremental optimization).
-    bool indexFile(uint32_t fileIndex, const std::string& fullPath, time_t modTime = 0);
+    ContentIndexUpdate indexFile(uint32_t fileIndex, const std::string& fullPath,
+                                 time_t modTime = 0);
 
     /// Remove a file from the content index.
     void removeFile(uint32_t fileIndex);
@@ -52,11 +60,13 @@ public:
 
     /// Search for files containing the keyword. Returns matches with snippets.
     /// Uses trigram intersection for keywords >= 3 chars, brute-force for shorter.
-    std::vector<ContentMatch> query(const std::string& keyword, uint32_t maxResults = 100) const;
+    using PathResolver = std::function<bool(uint32_t fileIndex, std::string& fullPath)>;
+    std::vector<ContentMatch> query(const std::string& keyword, uint32_t maxResults,
+                                    const PathResolver& resolvePath) const;
 
     // --- Configuration ---
 
-    /// Set allowed file extensions (lowercase, without dot). Empty = index all text files.
+    /// Set allowed file extensions (lowercase, without dot). Empty disables indexing.
     void setExtensions(const std::vector<std::string>& exts);
 
     /// Set maximum file size to index (bytes). Default 1MB.

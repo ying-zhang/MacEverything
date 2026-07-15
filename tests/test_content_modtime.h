@@ -141,7 +141,7 @@ static void runContentModTimeTests() {
         check(!third, "T5: third call with same modTime skips (modTime early exit)");
     }
 
-    // --- Test 6: Unreadable file (deleted) updates lastModTime for indexed entry ---
+    // --- Test 6: Unreadable file removes the stale indexed entry ---
     {
         ContentIndex idx;
         idx.setExtensions({"txt"});
@@ -165,16 +165,15 @@ static void runContentModTimeTests() {
         fs::remove(delFile);
         time_t newMod = delModTime + 120;
 
-        bool second = idx.indexFile(0, delFile, newMod);
-        check(second, "T6: deleted file → indexFile returns true (lastModTime updated)");
+        auto second = idx.indexFile(0, delFile, newMod);
+        check(second == ContentIndexUpdate::Removed, "T6: deleted file removes stale content entry");
 
         ContentFileInfo info;
-        idx.getFileInfo(0, info);
-        check(info.lastModTime == newMod, "T6: stored lastModTime updated despite file unreadable");
+        check(!idx.getFileInfo(0, info), "T6: deleted file no longer has content metadata");
 
-        // Third call with same modTime should skip via early exit
+        // Third call stays unchanged because the stale entry is already gone.
         bool third = idx.indexFile(0, delFile, newMod);
-        check(!third, "T6: third call with same modTime skips (early exit)");
+        check(!third, "T6: third call remains unchanged");
     }
 
     // --- Test 7: pruneStaleEntries removes entries not in validFileIndices ---

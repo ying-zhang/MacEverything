@@ -78,51 +78,40 @@ void ServiceEngine::startContentIndexing() {
     isContentIndexing_.store(true, std::memory_order_relaxed);
     cancelContentIndexing_.store(false, std::memory_order_relaxed);
     uint64_t myGeneration = contentIndexGeneration_.load(std::memory_order_acquire);
+    uint64_t lifecycleGeneration = lifecycleGeneration_.load(std::memory_order_acquire);
 
     LOG_INFO("ServiceEngine", "Content indexing started");
 
     auto contentPersistence = safeContentPersistence();
 
+    dispatch_group_enter(contentIndexingGroup_);
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+        if (!this->isGenerationCurrent(lifecycleGeneration)) {
+            dispatch_group_leave(this->contentIndexingGroup_);
+            return;
+        }
         auto contentStart = std::chrono::steady_clock::now();
 
-        // Build lightweight list of (index, fullPath, modTime) for regular files.
-        // Two-phase: if content index already has entries (restart), check only
-        // those files (incremental). Otherwise full scan (first run).
+        // Build a lightweight list of all eligible files. indexFile() uses modTime
+        // to skip unchanged content, while visiting every record discovers files
+        // created while the app was offline or after a journal truncation.
         struct FileEntry { uint32_t idx; std::string fullPath; time_t modTime; };
         auto fileEntries = std::make_shared<std::vector<FileEntry>>();
         {
-            auto indexedIndices = contentIndex->getIndexedFileIndices();
-            bool incremental = !indexedIndices.empty();
+            uint32_t total = engine->recordCount();
+            std::vector<uint32_t> allIndices;
+            allIndices.reserve(total);
+            for (uint32_t i = 0; i < total; i++) allIndices.push_back(i);
 
-            if (incremental) {
-                // Incremental mode: only check already-indexed files
-                fileEntries->reserve(indexedIndices.size());
-                engine->forEachRecordWithPath(indexedIndices, [&](uint32_t idx, const FileRecord& r, const std::string& path) {
-                    if (r.type != 1) return;
-                    auto fullPath = SearchEngine::makeFullPath(path, r.name);
-                    if (!this->isPathAllowedByConfig(fullPath, true)) return;
-                    fileEntries->push_back({idx, std::move(fullPath), r.modTime});
-                });
-                LOG_INFO("ServiceEngine", "Content indexing: incremental mode, "
-                         << fileEntries->size() << " previously-indexed files to check");
-            } else {
-                // Full scan: first run, no persisted content index
-                uint32_t total = engine->recordCount();
-                std::vector<uint32_t> allIndices;
-                allIndices.reserve(total);
-                for (uint32_t i = 0; i < total; i++) allIndices.push_back(i);
-
-                fileEntries->reserve(total);
-                engine->forEachRecordWithPath(allIndices, [&](uint32_t idx, const FileRecord& r, const std::string& path) {
-                    if (r.type != 1) return;
-                    auto fullPath = SearchEngine::makeFullPath(path, r.name);
-                    if (!this->isPathAllowedByConfig(fullPath, true)) return;
-                    fileEntries->push_back({idx, std::move(fullPath), r.modTime});
-                });
-                LOG_INFO("ServiceEngine", "Content indexing: full scan mode, "
-                         << fileEntries->size() << " regular files to index");
-            }
+            fileEntries->reserve(total);
+            engine->forEachRecordWithPath(allIndices, [&](uint32_t idx, const FileRecord& r, const std::string& path) {
+                if (r.type != 1) return;
+                auto fullPath = SearchEngine::makeFullPath(path, r.name);
+                if (!this->isPathAllowedByConfig(fullPath, true)) return;
+                fileEntries->push_back({idx, std::move(fullPath), r.modTime});
+            });
+            LOG_INFO("ServiceEngine", "Content indexing: reconciling "
+                     << fileEntries->size() << " regular files");
         }
 
         uint32_t total = static_cast<uint32_t>(fileEntries->size());
@@ -140,14 +129,16 @@ void ServiceEngine::startContentIndexing() {
 
             const auto& entry = entries[i];
             if (this->isVolumeUnmounting(entry.fullPath)) return;
-            bool didIndex = contentIndex->indexFile(entry.idx, entry.fullPath, entry.modTime);
+            auto update = contentIndex->indexFile(entry.idx, entry.fullPath, entry.modTime);
 
-            if (didIndex && contentPersistence) {
+            if (update == ContentIndexUpdate::Upserted && contentPersistence) {
                 ContentFileInfo info;
                 if (contentIndex->getFileInfo(entry.idx, info)) {
                     contentPersistence->walAppendAdd(entry.idx, info.contentHash, info.trigrams, info.lastModTime);
                 }
-            } else if (!didIndex && contentIndex->isFileIndexed(entry.idx)) {
+            } else if (update == ContentIndexUpdate::Removed && contentPersistence) {
+                contentPersistence->walAppendRemove(entry.idx);
+            } else if (update == ContentIndexUpdate::Unchanged && contentIndex->isFileIndexed(entry.idx)) {
                 skipped->fetch_add(1, std::memory_order_relaxed);
             }
 
@@ -171,11 +162,11 @@ void ServiceEngine::startContentIndexing() {
                  << " skipped by modTime) in " << contentElapsed << "s");
 
         this->isContentIndexing_.store(false, std::memory_order_relaxed);
-        dispatch_semaphore_signal(this->contentIndexingSemaphore_);
 
         if (this->onContentIndexComplete) {
             this->onContentIndexComplete(totalIndexed);
         }
+        dispatch_group_leave(this->contentIndexingGroup_);
     });
 }
 
@@ -194,8 +185,7 @@ void ServiceEngine::rebuildContentIndex() {
     contentIndexGeneration_.fetch_add(1, std::memory_order_acq_rel);
     if (isContentIndexing_.load(std::memory_order_relaxed)) {
         cancelContentIndexing_.store(true, std::memory_order_relaxed);
-        dispatch_semaphore_wait(contentIndexingSemaphore_,
-                                dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+        dispatch_group_wait(contentIndexingGroup_, DISPATCH_TIME_FOREVER);
     }
 
     // Stop old content persistence
@@ -232,8 +222,7 @@ void ServiceEngine::clearContentIndex() {
     contentIndexGeneration_.fetch_add(1, std::memory_order_acq_rel);
     if (isContentIndexing_.load(std::memory_order_relaxed)) {
         cancelContentIndexing_.store(true, std::memory_order_relaxed);
-        dispatch_semaphore_wait(contentIndexingSemaphore_,
-                                dispatch_time(DISPATCH_TIME_NOW, 5 * NSEC_PER_SEC));
+        dispatch_group_wait(contentIndexingGroup_, DISPATCH_TIME_FOREVER);
     }
 
     std::vector<std::string> exts = contentIndex->getExtensions();
@@ -306,12 +295,14 @@ void ServiceEngine::updateContentForPath(
             engine->forEachRecordWithPath({fileIndex}, [&](uint32_t, const FileRecord& r, const std::string&) {
                 modTime = r.modTime;
             });
-            bool didIndex = contentIndex->indexFile(fileIndex, fullPath, modTime);
-            if (didIndex && contentPersistence) {
+            auto update = contentIndex->indexFile(fileIndex, fullPath, modTime);
+            if (update == ContentIndexUpdate::Upserted && contentPersistence) {
                 ContentFileInfo info;
                 if (contentIndex->getFileInfo(fileIndex, info)) {
                     contentPersistence->walAppendAdd(fileIndex, info.contentHash, info.trigrams, info.lastModTime);
                 }
+            } else if (update == ContentIndexUpdate::Removed && contentPersistence) {
+                contentPersistence->walAppendRemove(fileIndex);
             }
         }
     }
