@@ -524,8 +524,11 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
 
 void ServiceEngine::rebuildIndex(StartupCallback completion) {
     bool expected = false;
-    if (!rebuilding_.compare_exchange_strong(expected, true, std::memory_order_acq_rel) ||
-        shuttingDown_.load(std::memory_order_acquire)) {
+    if (!rebuilding_.compare_exchange_strong(expected, true, std::memory_order_acq_rel)) {
+        return;
+    }
+    if (shuttingDown_.load(std::memory_order_acquire)) {
+        rebuilding_.store(false, std::memory_order_release);
         return;
     }
 
@@ -536,9 +539,10 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
         newContent->setExtensions(oldContent->getExtensions());
         newContent->setMaxFileSize(oldContent->getMaxFileSize());
     }
+    uint64_t rebuildGeneration = 0;
     {
         std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
-        lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel);
+        rebuildGeneration = lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel) + 1;
         isScanning_.store(true, std::memory_order_relaxed);
         isSyncing_.store(false, std::memory_order_relaxed);
         startupCompleted_.store(false, std::memory_order_relaxed);
@@ -579,7 +583,16 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
         this->cancelContentIndexing_.store(false, std::memory_order_relaxed);
         this->isContentIndexing_.store(false, std::memory_order_relaxed);
 
-        this->startIncremental([this, completion](uint32_t count, bool didFullScan) {
+        // The callback can be discarded without invocation when its lifecycle
+        // generation is cancelled. Tying this guard to every callback copy
+        // releases rebuilding_ on both success and cancellation.
+        auto rebuildReset = std::shared_ptr<void>(nullptr, [this, rebuildGeneration](void*) {
+            if (this->lifecycleGeneration_.load(std::memory_order_acquire) == rebuildGeneration) {
+                this->rebuilding_.store(false, std::memory_order_release);
+            }
+        });
+        this->startIncremental([this, completion, rebuildReset](uint32_t count, bool didFullScan) {
+            (void)rebuildReset;
             this->rebuilding_.store(false, std::memory_order_release);
             if (completion) completion(count, didFullScan);
         });
@@ -954,6 +967,7 @@ void ServiceEngine::shutdown() {
     }
 
     lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    rebuilding_.store(false, std::memory_order_release);
     stopHttpServer();
     LOG_INFO("ServiceEngine", "shutdown started");
 
