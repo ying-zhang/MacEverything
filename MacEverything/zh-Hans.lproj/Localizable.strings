@@ -345,3 +345,25 @@
 "Names containing whitespace" = "包含空白字符的名称";
 "Names containing non-ASCII characters" = "包含非 ASCII 字符的名称";
 "Filename cannot contain / or null characters" = "文件名不能包含 / 或空字符";
+
+/* 外观设置 */
+"Follow System" = "跟随系统";
+"Light" = "浅色";
+"Dark" = "深色";
+"Appearance" = "外观";
+"Theme" = "主题";
+"Light Mode Colors" = "浅色模式颜色";
+"Dark Mode Colors" = "深色模式颜色";
+"Background" = "背景色";
+"Text Color" = "正文色";
+"Font Family" = "字体";
+"System Default" = "系统默认";
+"Font Size" = "字号";
+"Reset Appearance Defaults" = "恢复默认外观";
+"Reset Appearance Defaults?" = "恢复默认外观？";
+"This will reset theme, colors, font, font size, and row height to defaults." = "这将重置主题、颜色、字体、字号和行高为默认值。";
+"Result Row Height" = "结果行高";
+"Show file thumbnails" = "显示文件缩略图";
+"Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons." = "缩略图可能增加 CPU、内存和磁盘访问。文件夹和应用程序始终使用系统图标。";
+"Preview" = "预览";
+"The quick brown fox jumps over the lazy dog 0123456789" = "敏捷的棕色狐狸跳过懒狗 0123456789";

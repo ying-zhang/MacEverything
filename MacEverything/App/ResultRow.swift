@@ -99,7 +99,9 @@ struct ResultRow: View {
     var onDeleteItems: ((_ ids: [String]) -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var iconCache = FileIconCache.shared
+    @ObservedObject private var thumbnailService = ThumbnailService.shared
     @EnvironmentObject private var columnLayout: ResultColumnLayout
+    @EnvironmentObject private var theme: ThemeManager
     @State private var isHovered = false
     @State private var localRenaming = false
     @State private var editingName = ""
@@ -107,9 +109,9 @@ struct ResultRow: View {
     @State private var showRenameError = false
 
     var body: some View {
-        let dense = settings.resultDensity == .compact
+        let rowHeight = settings.resultRowHeight
         GeometryReader { proxy in
-            rowContent(dense: dense, widths: columnLayout.resolvedWidths(
+            rowContent(rowHeight: rowHeight, widths: columnLayout.resolvedWidths(
                 showPath: settings.showPath,
                 showExtension: settings.showExtension,
                 showSize: settings.showSize,
@@ -117,22 +119,24 @@ struct ResultRow: View {
                 availableWidth: proxy.size.width
             ))
         }
-        .frame(height: dense ? 28 : 38)
+        .frame(height: rowHeight)
+        .clipped()
         .accessibilityIdentifier("resultRow")
     }
 
-    private func rowContent(dense: Bool, widths: ResolvedResultColumnWidths) -> some View {
+    private func rowContent(rowHeight: CGFloat, widths: ResolvedResultColumnWidths) -> some View {
+        let iconSize = min(rowHeight - 8, 32)
         let highlighted = highlightCrossMatches(
             path: item.path, name: item.name, hints: hints,
-            nameFont: .subheadline, nameColor: .primary,
-            pathFont: .subheadline, pathColor: .secondary)
+            nameFont: theme.bodyFont, nameColor: theme.resolvedTextColor,
+            pathFont: theme.bodyFont, pathColor: .secondary)
 
         return HStack(spacing: 10) {
             HStack(spacing: 8) {
-                fileIcon(for: item)
+                fileVisual(for: item, pixelSize: iconSize)
                     .resizable()
                     .aspectRatio(contentMode: .fit)
-                    .frame(width: dense ? 18 : 22, height: dense ? 18 : 22)
+                    .frame(width: iconSize, height: iconSize)
                 if isActivelyRenaming {
                     RenameTextField(text: $editingName,
                                     onCommit: { commitRename() },
@@ -153,7 +157,7 @@ struct ResultRow: View {
 
             if settings.showExtension {
                 Text(item.fileExtension)
-                    .font(.subheadline)
+                    .font(theme.bodyFont)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .help(item.fileExtension)
@@ -162,7 +166,7 @@ struct ResultRow: View {
 
             if settings.showSize {
                 Text(item.type == 1 && item.size > 0 ? formatSize(item.size) : "")
-                    .font(.subheadline)
+                    .font(theme.bodyFont)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .frame(width: widths.size, alignment: .trailing)
@@ -170,14 +174,14 @@ struct ResultRow: View {
 
             if settings.showModifiedDate {
                 Text(formatDate(item.modTime))
-                    .font(.subheadline)
+                    .font(theme.bodyFont)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
                     .frame(width: widths.modified, alignment: .leading)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, dense ? 2 : 5)
+        .padding(.vertical, max(2, (rowHeight - iconSize) / 2))
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
@@ -225,8 +229,14 @@ struct ResultRow: View {
         }
     }
 
-    private func fileIcon(for item: FileItem) -> Image {
+    private func fileVisual(for item: FileItem, pixelSize: CGFloat) -> Image {
         _ = iconCache.revision
+        if settings.showThumbnails && item.type != 2 && !item.name.hasSuffix(".app") {
+            _ = thumbnailService.revision
+            if let thumb = thumbnailService.thumbnail(for: item.fullPath, modTime: item.modTime, pixelSize: pixelSize) {
+                return Image(nsImage: thumb)
+            }
+        }
         return Image(nsImage: iconCache.icon(for: item))
     }
 

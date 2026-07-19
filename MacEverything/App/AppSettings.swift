@@ -2,6 +2,22 @@ import Foundation
 import Combine
 import SwiftUI
 
+enum AppearanceMode: String, CaseIterable, Codable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return L10n.tr("Follow System")
+        case .light: return L10n.tr("Light")
+        case .dark: return L10n.tr("Dark")
+        }
+    }
+}
+
 enum StartupDisplayMode: String, CaseIterable, Codable, Identifiable {
     case empty
     case recent
@@ -169,6 +185,15 @@ final class AppSettings: ObservableObject {
         static let enablePinyinInitials = "settings.enablePinyinInitials"
         static let enablePathSearchAcceleration = "settings.enablePathSearchAcceleration"
         static let enterKeyAction = "settings.enterKeyAction"
+        static let appearanceMode = "settings.appearanceMode"
+        static let lightBackgroundColor = "settings.lightBackgroundColor"
+        static let darkBackgroundColor = "settings.darkBackgroundColor"
+        static let lightTextColor = "settings.lightTextColor"
+        static let darkTextColor = "settings.darkTextColor"
+        static let fontFamily = "settings.fontFamily"
+        static let fontSize = "settings.fontSize"
+        static let resultRowHeight = "settings.resultRowHeight"
+        static let showThumbnails = "settings.showThumbnails"
         static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
@@ -236,6 +261,35 @@ final class AppSettings: ObservableObject {
     @Published var enablePathSearchAcceleration: Bool { didSet { save(enablePathSearchAcceleration, Key.enablePathSearchAcceleration) } }
     @Published var enterKeyAction: EnterKeyAction { didSet { save(enterKeyAction.rawValue, Key.enterKeyAction) } }
     @Published var hideDockIcon: Bool { didSet { save(hideDockIcon, Key.hideDockIcon) } }
+    @Published var appearanceMode: AppearanceMode { didSet { save(appearanceMode.rawValue, Key.appearanceMode) } }
+    @Published var lightBackgroundColor: String { didSet { save(lightBackgroundColor, Key.lightBackgroundColor) } }
+    @Published var darkBackgroundColor: String { didSet { save(darkBackgroundColor, Key.darkBackgroundColor) } }
+    @Published var lightTextColor: String { didSet { save(lightTextColor, Key.lightTextColor) } }
+    @Published var darkTextColor: String { didSet { save(darkTextColor, Key.darkTextColor) } }
+    @Published var fontFamily: String { didSet { save(fontFamily, Key.fontFamily) } }
+    @Published var fontSize: CGFloat {
+        didSet {
+            let value = clamped(fontSize, 10.0, 24.0)
+            if value != fontSize { fontSize = value; return }
+            save(Double(value), Key.fontSize)
+            let minRowHeight = minRowHeightForFont
+            if resultRowHeight < minRowHeight {
+                resultRowHeight = minRowHeight
+            }
+        }
+    }
+    @Published var resultRowHeight: CGFloat {
+        didSet {
+            let value = clamped(resultRowHeight, max(24.0, minRowHeightForFont), 80.0)
+            if value != resultRowHeight { resultRowHeight = value; return }
+            save(Double(value), Key.resultRowHeight)
+        }
+    }
+    @Published var showThumbnails: Bool { didSet { save(showThumbnails, Key.showThumbnails) } }
+
+    /// Minimum row height that fits the current font without clipping.
+    /// Uses a 1.4× line-height multiple plus 4pt of vertical padding so text never overflows the row.
+    var minRowHeightForFont: CGFloat { ceil(fontSize * 1.4) + 4 }
 
     private let defaults = UserDefaults.standard
 
@@ -285,6 +339,15 @@ final class AppSettings: ObservableObject {
         enablePathSearchAcceleration = defaults.object(forKey: Key.enablePathSearchAcceleration) as? Bool ?? !oldLowMemoryMode
         enterKeyAction = EnterKeyAction(rawValue: defaults.string(forKey: Key.enterKeyAction) ?? "") ?? .openFile
         hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
+        appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Key.appearanceMode) ?? "") ?? .system
+        lightBackgroundColor = defaults.string(forKey: Key.lightBackgroundColor) ?? ""
+        darkBackgroundColor = defaults.string(forKey: Key.darkBackgroundColor) ?? ""
+        lightTextColor = defaults.string(forKey: Key.lightTextColor) ?? ""
+        darkTextColor = defaults.string(forKey: Key.darkTextColor) ?? ""
+        fontFamily = defaults.string(forKey: Key.fontFamily) ?? ""
+        fontSize = CGFloat(clamped(defaults.object(forKey: Key.fontSize) as? Double ?? 13.0, 10.0, 24.0))
+        resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 24.0, 80.0))
+        showThumbnails = defaults.object(forKey: Key.showThumbnails) as? Bool ?? false
 
         migrateSettingsIfNeeded()
     }
@@ -353,6 +416,17 @@ final class AppSettings: ObservableObject {
         UserDefaults.standard.removeObject(forKey: SearchHistoryStore.defaultsKey)
     }
 
+    func resetAppearanceDefaults() {
+        appearanceMode = .system
+        lightBackgroundColor = ""
+        darkBackgroundColor = ""
+        lightTextColor = ""
+        darkTextColor = ""
+        fontFamily = ""
+        fontSize = 13
+        resultRowHeight = 38
+    }
+
     private func migrateSettingsIfNeeded() {
         let version = defaults.object(forKey: Key.settingsSchemaVersion) as? Int ?? 0
 
@@ -386,7 +460,29 @@ final class AppSettings: ObservableObject {
             }
         }
 
-        defaults.set(4, forKey: Key.settingsSchemaVersion)
+        if version < 5 {
+            if defaults.object(forKey: Key.resultRowHeight) == nil {
+                let oldDensityRaw = defaults.string(forKey: Key.resultDensity) ?? ""
+                if let oldDensity = ResultDensity(rawValue: oldDensityRaw) {
+                    switch oldDensity {
+                    case .compact: resultRowHeight = 28
+                    case .comfortable: resultRowHeight = 38
+                    }
+                }
+            }
+        }
+
+        if version < 6 {
+            // Reconcile row height with the font-derived minimum so previously-saved
+            // combos (e.g. large font with a small row height) don't render clipped.
+            let minRowHeight = max(24.0, minRowHeightForFont)
+            if resultRowHeight < minRowHeight {
+                resultRowHeight = minRowHeight
+                save(Double(resultRowHeight), Key.resultRowHeight)
+            }
+        }
+
+        defaults.set(6, forKey: Key.settingsSchemaVersion)
     }
 
     private func save(_ value: Bool, _ key: String) {
@@ -499,4 +595,29 @@ func normalizedExistingPaths(_ paths: [String]) -> [String] {
 
 func clamped<T: Comparable>(_ value: T, _ lower: T, _ upper: T) -> T {
     min(max(value, lower), upper)
+}
+
+extension Color {
+    init?(rgbaString: String) {
+        guard !rgbaString.isEmpty else { return nil }
+        let parts = rgbaString.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4 else { return nil }
+        self.init(.sRGB, red: parts[0], green: parts[1], blue: parts[2], opacity: parts[3])
+    }
+
+    var rgbaString: String? {
+        guard let cgColor = NSColor(self).usingColorSpace(.sRGB) else { return nil }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        cgColor.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return String(format: "%.4f,%.4f,%.4f,%.4f", r, g, b, a)
+    }
+}
+
+extension NSColor {
+    convenience init?(rgbaString: String) {
+        guard !rgbaString.isEmpty else { return nil }
+        let parts = rgbaString.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4 else { return nil }
+        self.init(srgbRed: CGFloat(parts[0]), green: CGFloat(parts[1]), blue: CGFloat(parts[2]), alpha: CGFloat(parts[3]))
+    }
 }

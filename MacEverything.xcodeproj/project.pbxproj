@@ -64,6 +64,9 @@
 		A100002A /* SearchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000043; };
 		D1000001 /* MCPConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2000001; };
 		D1000002 /* MacEverythingMCP in Copy MCP Binary */ = {isa = PBXBuildFile; fileRef = C2000099; };
+		A100003C /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000058; };
+		A100003D /* ThumbnailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000059; };
+		A100003E /* QuickLookThumbnailing.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A200005A; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -165,6 +168,9 @@
 		A2000055 /* ResultListKeyHandler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultListKeyHandler.swift; sourceTree = "<group>"; };
 		A2000056 /* ResultInteraction.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultInteraction.swift; sourceTree = "<group>"; };
 		A2000057 /* FileActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileActions.swift; sourceTree = "<group>"; };
+		A2000058 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
+		A2000059 /* ThumbnailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailService.swift; sourceTree = "<group>"; };
+		A200005A /* QuickLookThumbnailing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLookThumbnailing.framework; path = System/Library/Frameworks/QuickLookThumbnailing.framework; sourceTree = SDKROOT; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2000001 /* mcp_main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mcp_main.cpp; sourceTree = "<group>"; };
@@ -252,6 +258,7 @@
 			files = (
 				A100000B /* Carbon.framework in Frameworks */,
 				A100000D /* CoreServices.framework in Frameworks */,
+				A100003E /* QuickLookThumbnailing.framework in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -328,6 +335,8 @@
 				A2000055 /* ResultListKeyHandler.swift */,
 				A2000056 /* ResultInteraction.swift */,
 				A2000057 /* FileActions.swift */,
+				A2000058 /* ThemeManager.swift */,
+				A2000059 /* ThumbnailService.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -398,6 +407,7 @@
 			children = (
 				A200000F /* Carbon.framework */,
 				A2000015 /* CoreServices.framework */,
+				A200005A /* QuickLookThumbnailing.framework */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -554,6 +564,8 @@
 				A1000039 /* ResultListKeyHandler.swift in Sources */,
 				A100003A /* ResultInteraction.swift in Sources */,
 				A100003B /* FileActions.swift in Sources */,
+				A100003C /* ThemeManager.swift in Sources */,
+				A100003D /* ThumbnailService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
