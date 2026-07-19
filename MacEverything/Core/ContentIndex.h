@@ -21,6 +21,7 @@ struct ContentMatch {
 
 /// Per-file content indexing metadata.
 struct ContentFileInfo {
+    std::string fullPath;      // stable persistence identity across fileIndex remaps
     uint64_t contentHash;     // simple hash of file content for change detection
     std::vector<Trigram> trigrams; // all trigrams extracted from this file
     time_t lastModTime = 0;   // file modification time for incremental indexing
@@ -84,7 +85,8 @@ public:
     bool saveToFile(const std::string& path) const;
 
     /// Load the content index from a binary file.
-    bool loadFromFile(const std::string& path);
+    using IndexResolver = std::function<uint32_t(const std::string& fullPath)>;
+    bool loadFromFile(const std::string& path, const IndexResolver& resolveIndex = {});
 
     // --- Stats ---
 
@@ -97,7 +99,8 @@ public:
     bool getFileInfo(uint32_t fileIndex, ContentFileInfo& info) const;
 
     /// Directly insert file info (for WAL replay / load).
-    void insertFileInfo(uint32_t fileIndex, uint64_t contentHash, std::vector<Trigram>&& trigrams, time_t lastModTime = 0);
+    void insertFileInfo(uint32_t fileIndex, uint64_t contentHash, std::vector<Trigram>&& trigrams,
+                        time_t lastModTime = 0, std::string fullPath = {});
 
     /// Directly remove file info and update inverted index.
     void removeFileInternal(uint32_t fileIndex);

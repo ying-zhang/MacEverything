@@ -20,6 +20,8 @@
 "Indexed %d / %d files" = "已索引 %d / %d 个文件";
 "Search results will appear after indexing completes" = "索引完成后会显示搜索结果";
 "No content matches found" = "未找到内容匹配";
+"Content indexing is disabled" = "内容索引已停用";
+"Enable text content indexing in Settings to use content search." = "请在设置中启用文本内容索引后再使用内容搜索。";
 "No files indexed. Configure extensions in Content Settings." = "尚未索引文件。请在内容设置中配置扩展名。";
 "Type a keyword after infile: to search file contents" = "在 infile: 后输入关键词以搜索文件内容";
 "%d content matches" = "%d 个内容匹配";

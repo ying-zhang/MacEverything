@@ -215,6 +215,16 @@ void ServiceEngine::removeIndexFiles(const ServiceConfig& config) {
         fs::remove(config.cachePath + "/" + name, ec);
         if (ec) LOG_WARN("ServiceEngine", "Failed to remove " << name << ": " << ec.message());
     }
+    std::error_code ec;
+    for (const auto& entry : fs::directory_iterator(config.cachePath, ec)) {
+        if (ec) break;
+        auto name = entry.path().filename().string();
+        if (name.rfind("index.wal.seg.", 0) == 0 ||
+            name.rfind("content_index.wal.seg.", 0) == 0) {
+            fs::remove(entry.path(), ec);
+            ec.clear();
+        }
+    }
 }
 
 // ═══════════════════════════════════════════════════════

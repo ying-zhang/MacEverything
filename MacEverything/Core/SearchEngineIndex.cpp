@@ -244,6 +244,26 @@ void SearchEngine::removeTrigramsForRecord(uint32_t idx) {
     }
 }
 
+void SearchEngine::removeTrigramsForRecord(uint32_t idx, const char* data, uint16_t len) {
+    if (len == 0) return;
+    auto trigrams = ContentIndex::extractTrigrams(std::string(data, len));
+    std::sort(trigrams.begin(), trigrams.end());
+    trigrams.erase(std::unique(trigrams.begin(), trigrams.end()), trigrams.end());
+    for (Trigram t : trigrams) {
+        auto it = nameTrigramIndex_.find(t);
+        if (it != nameTrigramIndex_.end()) {
+            auto& list = it->second;
+            auto pos = std::lower_bound(list.begin(), list.end(), idx);
+            if (pos != list.end() && *pos == idx) {
+                list.erase(pos);
+            }
+            if (list.empty()) {
+                nameTrigramIndex_.erase(it);
+            }
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Extension index build / add / remove
 // ---------------------------------------------------------------------------

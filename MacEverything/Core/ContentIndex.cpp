@@ -15,7 +15,7 @@
 
 // --- Magic and version for binary persistence ---
 static constexpr char CONTENT_MAGIC[4] = {'M', 'E', 'C', 'I'};
-static constexpr uint32_t CONTENT_FORMAT_VERSION = 2;
+static constexpr uint32_t CONTENT_FORMAT_VERSION = 3;
 
 ContentIndex::ContentIndex() {
     // No default extensions — content indexing is opt-in.
@@ -303,12 +303,14 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
         auto it = fileInfos_.find(fileIndex);
         if (it != fileInfos_.end() && it->second.contentHash == hash) {
             // Content unchanged — update lastModTime so future runs can skip I/O
-            if (modTime > 0 && it->second.lastModTime != modTime) {
+            if ((modTime > 0 && it->second.lastModTime != modTime) ||
+                it->second.fullPath != fullPath) {
                 lock.unlock();
                 std::unique_lock wlock(mutex_);
                 auto wit = fileInfos_.find(fileIndex);
                 if (wit != fileInfos_.end()) {
                     wit->second.lastModTime = modTime;
+                    wit->second.fullPath = fullPath;
                 }
                 return ContentIndexUpdate::Upserted;
             }
@@ -346,6 +348,7 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
 
     // Store file info
     ContentFileInfo info;
+    info.fullPath = fullPath;
     info.contentHash = hash;
     info.trigrams = std::move(trigrams);
     info.lastModTime = modTime;
@@ -440,7 +443,9 @@ std::vector<uint32_t> ContentIndex::getIndexedFileIndices() const {
     return result;
 }
 
-void ContentIndex::insertFileInfo(uint32_t fileIndex, uint64_t contentHash, std::vector<Trigram>&& trigrams, time_t lastModTime) {
+void ContentIndex::insertFileInfo(uint32_t fileIndex, uint64_t contentHash,
+                                  std::vector<Trigram>&& trigrams, time_t lastModTime,
+                                  std::string fullPath) {
     std::unique_lock lock(mutex_);
 
     // Remove old if exists
@@ -456,6 +461,7 @@ void ContentIndex::insertFileInfo(uint32_t fileIndex, uint64_t contentHash, std:
     }
 
     ContentFileInfo info;
+    info.fullPath = std::move(fullPath);
     info.contentHash = contentHash;
     info.trigrams = std::move(trigrams);
     info.lastModTime = lastModTime;
@@ -622,10 +628,13 @@ bool ContentIndex::saveToFile(const std::string& path) const {
     uint32_t fileCount = static_cast<uint32_t>(fileInfos_.size());
     safeWrite(&fileCount, sizeof(uint32_t), 1);
 
-    // Per-file: fileIndex(4) + contentHash(8) + trigramCount(4) + trigrams(4 each) + lastModTime(8)
+    // Per-file: fallback fileIndex + stable path + content metadata.
     for (const auto& [fileIndex, info] : fileInfos_) {
         if (!ok) break;
         safeWrite(&fileIndex, sizeof(uint32_t), 1);
+        uint32_t pathLen = static_cast<uint32_t>(info.fullPath.size());
+        safeWrite(&pathLen, sizeof(uint32_t), 1);
+        if (pathLen > 0) safeWrite(info.fullPath.data(), 1, pathLen);
         safeWrite(&info.contentHash, sizeof(uint64_t), 1);
         uint32_t triCount = static_cast<uint32_t>(info.trigrams.size());
         safeWrite(&triCount, sizeof(uint32_t), 1);
@@ -653,7 +662,7 @@ bool ContentIndex::saveToFile(const std::string& path) const {
     return true;
 }
 
-bool ContentIndex::loadFromFile(const std::string& path) {
+bool ContentIndex::loadFromFile(const std::string& path, const IndexResolver& resolveIndex) {
     FILE* f = fopen(path.c_str(), "rb");
     if (!f) return false;
 
@@ -665,7 +674,7 @@ bool ContentIndex::loadFromFile(const std::string& path) {
     }
 
     uint32_t version;
-    if (!readU32(f, version) || version > CONTENT_FORMAT_VERSION) {
+    if (!readU32(f, version) || version != CONTENT_FORMAT_VERSION) {
         fclose(f);
         return false;
     }
@@ -690,10 +699,20 @@ bool ContentIndex::loadFromFile(const std::string& path) {
 
     for (uint32_t i = 0; i < fileCount; i++) {
         uint32_t fileIndex;
+        uint32_t pathLen;
         uint64_t contentHash;
         uint32_t triCount;
 
-        if (!readU32(f, fileIndex) || !readU64(f, contentHash) || !readU32(f, triCount)) {
+        if (!readU32(f, fileIndex) || !readU32(f, pathLen) || pathLen > 1024 * 1024) {
+            fclose(f);
+            return false;
+        }
+        std::string fullPath(pathLen, '\0');
+        if (pathLen > 0 && fread(fullPath.data(), 1, pathLen, f) != pathLen) {
+            fclose(f);
+            return false;
+        }
+        if (!readU64(f, contentHash) || !readU32(f, triCount)) {
             fclose(f);
             return false;
         }
@@ -710,9 +729,9 @@ bool ContentIndex::loadFromFile(const std::string& path) {
             return false;
         }
 
-        // V2: read lastModTime (version 1 compat: default to 0)
+        // V3 retains the V2 modification time field.
         time_t lastModTime = 0;
-        if (version >= 2) {
+        {
             int64_t modTime64;
             if (fread(&modTime64, sizeof(int64_t), 1, f) != 1) {
                 fclose(f);
@@ -721,17 +740,20 @@ bool ContentIndex::loadFromFile(const std::string& path) {
             lastModTime = static_cast<time_t>(modTime64);
         }
 
-        // H4 fix: Use push_back during bulk load — O(1) per insert instead of
-        // O(N) sorted insertion. Final sort+dedup happens below after all entries.
-        for (Trigram tri : trigrams) {
-            newInvertedIndex[tri].push_back(fileIndex);
-        }
-
         ContentFileInfo info;
+        info.fullPath = fullPath;
         info.contentHash = contentHash;
         info.trigrams = std::move(trigrams);
         info.lastModTime = lastModTime;
-        newFileInfos[fileIndex] = std::move(info);
+        uint32_t resolvedIndex = fileIndex;
+        if (resolveIndex) {
+            resolvedIndex = resolveIndex(fullPath);
+            if (resolvedIndex == UINT32_MAX) continue;
+        }
+        newFileInfos[resolvedIndex] = std::move(info);
+        for (Trigram tri : newFileInfos[resolvedIndex].trigrams) {
+            newInvertedIndex[tri].push_back(resolvedIndex);
+        }
     }
 
     fclose(f);

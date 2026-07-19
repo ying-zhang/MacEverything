@@ -17,6 +17,23 @@
 ///   Comparison: >2024-01-01, >=yesterday, <2024-06, <=today
 ///   Range:      2023..2024, 2024-01..2024-06, yesterday..today
 class QueryDateParser {
+    static int safeStoi(const std::string& s, bool& ok) {
+        try { ok = true; return std::stoi(s); }
+        catch (...) { ok = false; return 0; }
+    }
+
+    static time_t safeMktime(struct tm* t) {
+        // The caller may have changed a calendar field after a previous
+        // mktime() call.  Ask libc to recalculate DST for the new date.
+        t->tm_isdst = -1;
+        time_t result = mktime(t);
+        return (result == static_cast<time_t>(-1)) ? 0 : result;
+    }
+
+    static uint64_t toEpoch(time_t t) {
+        return (t < 0) ? 0 : static_cast<uint64_t>(t);
+    }
+
 public:
     /// Parse a date filter argument and populate node fields.
     /// Uses RANGE op with numVal1=start, numVal2=end (both inclusive, epoch seconds).
@@ -32,8 +49,8 @@ public:
             auto [ls, le] = parseDateExpr(left);
             auto [rs, re] = parseDateExpr(right);
             node.op = CompareOp::RANGE;
-            node.numVal1 = static_cast<uint64_t>(ls);   // range start
-            node.numVal2 = static_cast<uint64_t>(re);    // range end
+            node.numVal1 = toEpoch(ls);   // range start
+            node.numVal2 = toEpoch(re);   // range end
             return;
         }
 
@@ -63,23 +80,18 @@ public:
             // For GT/GE: compare against the start of the period
             // For LT/LE: compare against the end of the period
             if (cmpOp == CompareOp::GT) {
-                // >today means after end of today
-                node.numVal1 = static_cast<uint64_t>(end);
+                node.numVal1 = toEpoch(end);
             } else if (cmpOp == CompareOp::GE) {
-                // >=today means from start of today onwards
-                node.numVal1 = static_cast<uint64_t>(start);
+                node.numVal1 = toEpoch(start);
             } else if (cmpOp == CompareOp::LT) {
-                // <today means before start of today
-                node.numVal1 = static_cast<uint64_t>(start);
+                node.numVal1 = toEpoch(start);
             } else { // LE
-                // <=today means up to end of today
-                node.numVal1 = static_cast<uint64_t>(end);
+                node.numVal1 = toEpoch(end);
             }
         } else {
-            // No operator = range match (within the period)
             node.op = CompareOp::RANGE;
-            node.numVal1 = static_cast<uint64_t>(start);
-            node.numVal2 = static_cast<uint64_t>(end);
+            node.numVal1 = toEpoch(start);
+            node.numVal2 = toEpoch(end);
         }
     }
 
@@ -114,9 +126,9 @@ private:
         struct tm t;
         localtime_r(&now, &t);
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-        time_t end = mktime(&t);
+        time_t end = safeMktime(&t);
         return {start, end};
     }
 
@@ -126,9 +138,9 @@ private:
         localtime_r(&now, &t);
         t.tm_mday -= 1;
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t); // mktime normalizes
+        time_t start = safeMktime(&t); // mktime normalizes
         t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-        time_t end = mktime(&t);
+        time_t end = safeMktime(&t);
         return {start, end};
     }
 
@@ -139,10 +151,10 @@ private:
         int wday = t.tm_wday; // 0=Sun
         t.tm_mday -= wday;    // back to Sunday
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         t.tm_mday += 6; // Saturday
         t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-        time_t end = mktime(&t);
+        time_t end = safeMktime(&t);
         return {start, end};
     }
 
@@ -153,10 +165,10 @@ private:
         int wday = t.tm_wday;
         t.tm_mday -= wday + 7; // back to last Sunday
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         t.tm_mday += 6;
         t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-        time_t end = mktime(&t);
+        time_t end = safeMktime(&t);
         return {start, end};
     }
 
@@ -166,10 +178,10 @@ private:
         localtime_r(&now, &t);
         t.tm_mday = 1;
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         // End of month: go to 1st of next month - 1 second
         t.tm_mon += 1;
-        time_t nextMonth = mktime(&t);
+        time_t nextMonth = safeMktime(&t);
         time_t end = nextMonth - 1;
         return {start, end};
     }
@@ -181,9 +193,9 @@ private:
         t.tm_mon -= 1;
         t.tm_mday = 1;
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         t.tm_mon += 1;
-        time_t nextMonth = mktime(&t);
+        time_t nextMonth = safeMktime(&t);
         time_t end = nextMonth - 1;
         return {start, end};
     }
@@ -194,10 +206,10 @@ private:
         localtime_r(&now, &t);
         t.tm_mon = 0; t.tm_mday = 1;
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         t.tm_mon = 11; t.tm_mday = 31;
         t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-        time_t end = mktime(&t);
+        time_t end = safeMktime(&t);
         return {start, end};
     }
 
@@ -208,10 +220,10 @@ private:
         t.tm_year -= 1;
         t.tm_mon = 0; t.tm_mday = 1;
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         t.tm_mon = 11; t.tm_mday = 31;
         t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-        time_t end = mktime(&t);
+        time_t end = safeMktime(&t);
         return {start, end};
     }
 
@@ -226,7 +238,9 @@ private:
 
         if (numEnd == 0) return {0, 0};
 
-        int n = std::stoi(s.substr(0, numEnd));
+        bool ok = false;
+        int n = safeStoi(s.substr(0, numEnd), ok);
+        if (!ok || n <= 0) return {0, 0};
         std::string unit = s.substr(numEnd);
 
         time_t now = ::time(nullptr);
@@ -246,7 +260,7 @@ private:
         }
 
         t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
-        time_t start = mktime(&t);
+        time_t start = safeMktime(&t);
         return {start, now};
     }
 
@@ -257,44 +271,50 @@ private:
 
         // Check for YYYY-MM-DD
         if (s.size() >= 10 && s[4] == '-' && s[7] == '-') {
-            int y = std::stoi(s.substr(0, 4));
-            int m = std::stoi(s.substr(5, 2));
-            int d = std::stoi(s.substr(8, 2));
+            bool ok1, ok2, ok3;
+            int y = safeStoi(s.substr(0, 4), ok1);
+            int m = safeStoi(s.substr(5, 2), ok2);
+            int d = safeStoi(s.substr(8, 2), ok3);
+            if (!ok1 || !ok2 || !ok3) return {0, 0};
             struct tm t = {};
             t.tm_year = y - 1900; t.tm_mon = m - 1; t.tm_mday = d;
             t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
             t.tm_isdst = -1;
-            time_t start = mktime(&t);
+            time_t start = safeMktime(&t);
             t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-            time_t end = mktime(&t);
+            time_t end = safeMktime(&t);
             return {start, end};
         }
 
         // Check for YYYY-MM
         if (s.size() >= 7 && s[4] == '-') {
-            int y = std::stoi(s.substr(0, 4));
-            int m = std::stoi(s.substr(5, 2));
+            bool ok1, ok2;
+            int y = safeStoi(s.substr(0, 4), ok1);
+            int m = safeStoi(s.substr(5, 2), ok2);
+            if (!ok1 || !ok2) return {0, 0};
             struct tm t = {};
             t.tm_year = y - 1900; t.tm_mon = m - 1; t.tm_mday = 1;
             t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
             t.tm_isdst = -1;
-            time_t start = mktime(&t);
+            time_t start = safeMktime(&t);
             t.tm_mon += 1; // first of next month
-            time_t end = mktime(&t) - 1;
+            time_t end = safeMktime(&t) - 1;
             return {start, end};
         }
 
         // YYYY only
         if (s.size() >= 4 && std::isdigit(static_cast<unsigned char>(s[0]))) {
-            int y = std::stoi(s.substr(0, 4));
+            bool ok;
+            int y = safeStoi(s.substr(0, 4), ok);
+            if (!ok) return {0, 0};
             struct tm t = {};
             t.tm_year = y - 1900; t.tm_mon = 0; t.tm_mday = 1;
             t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
             t.tm_isdst = -1;
-            time_t start = mktime(&t);
+            time_t start = safeMktime(&t);
             t.tm_mon = 11; t.tm_mday = 31;
             t.tm_hour = 23; t.tm_min = 59; t.tm_sec = 59;
-            time_t end = mktime(&t);
+            time_t end = safeMktime(&t);
             return {start, end};
         }
 

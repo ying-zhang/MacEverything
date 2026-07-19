@@ -15,6 +15,17 @@ static void runWalRenameChainTest() {
     std::string tmpDir = "/tmp/maceverything_wal_rename_chain_" + std::to_string(getpid());
     fs::create_directories(tmpDir);
 
+    auto countWalFiles = [](const std::string& base) {
+        size_t count = 0;
+        fs::path basePath(base);
+        const auto baseName = basePath.filename().string();
+        for (const auto& entry : fs::directory_iterator(basePath.parent_path())) {
+            const auto name = entry.path().filename().string();
+            if (name == baseName || name.rfind(baseName + ".seg.", 0) == 0) count++;
+        }
+        return count;
+    };
+
     // --- Test ContentIndexPersistence compact rename ---
     {
         auto contentIndex = std::make_shared<ContentIndex>();
@@ -33,8 +44,7 @@ static void runWalRenameChainTest() {
         // First compact — should succeed cleanly (force=true to bypass threshold)
         persistence.compact(true);
         check(fs::exists(basePath), "RC1: base file created after first compact");
-        // WAL should be at standard path, not .new
-        check(fs::exists(walPath), "RC1: WAL at standard path after compact");
+        check(countWalFiles(walPath) == 1, "RC1: exactly one active WAL after compact");
         check(!fs::exists(walPath + ".new"), "RC1: no leftover .wal.new after compact");
 
         // Add another mutation before second compact
@@ -46,7 +56,7 @@ static void runWalRenameChainTest() {
         // closeAndDelete on old WAL would unlink the new WAL's file
         persistence.compact(true);
         check(fs::exists(basePath), "RC2: base file still exists after second compact");
-        check(fs::exists(walPath), "RC2: WAL at standard path after second compact");
+        check(countWalFiles(walPath) == 1, "RC2: exactly one active WAL after second compact");
         check(!fs::exists(walPath + ".new"), "RC2: no leftover .wal.new after second compact");
 
         // Add another mutation before third compact
@@ -55,7 +65,7 @@ static void runWalRenameChainTest() {
 
         // Third compact — ensure no accumulated failures
         persistence.compact(true);
-        check(fs::exists(walPath), "RC3: WAL at standard path after third compact");
+        check(countWalFiles(walPath) == 1, "RC3: exactly one active WAL after third compact");
         check(!fs::exists(walPath + ".new"), "RC3: no leftover .wal.new after third compact");
     }
 
@@ -82,7 +92,7 @@ static void runWalRenameChainTest() {
 
         // Multiple compacts in sequence — all should succeed
         persistence.compact(meta, /*force=*/true);
-        check(fs::exists(walPath), "RI1: WAL at standard path after first compact");
+        check(countWalFiles(walPath) == 1, "RI1: exactly one active WAL after first compact");
         check(!fs::exists(walPath + ".new"), "RI1: no leftover .wal.new");
 
         // Add mutation before second compact
@@ -96,7 +106,7 @@ static void runWalRenameChainTest() {
 
         meta.lastEventId = 2;
         persistence.compact(meta, /*force=*/true);
-        check(fs::exists(walPath), "RI2: WAL at standard path after second compact");
+        check(countWalFiles(walPath) == 1, "RI2: exactly one active WAL after second compact");
         check(!fs::exists(walPath + ".new"), "RI2: no leftover .wal.new");
 
         // Add mutation before third compact
@@ -110,7 +120,7 @@ static void runWalRenameChainTest() {
 
         meta.lastEventId = 3;
         persistence.compact(meta, /*force=*/true);
-        check(fs::exists(walPath), "RI3: WAL at standard path after third compact");
+        check(countWalFiles(walPath) == 1, "RI3: exactly one active WAL after third compact");
         check(!fs::exists(walPath + ".new"), "RI3: no leftover .wal.new");
     }
 

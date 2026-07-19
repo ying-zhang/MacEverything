@@ -102,6 +102,40 @@ static void runContentCompactThresholdTests() {
         check(!fs::exists(basePath), "ContentCompactThreshold: second compact skips (WAL fresh)");
     }
 
+    // Test 6: retained segments force a retry even when the active segment is below threshold.
+    {
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+
+        {
+            ContentIndexWAL baseWal;
+            check(baseWal.open(walPath), "ContentCompactThreshold: pending base WAL opens");
+            check(baseWal.appendAdd(1, "/tmp/pending.txt", 0xEE, {100}),
+                  "ContentCompactThreshold: pending base WAL entry appended");
+            baseWal.close();
+        }
+        {
+            ContentIndexWAL activeWal;
+            check(activeWal.open(walPath + ".seg.1"),
+                  "ContentCompactThreshold: pending active segment opens");
+            activeWal.close();
+        }
+
+        auto ci = std::make_shared<ContentIndex>();
+        ContentIndexPersistence cip(ci, basePath, walPath);
+        check(cip.load(), "ContentCompactThreshold: pending segment state loads");
+        cip.attachWAL();
+        cip.compact(false);
+
+        size_t segmentCount = 0;
+        for (const auto& entry : fs::directory_iterator(tmpDir)) {
+            const auto name = entry.path().filename().string();
+            if (name == "content.wal" || name.rfind("content.wal.seg.", 0) == 0) segmentCount++;
+        }
+        check(fs::exists(basePath), "ContentCompactThreshold: pending segments trigger base rewrite");
+        check(segmentCount == 1, "ContentCompactThreshold: pending segments collapse to one active WAL");
+    }
+
     // Cleanup
     fs::remove_all(tmpDir);
 

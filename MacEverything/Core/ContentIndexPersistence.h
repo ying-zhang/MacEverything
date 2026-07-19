@@ -20,17 +20,24 @@ public:
     /// Open WAL file for appending.
     bool open(const std::string& walPath);
 
-    /// Append an add entry: fileIndex + contentHash + trigrams + lastModTime.
-    bool appendAdd(uint32_t fileIndex, uint64_t contentHash, const std::vector<Trigram>& trigrams, time_t lastModTime = 0);
+    /// Append an add entry with a stable path identity.
+    bool appendAdd(uint32_t fileIndex, const std::string& fullPath, uint64_t contentHash,
+                   const std::vector<Trigram>& trigrams, time_t lastModTime = 0);
+    bool appendAdd(uint32_t fileIndex, uint64_t contentHash,
+                   const std::vector<Trigram>& trigrams, time_t lastModTime = 0) {
+        return appendAdd(fileIndex, {}, contentHash, trigrams, lastModTime);
+    }
 
     /// Append a remove entry: fileIndex.
-    bool appendRemove(uint32_t fileIndex);
+    bool appendRemove(uint32_t fileIndex, const std::string& fullPath);
+    bool appendRemove(uint32_t fileIndex) { return appendRemove(fileIndex, {}); }
 
     /// Read all valid entries from a WAL file.
     struct Entry {
         enum Op : uint8_t { Add = 1, Remove = 2 };
         Op op;
         uint32_t fileIndex;
+        std::string fullPath;
         uint64_t contentHash; // only for Add
         std::vector<Trigram> trigrams; // only for Add
         time_t lastModTime = 0; // only for Add
@@ -55,7 +62,7 @@ public:
 
     /// H-3: WAL file header constants
     static constexpr uint32_t kMagic   = 0x43574C31; // "CWL1"
-    static constexpr uint32_t kVersion = 1;
+    static constexpr uint32_t kVersion = 2;
 
     /// Tracking accessors (aligned with IndexWAL)
     uint64_t entryCount() const { return entryCount_; }
@@ -79,7 +86,8 @@ class ContentIndexPersistence {
 public:
     ContentIndexPersistence(std::shared_ptr<ContentIndex> index,
                             const std::string& basePath,
-                            const std::string& walPath);
+                            const std::string& walPath,
+                            ContentIndex::IndexResolver resolveIndex = {});
     ~ContentIndexPersistence();
 
     ContentIndexPersistence(const ContentIndexPersistence&) = delete;
@@ -106,8 +114,14 @@ public:
     void stopAutoCompactionAndWait();
 
     /// WAL accessors for the bridge layer to log mutations.
-    void walAppendAdd(uint32_t fileIndex, uint64_t contentHash, const std::vector<Trigram>& trigrams, time_t lastModTime = 0);
-    void walAppendRemove(uint32_t fileIndex);
+    void walAppendAdd(uint32_t fileIndex, const std::string& fullPath, uint64_t contentHash,
+                      const std::vector<Trigram>& trigrams, time_t lastModTime = 0);
+    void walAppendAdd(uint32_t fileIndex, uint64_t contentHash,
+                      const std::vector<Trigram>& trigrams, time_t lastModTime = 0) {
+        walAppendAdd(fileIndex, {}, contentHash, trigrams, lastModTime);
+    }
+    void walAppendRemove(uint32_t fileIndex, const std::string& fullPath);
+    void walAppendRemove(uint32_t fileIndex) { walAppendRemove(fileIndex, {}); }
 
     const std::string& basePath() const { return basePath_; }
     const std::string& walPath() const { return walPath_; }
@@ -120,6 +134,8 @@ private:
     std::shared_ptr<ContentIndexWAL> wal_;
     std::string basePath_;
     std::string walPath_;
+    ContentIndex::IndexResolver resolveIndex_;
+    std::mutex compactionMutex_;
     std::mutex walMutex_;
     dispatch_queue_t compactionQueue_ = nullptr;
     std::atomic<bool> compactionScheduled_{false};

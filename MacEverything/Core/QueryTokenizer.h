@@ -180,7 +180,7 @@ private:
             // Phase 4 macros
             "audio", "video", "pic", "doc", "exe", "zip",
             // Content
-            "content",
+            "content", "infile",
             // Type shorthand
             "type",
         };

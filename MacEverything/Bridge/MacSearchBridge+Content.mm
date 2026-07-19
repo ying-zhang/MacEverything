@@ -13,12 +13,13 @@
     std::string key([keyword UTF8String]);
     if (key.empty()) return @[];
 
+    auto service = _serviceEngine;
     auto matches = contentIndex->query(key, maxResults,
-        [engine](uint32_t fileIndex, std::string& fullPath) {
+        [engine, service](uint32_t fileIndex, std::string& fullPath) {
             auto record = engine->getRecord(fileIndex);
             if (record.type != 1) return false;
             fullPath = SearchEngine::makeFullPath(record.path, record.name);
-            return true;
+            return service->isContentPathAllowed(fullPath);
         });
     if (matches.empty()) return @[];
 

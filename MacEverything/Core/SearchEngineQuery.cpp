@@ -244,15 +244,14 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
     for (uint32_t dirIdx : dirIndices) {
         if (cancel.cancelled()) return;
 
-        // Build the full directory path: parentPath + "/" + dirName
-        std::string parentPath = pathPool_.str(pathIndices_[dirIdx]);
-        std::string fullDirPath = parentPath;
+        // Build the full lowered directory path: lowerParentPath + "/" + lowerDirName
+        std::string fullDirPath = lowerPathStr(pathPool_, pathIndices_[dirIdx]);
         if (!fullDirPath.empty() && fullDirPath.back() != '/') fullDirPath += '/';
         fullDirPath += std::string(namePool_.data(dirIdx), namePool_.length(dirIdx));
 
-        // Look up this full path in pathLookup_ to find its pathPool index
-        auto it = pathLookup_.find(fullDirPath);
-        if (it == pathLookup_.end()) continue;
+        // Look up in lowerPathLookup_ (case-insensitive, matches namePool_)
+        auto it = lowerPathLookup_.find(fullDirPath);
+        if (it == lowerPathLookup_.end()) continue;
 
         uint32_t childPathIdx = it->second;
         if (childPathIdx < pathIdxToRecords_.size()) {
