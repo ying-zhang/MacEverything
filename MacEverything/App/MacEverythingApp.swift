@@ -47,6 +47,13 @@ struct MacEverythingApp: App {
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Toggle(L10n.tr("Match Filename"), isOn: $searchOptions.isMatchFilename)
                     .keyboardShortcut("f", modifiers: [.command, .shift])
+
+                Divider()
+
+                Button(L10n.tr("Copy Path")) {
+                    SearchViewModel.copySelectedPathsInActiveWindow()
+                }
+                .keyboardShortcut("c", modifiers: [.command, .option])
             }
 
             CommandGroup(after: .toolbar) {

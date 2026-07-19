@@ -345,7 +345,7 @@ struct HighlightedSearchField: NSViewRepresentable {
             guard let textStorage = textView.textStorage else { return }
             let fullRange = NSRange(location: 0, length: textStorage.length)
             let text = textStorage.string
-            let font = ThemeManager.shared.searchFieldNSFont
+            let font = textView.font ?? NSFont.systemFont(ofSize: 26)
 
             // Reset to default style
             textStorage.beginEditing()
@@ -435,7 +435,7 @@ class HighlightedNSTextView: NSTextView {
         // Draw ghost suggestion behind the real text (before super.draw paints the typed text)
         if let ghost = ghostSuggestion, !ghost.isEmpty, !string.isEmpty {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: font ?? ThemeManager.shared.searchFieldNSFont,
+                .font: font ?? NSFont.systemFont(ofSize: 26),
                 .foregroundColor: NSColor.secondaryLabelColor.withAlphaComponent(0.4),
             ]
             let ghostStr = NSAttributedString(string: ghost, attributes: attrs)
@@ -452,7 +452,7 @@ class HighlightedNSTextView: NSTextView {
         // Draw placeholder when empty
         if string.isEmpty && !placeholderString.isEmpty {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: font ?? ThemeManager.shared.searchFieldNSFont,
+                .font: font ?? NSFont.systemFont(ofSize: 26),
                 .foregroundColor: NSColor.placeholderTextColor,
             ]
             let placeholder = NSAttributedString(string: placeholderString, attributes: attrs)

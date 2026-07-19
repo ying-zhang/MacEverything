@@ -202,7 +202,7 @@ struct ResultRow: View {
             Button(L10n.tr("Rename")) { startRename() }
                 .disabled(actionItems.count != 1)
             Divider()
-            Button(L10n.tr("Copy File")) { copyFiles(actionItems) }
+            Button(L10n.tr("Copy Path")) { copyFiles(actionItems) }
             Button(L10n.tr("Copy Filename")) { copyFilenames(actionItems) }
             Divider()
             Button(L10n.tr("Move to Trash")) { trashFiles(actionItems) }

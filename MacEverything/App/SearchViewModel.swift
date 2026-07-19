@@ -494,6 +494,36 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    // MARK: - Active-window bridge for menu commands
+
+    /// Maps each search window to its view model so menu-bar commands can reach
+    /// the currently active window's selection. Keys (windows) are held strongly,
+    /// values (view models) weakly - the window owns the view model via its
+    /// hosting controller, so there is no retain cycle.
+    private static let activeByWindow: NSMapTable<NSWindow, AnyObject> =
+        NSMapTable<NSWindow, AnyObject>.strongToWeakObjects()
+
+    /// Called by ContentView once it knows its hosting window.
+    func registerActiveWindow(_ window: NSWindow) {
+        Self.activeByWindow.setObject(self, forKey: window)
+    }
+
+    func unregisterActiveWindow(_ window: NSWindow) {
+        if (Self.activeByWindow.object(forKey: window) as? SearchViewModel) === self {
+            Self.activeByWindow.removeObject(forKey: window)
+        }
+    }
+
+    /// Invoked by the menu-bar command: locates the view model for the
+    /// frontmost search window and copies its selected paths.
+    @MainActor
+    static func copySelectedPathsInActiveWindow() {
+        let window = NSApp.keyWindow ?? NSApp.mainWindow
+        guard let window else { return }
+        let vm = activeByWindow.object(forKey: window) as? SearchViewModel
+        vm?.copySelectedFile()
+    }
+
     private var maxResults: UInt32 {
         UInt32(settings.snapshot.maxResults)
     }
