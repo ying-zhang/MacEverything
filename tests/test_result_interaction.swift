@@ -19,6 +19,13 @@ private func expect(_ actual: Int?, _ expected: Int?, _ message: String) {
     }
 }
 
+private func expect(_ actual: [String], _ expected: [String], _ message: String) {
+    if actual != expected {
+        fputs("FAIL: \(message): expected \(expected), got \(actual)\n", stderr)
+        failures += 1
+    }
+}
+
 @main
 struct ResultInteractionTests {
     static func main() {
@@ -84,6 +91,29 @@ struct ResultInteractionTests {
                nil, "left does not create a selection")
         expect(GridNavigation.leftIndex(currentIndex: 3, itemCount: 3),
                nil, "left rejects an invalid selection")
+
+        var filters = AdvancedFilterState()
+        expect(filters.queryTokens, [], "default advanced filters add no query tokens")
+        filters.fileSize = .oneToHundredMB
+        filters.modifiedDate = .lastSevenDays
+        expect(filters.queryTokens, ["size:1mb..100mb", "dm:last7days"],
+               "size and modified-date presets compose as engine filters")
+
+        filters.fileSize = .custom
+        filters.customMinimumSizeMB = 500
+        filters.customMaximumSizeMB = 10
+        expect(filters.queryTokens.first.map { [$0] } ?? [], ["size:10mb..500mb"],
+               "custom size range normalizes reversed bounds")
+
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = TimeZone(secondsFromGMT: 0)!
+        let from = calendar.date(from: DateComponents(year: 2026, month: 7, day: 20, hour: 12))!
+        let to = calendar.date(from: DateComponents(year: 2026, month: 7, day: 1, hour: 12))!
+        filters.customModifiedFrom = from
+        filters.customModifiedTo = to
+        filters.modifiedDate = .custom
+        expect(filters.queryTokens.last.map { [$0] } ?? [], ["dm:2026-07-01..2026-07-20"],
+               "custom date range normalizes reversed bounds")
 
         if failures > 0 {
             exit(1)

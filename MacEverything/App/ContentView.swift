@@ -123,67 +123,6 @@ struct ContentView: View {
 
             Divider()
 
-            // Status bar
-            HStack(spacing: 8) {
-                if service.isScanning {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text(L10n.tr("Scanning... %d items scanned", Int(service.scannedCount)))
-                        .foregroundColor(.secondary)
-                } else if service.scanComplete {
-                    if service.isSyncing {
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(L10n.tr("Syncing..."))
-                            .foregroundColor(.orange)
-                    } else if service.isMonitoring {
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 6, height: 6)
-                        Text(L10n.tr("Live"))
-                            .foregroundColor(.green)
-                            .fontWeight(.medium)
-                    }
-                    Text(L10n.tr("%d files indexed (memory %@)",
-                                 Int(service.totalRecords),
-                                 formattedIndexMemory(service.indexMemoryBytes)))
-                        .foregroundColor(.secondary)
-                        .accessibilityIdentifier("indexedCount")
-                    if service.isContentIndexing, let progress = service.contentIndexProgress {
-                        Text("·")
-                            .foregroundColor(.secondary)
-                        ProgressView()
-                            .controlSize(.small)
-                        Text(L10n.tr("Content indexing %d/%d", Int(progress.indexed), Int(progress.total)))
-                            .foregroundColor(.orange)
-                    }
-                    if viewModel.totalMatches > 0 {
-                        Text("·")
-                            .foregroundColor(.secondary)
-                        if viewModel.resultLimitReached {
-                            Text(L10n.tr("More than %d results", viewModel.effectiveMaxResults))
-                                .foregroundColor(.secondary)
-                                .accessibilityIdentifier("matchCount")
-                        } else {
-                            Text(L10n.tr("%d matches", viewModel.totalMatches))
-                                .foregroundColor(.secondary)
-                                .accessibilityIdentifier("matchCount")
-                        }
-                        Text("·")
-                            .foregroundColor(.secondary)
-                        Text(String(format: "%.1fms", viewModel.queryTimeMs))
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-            .font(.callout)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(Color(nsColor: .controlBackgroundColor))
-            .accessibilityIdentifier("statusBar")
-
-            Divider()
-
             // Results list
             if service.isScanning {
                 VStack(spacing: 12) {
@@ -265,20 +204,6 @@ struct ContentView: View {
                     }
                     .id(scrollViewID)
                     .accessibilityIdentifier("contentResultsList")
-
-                    if viewModel.totalMatches > 0 {
-                        HStack {
-                            Spacer()
-                            Text(viewModel.resultLimitReached
-                                 ? L10n.tr("More than %d results", viewModel.effectiveMaxResults)
-                                 : L10n.tr("%d content matches", viewModel.contentResults.count))
-                                .font(.callout)
-                                .foregroundColor(.secondary)
-                                .padding(8)
-                            Spacer()
-                        }
-                        .background(Color(nsColor: .controlBackgroundColor))
-                    }
                 }
             } else if viewModel.displayItems.isEmpty && !viewModel.searchText.isEmpty && service.scanComplete {
                 VStack {
@@ -424,21 +349,10 @@ struct ContentView: View {
                         }
                     }
                 }
-
-                if viewModel.totalMatches > 0 {
-                    HStack {
-                        Spacer()
-                        Text(viewModel.resultLimitReached
-                             ? L10n.tr("Result %d, total results limited to %d; add search terms.", viewModel.displayItems.count, viewModel.effectiveMaxResults)
-                             : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
-                            .font(.callout)
-                            .foregroundColor(.secondary)
-                            .padding(8)
-                        Spacer()
-                    }
-                    .background(Color(nsColor: .controlBackgroundColor))
-                }
             }
+
+            Divider()
+            SearchStatusBar(viewModel: viewModel)
         }
         .frame(minWidth: 600, minHeight: 400)
         .background(theme.resolvedBackgroundColor)
@@ -466,6 +380,9 @@ struct ContentView: View {
         }
         .onChange(of: viewModel.pathFilter) {
             viewModel.onPathFilterChanged()
+        }
+        .onChange(of: viewModel.advancedFilters) {
+            viewModel.onAdvancedFiltersChanged()
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(true)
@@ -503,10 +420,6 @@ struct ContentView: View {
         SearchWindowSupport.updateTitle(window, searchText: viewModel.searchText)
     }
 
-    private func formattedIndexMemory(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
-    }
-
     private func handleEscape() {
         if QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared().isVisible {
             QLPreviewPanel.shared().orderOut(nil)
@@ -526,6 +439,242 @@ struct ContentView: View {
             return
         }
         NSApp.hide(nil)
+    }
+}
+
+private struct SearchStatusBar: View {
+    @ObservedObject var viewModel: SearchViewModel
+    @ObservedObject private var service = SearchServiceModel.shared
+    @State private var showingAdvancedFilters = false
+
+    var body: some View {
+        HStack(spacing: 8) {
+            HStack(spacing: 8) {
+                if service.isScanning {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text(L10n.tr("Scanning... %d items scanned", Int(service.scannedCount)))
+                        .foregroundColor(.secondary)
+                } else if service.scanComplete {
+                    if service.isSyncing {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(L10n.tr("Syncing..."))
+                            .foregroundColor(.orange)
+                    } else if service.isMonitoring {
+                        Circle()
+                            .fill(.green)
+                            .frame(width: 6, height: 6)
+                        Text(L10n.tr("Live"))
+                            .foregroundColor(.green)
+                            .fontWeight(.medium)
+                    }
+
+                    Text(L10n.tr("%d files indexed (memory %@)",
+                                 Int(service.totalRecords),
+                                 formattedIndexMemory(service.indexMemoryBytes)))
+                        .foregroundColor(.secondary)
+                        .accessibilityIdentifier("indexedCount")
+
+                    if service.isContentIndexing, let progress = service.contentIndexProgress {
+                        separator
+                        ProgressView()
+                            .controlSize(.small)
+                        Text(L10n.tr("Content indexing %d/%d", Int(progress.indexed), Int(progress.total)))
+                            .foregroundColor(.orange)
+                    }
+
+                    if viewModel.totalMatches > 0 {
+                        separator
+                        resultSummary
+                            .foregroundColor(.secondary)
+                            .accessibilityIdentifier("matchCount")
+                        separator
+                        Text(String(format: "%.1fms", viewModel.queryTimeMs))
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
+            .lineLimit(1)
+            .layoutPriority(1)
+
+            Spacer(minLength: 8)
+
+            HStack(spacing: 4) {
+                Text(L10n.tr("Advanced Filters"))
+                    .foregroundColor((!service.scanComplete || viewModel.isContentSearch)
+                                     ? Color.secondary.opacity(0.5)
+                                     : Color.secondary)
+                    .lineLimit(1)
+
+                Button {
+                    showingAdvancedFilters.toggle()
+                } label: {
+                    HStack(spacing: 3) {
+                        Image(systemName: viewModel.advancedFilters.activeFilterCount > 0
+                              ? "line.3.horizontal.decrease.circle.fill"
+                              : "line.3.horizontal.decrease.circle")
+                        if viewModel.advancedFilters.activeFilterCount > 0 {
+                            Text("\(viewModel.advancedFilters.activeFilterCount)")
+                                .font(.caption2.monospacedDigit())
+                        }
+                    }
+                    .foregroundColor(viewModel.advancedFilters.activeFilterCount > 0 ? .accentColor : .secondary)
+                    .frame(width: 36, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.tr("File Size and Modified Date Filters"))
+                .accessibilityLabel(L10n.tr("File Size and Modified Date Filters"))
+                .accessibilityValue(Text(L10n.tr("%d active filters", viewModel.advancedFilters.activeFilterCount)))
+                .popover(isPresented: $showingAdvancedFilters, arrowEdge: .bottom) {
+                    AdvancedFilterPopover(viewModel: viewModel)
+                }
+            }
+            .disabled(!service.scanComplete || viewModel.isContentSearch)
+            .fixedSize(horizontal: true, vertical: false)
+        }
+        .font(.callout)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 4)
+        .frame(minHeight: 30)
+        .background(Color(nsColor: .controlBackgroundColor))
+        .accessibilityIdentifier("statusBar")
+    }
+
+    @ViewBuilder
+    private var resultSummary: some View {
+        if viewModel.isContentSearch {
+            Text(viewModel.resultLimitReached
+                 ? L10n.tr("More than %d results", viewModel.effectiveMaxResults)
+                 : L10n.tr("%d content matches", viewModel.contentResults.count))
+        } else {
+            Text(viewModel.resultLimitReached
+                 ? L10n.tr("Result %d, total results limited to %d; add search terms.",
+                           viewModel.displayItems.count, viewModel.effectiveMaxResults)
+                 : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
+        }
+    }
+
+    private var separator: some View {
+        Text("·").foregroundColor(.secondary)
+    }
+
+    private func formattedIndexMemory(_ bytes: UInt64) -> String {
+        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+    }
+}
+
+private struct AdvancedFilterPopover: View {
+    @ObservedObject var viewModel: SearchViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(L10n.tr("Advanced Filters"))
+                .font(.headline)
+
+            filterPicker(
+                title: L10n.tr("File Size"),
+                selection: $viewModel.advancedFilters.fileSize,
+                options: AdvancedFileSizeFilter.allCases
+            )
+
+            if viewModel.advancedFilters.fileSize == .custom {
+                HStack(spacing: 8) {
+                    Text(L10n.tr("From"))
+                    TextField("", value: $viewModel.advancedFilters.customMinimumSizeMB, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 64)
+                    Text("MB")
+                        .foregroundColor(.secondary)
+                    Text(L10n.tr("To"))
+                    TextField("", value: $viewModel.advancedFilters.customMaximumSizeMB, format: .number)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 64)
+                    Text("MB")
+                        .foregroundColor(.secondary)
+                }
+            }
+
+            Divider()
+
+            filterPicker(
+                title: L10n.tr("Modified Date"),
+                selection: $viewModel.advancedFilters.modifiedDate,
+                options: AdvancedModifiedDateFilter.allCases
+            )
+
+            if viewModel.advancedFilters.modifiedDate == .custom {
+                VStack(alignment: .leading, spacing: 8) {
+                    DatePicker(L10n.tr("From"),
+                               selection: $viewModel.advancedFilters.customModifiedFrom,
+                               displayedComponents: .date)
+                    DatePicker(L10n.tr("To"),
+                               selection: $viewModel.advancedFilters.customModifiedTo,
+                               displayedComponents: .date)
+                }
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button(L10n.tr("Clear Filters")) {
+                    viewModel.clearAdvancedFilters()
+                }
+                .disabled(viewModel.advancedFilters.activeFilterCount == 0)
+            }
+        }
+        .padding(14)
+        .frame(width: 320)
+    }
+
+    private func filterPicker<Option: Hashable & Identifiable>(
+        title: String,
+        selection: Binding<Option>,
+        options: [Option]
+    ) -> some View where Option.ID == String {
+        HStack {
+            Text(title)
+            Spacer()
+            Picker("", selection: selection) {
+                ForEach(options) { option in
+                    Text(optionTitle(option)).tag(option)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .frame(width: 160)
+        }
+    }
+
+    private func optionTitle<Option>(_ option: Option) -> String {
+        if let size = option as? AdvancedFileSizeFilter { return size.title }
+        if let date = option as? AdvancedModifiedDateFilter { return date.title }
+        return ""
+    }
+}
+
+private extension AdvancedFileSizeFilter {
+    var title: String {
+        switch self {
+        case .any: return L10n.tr("Any Size")
+        case .underOneMB: return L10n.tr("Under 1 MB")
+        case .oneToHundredMB: return L10n.tr("1–100 MB")
+        case .overHundredMB: return L10n.tr("Over 100 MB")
+        case .custom: return L10n.tr("Custom...")
+        }
+    }
+}
+
+private extension AdvancedModifiedDateFilter {
+    var title: String {
+        switch self {
+        case .any: return L10n.tr("Any Date")
+        case .today: return L10n.tr("Today")
+        case .lastSevenDays: return L10n.tr("Last 7 Days")
+        case .lastThirtyDays: return L10n.tr("Last 30 Days")
+        case .custom: return L10n.tr("Custom...")
+        }
     }
 }
 
@@ -593,7 +742,7 @@ private struct ResultDisplayControls: View {
                 step: 1
             )
                 .controlSize(.small)
-                .frame(width: 96)
+                .frame(width: 80)
                 .help(L10n.tr("Thumbnail Size"))
                 .accessibilityLabel(L10n.tr("Thumbnail Size"))
                 .accessibilityValue(Text("\(Int(settings.gridIconSize)) pt"))
@@ -734,6 +883,7 @@ private struct QuickFilterBar: View {
     var body: some View {
         GeometryReader { proxy in
             let showExpandedPathFilter = proxy.size.width >= 980 || showPathFilter || !pathFilter.isEmpty
+            let quickFilterWidth = min(270, max(200, proxy.size.width - 600))
 
             HStack(spacing: 8) {
                 Text(L10n.tr("Quick filter"))
@@ -749,7 +899,7 @@ private struct QuickFilterBar: View {
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
-                .frame(width: 310)
+                .frame(width: quickFilterWidth)
                 .layoutPriority(1)
                 .help(L10n.tr("Quick filters"))
 
@@ -794,12 +944,18 @@ private struct QuickFilterBar: View {
 
                 Spacer(minLength: 8)
 
+                Text(L10n.tr("Display Style"))
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+
                 ResultDisplayControls(isDisabled: displayControlsDisabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(2)
             }
+            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
         }
-        .frame(height: 30)
+        .frame(height: 32)
     }
 }
 

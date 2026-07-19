@@ -1,6 +1,88 @@
 import AppKit
 import SwiftUI
 
+enum AdvancedFileSizeFilter: String, CaseIterable, Identifiable {
+    case any
+    case underOneMB
+    case oneToHundredMB
+    case overHundredMB
+    case custom
+
+    var id: String { rawValue }
+}
+
+enum AdvancedModifiedDateFilter: String, CaseIterable, Identifiable {
+    case any
+    case today
+    case lastSevenDays
+    case lastThirtyDays
+    case custom
+
+    var id: String { rawValue }
+}
+
+struct AdvancedFilterState: Equatable {
+    var fileSize: AdvancedFileSizeFilter = .any
+    var customMinimumSizeMB = 1
+    var customMaximumSizeMB = 100
+    var modifiedDate: AdvancedModifiedDateFilter = .any
+    var customModifiedFrom: Date
+    var customModifiedTo: Date
+
+    init(now: Date = Date(), calendar: Calendar = .current) {
+        customModifiedTo = now
+        customModifiedFrom = calendar.date(byAdding: .day, value: -7, to: now) ?? now
+    }
+
+    var activeFilterCount: Int {
+        (fileSize == .any ? 0 : 1) + (modifiedDate == .any ? 0 : 1)
+    }
+
+    var queryTokens: [String] {
+        var tokens: [String] = []
+
+        switch fileSize {
+        case .any:
+            break
+        case .underOneMB:
+            tokens.append("size:<1mb")
+        case .oneToHundredMB:
+            tokens.append("size:1mb..100mb")
+        case .overHundredMB:
+            tokens.append("size:>100mb")
+        case .custom:
+            let lower = max(0, min(customMinimumSizeMB, customMaximumSizeMB))
+            let upper = max(0, max(customMinimumSizeMB, customMaximumSizeMB))
+            tokens.append("size:\(lower)mb..\(upper)mb")
+        }
+
+        switch modifiedDate {
+        case .any:
+            break
+        case .today:
+            tokens.append("dm:today")
+        case .lastSevenDays:
+            tokens.append("dm:last7days")
+        case .lastThirtyDays:
+            tokens.append("dm:last30days")
+        case .custom:
+            let lower = min(customModifiedFrom, customModifiedTo)
+            let upper = max(customModifiedFrom, customModifiedTo)
+            tokens.append("dm:\(Self.queryDate(lower))..\(Self.queryDate(upper))")
+        }
+
+        return tokens
+    }
+
+    private static func queryDate(_ date: Date) -> String {
+        let components = Calendar.current.dateComponents([.year, .month, .day], from: date)
+        return String(format: "%04d-%02d-%02d",
+                      components.year ?? 1970,
+                      components.month ?? 1,
+                      components.day ?? 1)
+    }
+}
+
 enum ResultClickAction: Equatable {
     case selectExclusive
     case selectRange

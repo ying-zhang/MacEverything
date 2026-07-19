@@ -433,6 +433,7 @@ class SearchViewModel: ObservableObject {
     @Published var renameRequestedItemID: String? = nil
     @Published var quickFilter: QuickFilter = .all
     @Published var pathFilter: String = ""
+    @Published var advancedFilters = AdvancedFilterState()
 
     @Published var highlightHints: [HighlightHint] = []
 
@@ -604,7 +605,13 @@ class SearchViewModel: ObservableObject {
             // Cancel any in-flight queries for this GUI session
             bridge.cancelSession(sessionId)
             if service.scanComplete {
-                if settings.snapshot.startupDisplayMode == .recent {
+                if advancedFilters.activeFilterCount > 0 {
+                    searchTask = Task { @MainActor [weak self] in
+                        try? await Task.sleep(nanoseconds: 20_000_000)
+                        guard !Task.isCancelled, let self else { return }
+                        self.performSearch("")
+                    }
+                } else if settings.snapshot.startupDisplayMode == .recent {
                     // Slight delay so the stale query's dispatch_apply threads
                     // detect the generation change and exit before we compete for the thread pool
                     recentTask = Task { @MainActor [weak self] in
@@ -1164,7 +1171,7 @@ class SearchViewModel: ObservableObject {
         }
         let liveCount = bridge.liveRecordCount()
         AppLogger.info("Search", "refreshForServiceUpdate: liveRecordCount=\(liveCount), searchText='\(searchText)'")
-        if !searchText.isEmpty && !isContentSearch {
+        if (!searchText.isEmpty || advancedFilters.activeFilterCount > 0) && !isContentSearch {
             searchTask?.cancel()
             recentTask?.cancel()
             searchGeneration &+= 1
@@ -1208,7 +1215,7 @@ class SearchViewModel: ObservableObject {
         bridge.cancelSession(sessionId)
         updateHighlightHints()
 
-        if !searchText.isEmpty {
+        if !searchText.isEmpty || advancedFilters.activeFilterCount > 0 {
             showingRecent = false
             allowQuickFilterAutoResetForCurrentSearch = false
             if isContentSearch {
@@ -1251,6 +1258,16 @@ class SearchViewModel: ObservableObject {
         guard service.scanComplete else { return }
         applySortedResults(pageSize: max(loadedCount, Self.pageSize))
         totalMatches = cachedItems.count
+    }
+
+    func onAdvancedFiltersChanged() {
+        guard service.scanComplete, !isContentSearch else { return }
+        allowQuickFilterAutoResetForCurrentSearch = false
+        rerunCurrentSearch()
+    }
+
+    func clearAdvancedFilters() {
+        advancedFilters = AdvancedFilterState()
     }
 
     var hasMoreResults: Bool {
@@ -1377,7 +1394,11 @@ class SearchViewModel: ObservableObject {
 
     private func composedQuery(for keyword: String) -> String {
         var query = searchOptions.buildQuery(keyword)
+        var filterTokens = advancedFilters.queryTokens
         if let token = quickFilter.queryToken {
+            filterTokens.insert(token, at: 0)
+        }
+        for token in filterTokens {
             query = query.trimmingCharacters(in: .whitespacesAndNewlines)
             query = query.isEmpty ? token : "\(query) \(token)"
         }
@@ -1420,7 +1441,10 @@ class SearchViewModel: ObservableObject {
         bridge.cancelSession(sessionId)
         updateHighlightHints()
         if searchText.isEmpty {
-            if settings.snapshot.startupDisplayMode == .recent {
+            if advancedFilters.activeFilterCount > 0 {
+                showingRecent = false
+                performSearch(searchText)
+            } else if settings.snapshot.startupDisplayMode == .recent {
                 loadRecentFiles()
             } else {
                 cachedResults = []
