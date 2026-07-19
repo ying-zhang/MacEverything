@@ -148,19 +148,20 @@
 | [131](131-soa-tombstone-check.md) | performance | SoA Tombstone Check 优化 | 2026-04-19 |
 | [132](132-docs-release-preparation.md) | docs | 公开发布前文档审计与修复 | 2026-04-19 |
 | [146](146-release-1.5.md) | docs | MacEverything 1.5 Release Notes | 2026-05-21 |
+| [147](147-结果显示控件与五档缩放.md) | feature | 结果显示控件与五档缩放 | 2026-07-22 |
 
 ## 统计
 
 | 类型 | 数量 |
 |------|------|
 | bugfix | 50 |
-| feature | 33 |
+| feature | 34 |
 | performance | 31 |
 | refactor | 17 |
 | test | 5 |
 | docs | 2 |
 | chore | 1 |
-| **合计** | **139 条 (132 个编号, 7 组重复编号各 2 条)** |
+| **合计** | **140 条 (133 个编号, 7 组重复编号各 2 条)** |
 
 ---
 
@@ -172,3 +173,4 @@
 | 2026-04-17 | 11 |
 | 2026-04-18 | 22 |
 | 2026-04-19 | 38 |
+| 2026-07-22 | 1 |

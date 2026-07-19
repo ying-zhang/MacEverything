@@ -4,6 +4,10 @@ import AppKit
 import os
 
 struct FileItem: Identifiable {
+    static let fileTypeRegular: UInt8 = 1
+    static let fileTypeDirectory: UInt8 = 2
+    static let fileTypeApplication: UInt8 = 5
+
     let id: String      // path-based stable ID
     let index: UInt32   // engine index for record lookup
     let name: String
@@ -16,10 +20,17 @@ struct FileItem: Identifiable {
         (path as NSString).appendingPathComponent(name)
     }
 
+    var isRegularFile: Bool { type == Self.fileTypeRegular }
+    var isFolder: Bool { type == Self.fileTypeDirectory }
+    var isApplication: Bool {
+        // Preserve app handling for symlinked or legacy records not classified as type 5.
+        type == Self.fileTypeApplication || name.lowercased().hasSuffix(".app")
+    }
+
     var fileExtension: String {
-        if type == 2 { return "" }
+        if isFolder { return "" }
         let ext = (name as NSString).pathExtension.lowercased()
-        if ext.isEmpty, name.hasSuffix(".app") { return "app" }
+        if ext.isEmpty, isApplication { return "app" }
         return ext
     }
 }
@@ -28,7 +39,6 @@ enum QuickFilter: String, CaseIterable, Identifiable {
     case all
     case files
     case folders
-    case apps
     case documents
     case images
     case code
@@ -41,7 +51,6 @@ enum QuickFilter: String, CaseIterable, Identifiable {
         case .all: return L10n.tr("All")
         case .files: return L10n.tr("Files")
         case .folders: return L10n.tr("Folders")
-        case .apps: return L10n.tr("Apps")
         case .documents: return L10n.tr("Docs")
         case .images: return L10n.tr("Images")
         case .code: return L10n.tr("Code")
@@ -54,7 +63,6 @@ enum QuickFilter: String, CaseIterable, Identifiable {
         case .all: return nil
         case .files: return "type:file"
         case .folders: return "type:folder"
-        case .apps: return "ext:app"
         case .documents: return "doc:"
         case .images: return "pic:"
         case .code: return "ext:swift;h;m;mm;cpp;c;hpp;rs;go;py;js;ts;tsx;jsx;java;kt;rb;php;sh;zsh;json;xml;yml;yaml;toml;sql;css;scss;html"
@@ -500,11 +508,10 @@ class SearchViewModel: ObservableObject {
     // MARK: - Active-window bridge for menu commands
 
     /// Maps each search window to its view model so menu-bar commands can reach
-    /// the currently active window's selection. Keys (windows) are held strongly,
-    /// values (view models) weakly - the window owns the view model via its
-    /// hosting controller, so there is no retain cycle.
+    /// the currently active window's selection. Both sides are weak because the
+    /// window's hosting controller owns the view model.
     private static let activeByWindow: NSMapTable<NSWindow, AnyObject> =
-        NSMapTable<NSWindow, AnyObject>.strongToWeakObjects()
+        NSMapTable<NSWindow, AnyObject>.weakToWeakObjects()
 
     /// Called by ContentView once it knows its hosting window.
     func registerActiveWindow(_ window: NSWindow) {
@@ -521,10 +528,22 @@ class SearchViewModel: ObservableObject {
     /// frontmost search window and copies its selected paths.
     @MainActor
     static func copySelectedPathsInActiveWindow() {
-        let window = NSApp.keyWindow ?? NSApp.mainWindow
-        guard let window else { return }
-        let vm = activeByWindow.object(forKey: window) as? SearchViewModel
-        vm?.copySelectedFile()
+        var candidates: [NSWindow] = []
+        if let keyWindow = NSApp.keyWindow { candidates.append(keyWindow) }
+        if let mainWindow = NSApp.mainWindow, !candidates.contains(where: { $0 === mainWindow }) {
+            candidates.append(mainWindow)
+        }
+        let remainingWindows = NSApp.orderedWindows.filter { candidate in
+            !candidates.contains(where: { $0 === candidate })
+        }
+        candidates.append(contentsOf: remainingWindows)
+
+        for window in candidates {
+            if let viewModel = activeByWindow.object(forKey: window) as? SearchViewModel {
+                viewModel.copySelectedFile()
+                return
+            }
+        }
     }
 
     private var maxResults: UInt32 {
@@ -894,44 +913,55 @@ class SearchViewModel: ObservableObject {
 
     func selectGridDown() -> Bool {
         guard !displayItems.isEmpty else { return false }
-        if let currentID = selectedItemID,
-           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
-            let columns = max(1, gridColumnCount)
-            let nextIdx = min(idx + columns, displayItems.count - 1)
-            selectForKeyboard(displayItems[nextIdx])
-        } else if let first = displayItems.first { selectForKeyboard(first) }
+        let currentIndex = selectedItemID.flatMap { currentID in
+            displayItems.firstIndex(where: { $0.id == currentID })
+        }
+        guard let nextIndex = GridNavigation.downIndex(
+            currentIndex: currentIndex,
+            itemCount: displayItems.count,
+            columns: gridColumnCount
+        ) else { return false }
+        selectForKeyboard(displayItems[nextIndex])
         return true
     }
 
     func selectGridUp() -> Bool {
         guard !displayItems.isEmpty else { return false }
-        guard let currentID = selectedItemID,
-              let idx = displayItems.firstIndex(where: { $0.id == currentID }) else {
-            if let last = displayItems.last { selectForKeyboard(last) }
-            return true
+        let currentIndex = selectedItemID.flatMap { currentID in
+            displayItems.firstIndex(where: { $0.id == currentID })
         }
-        let columns = max(1, gridColumnCount)
-        if idx < columns { return false }
-        selectForKeyboard(displayItems[idx - columns])
+        guard let nextIndex = GridNavigation.upIndex(
+            currentIndex: currentIndex,
+            itemCount: displayItems.count,
+            columns: gridColumnCount
+        ) else { return false }
+        selectForKeyboard(displayItems[nextIndex])
         return true
     }
 
     func selectGridRight() -> Bool {
         guard !displayItems.isEmpty else { return false }
-        if let currentID = selectedItemID,
-           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
-            let nextIdx = min(idx + 1, displayItems.count - 1)
-            selectForKeyboard(displayItems[nextIdx])
-        } else if let first = displayItems.first { selectForKeyboard(first) }
+        let currentIndex = selectedItemID.flatMap { currentID in
+            displayItems.firstIndex(where: { $0.id == currentID })
+        }
+        guard let nextIndex = GridNavigation.rightIndex(
+            currentIndex: currentIndex,
+            itemCount: displayItems.count
+        ) else { return false }
+        selectForKeyboard(displayItems[nextIndex])
         return true
     }
 
     func selectGridLeft() -> Bool {
         guard !displayItems.isEmpty else { return false }
-        guard let currentID = selectedItemID,
-              let idx = displayItems.firstIndex(where: { $0.id == currentID }) else { return false }
-        if idx == 0 { return false }
-        selectForKeyboard(displayItems[idx - 1])
+        let currentIndex = selectedItemID.flatMap { currentID in
+            displayItems.firstIndex(where: { $0.id == currentID })
+        }
+        guard let nextIndex = GridNavigation.leftIndex(
+            currentIndex: currentIndex,
+            itemCount: displayItems.count
+        ) else { return false }
+        selectForKeyboard(displayItems[nextIndex])
         return true
     }
 
@@ -1057,8 +1087,6 @@ class SearchViewModel: ObservableObject {
         }
     }
 
-    private static let fileTypeDirectory: UInt8 = 2
-
     private func sorted(_ items: [FileItem]) -> [FileItem] {
         let snapshot = settings.snapshot
         guard snapshot.sortField != .relevance else { return items }
@@ -1067,8 +1095,8 @@ class SearchViewModel: ObservableObject {
         let groupByType = snapshot.sortField != .path
         return items.sorted { lhs, rhs in
             if groupByType {
-                let lhsIsDir = lhs.type == Self.fileTypeDirectory
-                let rhsIsDir = rhs.type == Self.fileTypeDirectory
+                let lhsIsDir = lhs.isFolder
+                let rhsIsDir = rhs.isFolder
                 if lhsIsDir != rhsIsDir { return lhsIsDir }
             }
             let result: ComparisonResult
@@ -1094,14 +1122,8 @@ class SearchViewModel: ObservableObject {
         }
     }
 
-    private static let fileTypeApplication: UInt8 = 5
-
     private func openFile(_ item: FileItem) {
-        FileActions.open(
-            URL(fileURLWithPath: item.fullPath),
-            isApplication: item.type == Self.fileTypeApplication
-                || item.name.lowercased().hasSuffix(".app")
-        )
+        FileActions.open(item)
     }
 
     private func selectForKeyboard(_ item: FileItem) {
@@ -1373,11 +1395,9 @@ class SearchViewModel: ObservableObject {
         case .all:
             return items
         case .files:
-            return items.filter { $0.type == 1 || $0.type == 5 }
+            return items.filter { $0.isRegularFile || $0.isApplication }
         case .folders:
-            return items.filter { $0.type == 2 }
-        case .apps:
-            return items.filter { $0.fileExtension == "app" }
+            return items.filter(\.isFolder)
         case .documents:
             let exts: Set<String> = ["pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "txt", "md", "rtf", "pages", "numbers", "key"]
             return items.filter { exts.contains($0.fileExtension) }

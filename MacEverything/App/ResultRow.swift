@@ -17,12 +17,11 @@ final class FileIconCache: ObservableObject {
     }
 
     func icon(for item: FileItem) -> NSImage {
-        let isApp = item.name.hasSuffix(".app")
-        if isApp {
+        if item.isApplication {
             return appIcon(forPath: item.fullPath)
         }
 
-        if item.type == 2 {
+        if item.isFolder {
             return genericIcon(key: "type:folder", contentType: .folder)
         }
 
@@ -165,7 +164,7 @@ struct ResultRow: View {
             }
 
             if settings.showSize {
-                Text(item.type == 1 && item.size > 0 ? formatSize(item.size) : "")
+                Text(item.isRegularFile && item.size > 0 ? formatSize(item.size) : "")
                     .font(theme.bodyFont)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
@@ -192,21 +191,12 @@ struct ResultRow: View {
             isHovered = hovering
         }
         .contextMenu {
-            let actionItems = contextActionItems
-            Button(L10n.tr("Open")) { openFile(item) }
-            Button(L10n.tr("Reveal in Finder")) { revealInFinder(item) }
-            if item.type == 2 {
-                Button(L10n.tr("Open Folder")) { openInFinder(item) }
-            }
-            Button(L10n.tr("Quick Look")) { quickLook(actionItems) }
-            Button(L10n.tr("Rename")) { startRename() }
-                .disabled(actionItems.count != 1)
-            Divider()
-            Button(L10n.tr("Copy Path")) { copyFiles(actionItems) }
-            Button(L10n.tr("Copy Filename")) { copyFilenames(actionItems) }
-            Divider()
-            Button(L10n.tr("Move to Trash")) { trashFiles(actionItems) }
-            Button(L10n.tr("Open in Terminal")) { openInTerminal(item) }
+            FileItemContextMenu(
+                item: item,
+                actionItems: contextActionItems,
+                onRename: startRename,
+                onDeleteItems: onDeleteItems
+            )
         }
         .onDrag {
             let fullPath = item.path + "/" + item.name
@@ -231,7 +221,7 @@ struct ResultRow: View {
 
     private func fileVisual(for item: FileItem, pixelSize: CGFloat) -> Image {
         _ = iconCache.revision
-        if settings.showThumbnails && item.type != 2 && !item.name.hasSuffix(".app") {
+        if settings.showThumbnails && !item.isFolder && !item.isApplication {
             _ = thumbnailService.revision
             if let thumb = thumbnailService.thumbnail(for: item.fullPath, modTime: item.modTime, pixelSize: pixelSize) {
                 return Image(nsImage: thumb)
@@ -262,21 +252,6 @@ struct ResultRow: View {
         return date.formatted(date: .abbreviated, time: .shortened)
     }
 
-    private func openFile(_ item: FileItem) {
-        FileActions.open(
-            URL(fileURLWithPath: item.fullPath),
-            isApplication: item.type == 5 || item.name.lowercased().hasSuffix(".app")
-        )
-    }
-
-    private func revealInFinder(_ item: FileItem) {
-        NSWorkspace.shared.selectFile(item.fullPath, inFileViewerRootedAtPath: "")
-    }
-
-    private func openInFinder(_ item: FileItem) {
-        FileActions.open(URL(fileURLWithPath: item.fullPath))
-    }
-
     private func handleClick(clickCount: Int, modifiers: NSEvent.ModifierFlags) {
         let actions = ResultClickResolver.actions(
             clickCount: clickCount,
@@ -292,9 +267,9 @@ struct ResultRow: View {
             case .toggleSelection:
                 onSelect(false, true)
             case .open:
-                openFile(item)
+                FileActions.open(item)
             case .reveal:
-                revealInFinder(item)
+                FileActions.revealInFinder(item)
             }
         }
     }
@@ -342,50 +317,6 @@ struct ResultRow: View {
         }
     }
 
-    private func copyFiles(_ items: [FileItem]) {
-        guard !items.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects(items.map { NSURL(fileURLWithPath: $0.fullPath) })
-    }
-
-    private func copyFilename(_ item: FileItem) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(item.name, forType: .string)
-    }
-
-    private func copyFilenames(_ items: [FileItem]) {
-        guard !items.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(items.map(\.name).joined(separator: "\n"), forType: .string)
-    }
-
-    private func trashFiles(_ items: [FileItem]) {
-        guard !items.isEmpty else { return }
-        var removed: [String] = []
-        for item in items {
-            do {
-                try FileManager.default.trashItem(at: URL(fileURLWithPath: item.fullPath), resultingItemURL: nil)
-                removed.append(item.id)
-            } catch {
-                NSSound.beep()
-            }
-        }
-        if !removed.isEmpty {
-            onDeleteItems?(removed)
-        }
-    }
-
-    private func openInTerminal(_ item: FileItem) {
-        let dirPath = item.path
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-a", "Terminal", dirPath]
-        try? process.run()
-    }
-
-    private func quickLook(_ items: [FileItem]) {
-        QuickLookPreviewController.shared.open(urls: items.map { URL(fileURLWithPath: $0.fullPath) })
-    }
 }
 
 struct ResolvedResultColumnWidths {

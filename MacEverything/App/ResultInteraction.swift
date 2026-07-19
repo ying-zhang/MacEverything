@@ -36,6 +36,41 @@ enum ResultClickResolver {
     }
 }
 
+enum GridNavigation {
+    static func downIndex(currentIndex: Int?, itemCount: Int, columns: Int) -> Int? {
+        guard itemCount > 0 else { return nil }
+        guard let currentIndex, (0..<itemCount).contains(currentIndex) else { return 0 }
+
+        let candidate = currentIndex + max(1, columns)
+        return candidate < itemCount ? candidate : nil
+    }
+
+    static func upIndex(currentIndex: Int?, itemCount: Int, columns: Int) -> Int? {
+        guard itemCount > 0 else { return nil }
+        guard let currentIndex, (0..<itemCount).contains(currentIndex) else {
+            return itemCount - 1
+        }
+
+        let candidate = currentIndex - max(1, columns)
+        return candidate >= 0 ? candidate : nil
+    }
+
+    static func rightIndex(currentIndex: Int?, itemCount: Int) -> Int? {
+        guard itemCount > 0 else { return nil }
+        guard let currentIndex, (0..<itemCount).contains(currentIndex) else { return 0 }
+        let candidate = currentIndex + 1
+        return candidate < itemCount ? candidate : nil
+    }
+
+    static func leftIndex(currentIndex: Int?, itemCount: Int) -> Int? {
+        guard itemCount > 0,
+              let currentIndex,
+              (0..<itemCount).contains(currentIndex),
+              currentIndex > 0 else { return nil }
+        return currentIndex - 1
+    }
+}
+
 /// Observes left mouse-down events without taking event ownership from SwiftUI.
 /// This preserves context menus and dragging while avoiding tap-gesture arbitration.
 struct ResultClickMonitor: NSViewRepresentable {

@@ -354,6 +354,8 @@
 "Theme" = "Theme";
 "Light Mode Colors" = "Light Mode Colors";
 "Dark Mode Colors" = "Dark Mode Colors";
+"Colors" = "Colors";
+"Edit Colors For" = "Edit colors for";
 "Background" = "Background";
 "Text Color" = "Text Color";
 "Font Family" = "Font Family";
@@ -364,11 +366,14 @@
 "This will reset theme, colors, font, font size, and row height to defaults." = "This will reset theme, colors, font, font size, and row height to defaults.";
 "Result Row Height" = "Result Row Height";
 "Show file thumbnails" = "Show file thumbnails";
+"List Result Row Height" = "List result row height";
+"Show Thumbnails" = "Show thumbnails";
 "Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons." = "Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons.";
 "Display Mode" = "Display Mode";
 "List" = "List";
 "Grid" = "Grid";
 "Icon Size" = "Icon Size";
+"Thumbnail Size" = "Thumbnail size";
 "Only applies in icon mode" = "Only applies in icon mode";
 "Preview" = "Preview";
 "The quick brown fox jumps over the lazy dog 0123456789" = "The quick brown fox jumps over the lazy dog 0123456789";

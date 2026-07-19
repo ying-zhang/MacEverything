@@ -116,9 +116,11 @@ Type `infile:keyword` to search file contents — results include highlighted co
 ### Interaction Details
 
 - **Smart highlighting** — matches highlighted in search results, AST-aware: correctly handles glob wildcards, regex, case sensitivity, NOT exclusions, and other complex patterns
-- **Quick filters** — filter the current result set by files, folders, apps, documents, images, code, or archives; if a selected filter makes the current query empty, MacEverything falls back to all results so the search does not look broken
+- **Quick filters** — filter the current result set by files, folders, documents, images, code, or archives; if a selected filter makes the current query empty, MacEverything falls back to all results so the search does not look broken
 - **Path filter** — narrow the current result set by a path fragment, useful when a broad query spans many directories
 - **Configurable result columns** — sort by name, extension, path, size, or modified date; extension/path/size/date columns can be shown or hidden, and column widths are resizable
+- **List and icon modes** — switch result layouts from the right side of the quick-filter bar; the five-level aspect-preserving thumbnail slider stays visible and is disabled in list mode or when there are no results
+- **Adjustable result appearance** — list thumbnails are enabled by default, list row height is independently adjustable from `20–120 pt`, and the color editor automatically selects the active light or dark appearance
 - **Drag & drop** — drag files directly from search results to Finder, VS Code, Xcode, or any application
 - **Keyboard and context actions** — Enter can open or rename the selected result; supports arrow-key selection, result-list focus, and context actions for Open / Reveal in Finder / Copy Path
 - **Cmd+Click** — quickly locate files in Finder

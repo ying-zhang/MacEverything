@@ -156,6 +156,23 @@ struct AppSettingsSnapshot {
 @MainActor
 final class AppSettings: ObservableObject {
     static let shared = AppSettings()
+    static let gridIconSizes: [CGFloat] = [64, 96, 128, 160, 200]
+
+    static func normalizedGridIconSize(_ size: CGFloat) -> CGFloat {
+        gridIconSizes.min { abs($0 - size) < abs($1 - size) } ?? 128
+    }
+
+    var gridIconSizeLevelBinding: Binding<Double> {
+        Binding(
+            get: {
+                Double(Self.gridIconSizes.firstIndex(of: self.gridIconSize) ?? 2)
+            },
+            set: { level in
+                let index = min(max(Int(level.rounded()), 0), Self.gridIconSizes.count - 1)
+                self.gridIconSize = Self.gridIconSizes[index]
+            }
+        )
+    }
 
     private enum Key {
         static let indexRoots = "settings.indexRoots"
@@ -288,15 +305,11 @@ final class AppSettings: ObservableObject {
             let value = clamped(fontSize, 10.0, 24.0)
             if value != fontSize { fontSize = value; return }
             save(Double(value), Key.fontSize)
-            let minRowHeight = minRowHeightForFont
-            if resultRowHeight < minRowHeight {
-                resultRowHeight = minRowHeight
-            }
         }
     }
     @Published var resultRowHeight: CGFloat {
         didSet {
-            let value = clamped(resultRowHeight, max(24.0, minRowHeightForFont), 120.0)
+            let value = clamped(resultRowHeight, 20.0, 120.0)
             if value != resultRowHeight { resultRowHeight = value; return }
             save(Double(value), Key.resultRowHeight)
         }
@@ -305,15 +318,11 @@ final class AppSettings: ObservableObject {
     @Published var resultDisplayMode: ResultDisplayMode { didSet { save(resultDisplayMode.rawValue, Key.resultDisplayMode) } }
     @Published var gridIconSize: CGFloat {
         didSet {
-            let value = clamped(gridIconSize, 48.0, 160.0)
-            if value != gridIconSize { gridIconSize = value; return }
+            let value = Self.normalizedGridIconSize(gridIconSize)
+            if value != gridIconSize { gridIconSize = value }
             save(Double(value), Key.gridIconSize)
         }
     }
-
-    /// Minimum row height that fits the current font without clipping.
-    /// Uses a 1.4× line-height multiple plus 4pt of vertical padding so text never overflows the row.
-    var minRowHeightForFont: CGFloat { ceil(fontSize * 1.4) + 4 }
 
     private let defaults = UserDefaults.standard
 
@@ -370,10 +379,12 @@ final class AppSettings: ObservableObject {
         darkTextColor = defaults.string(forKey: Key.darkTextColor) ?? ""
         fontFamily = defaults.string(forKey: Key.fontFamily) ?? ""
         fontSize = CGFloat(clamped(defaults.object(forKey: Key.fontSize) as? Double ?? 13.0, 10.0, 24.0))
-        resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 24.0, 120.0))
-        showThumbnails = defaults.object(forKey: Key.showThumbnails) as? Bool ?? false
+        resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 20.0, 120.0))
+        showThumbnails = defaults.object(forKey: Key.showThumbnails) as? Bool ?? true
         resultDisplayMode = ResultDisplayMode(rawValue: defaults.string(forKey: Key.resultDisplayMode) ?? "") ?? .list
-        gridIconSize = CGFloat(clamped(defaults.object(forKey: Key.gridIconSize) as? Double ?? 96.0, 48.0, 160.0))
+        gridIconSize = Self.normalizedGridIconSize(
+            CGFloat(defaults.object(forKey: Key.gridIconSize) as? Double ?? 128.0)
+        )
 
         migrateSettingsIfNeeded()
     }
@@ -451,8 +462,9 @@ final class AppSettings: ObservableObject {
         fontFamily = ""
         fontSize = 13
         resultRowHeight = 38
+        showThumbnails = true
         resultDisplayMode = .list
-        gridIconSize = 96
+        gridIconSize = 128
     }
 
     private func migrateSettingsIfNeeded() {
@@ -497,16 +509,6 @@ final class AppSettings: ObservableObject {
                     case .comfortable: resultRowHeight = 38
                     }
                 }
-            }
-        }
-
-        if version < 6 {
-            // Reconcile row height with the font-derived minimum so previously-saved
-            // combos (e.g. large font with a small row height) don't render clipped.
-            let minRowHeight = max(24.0, minRowHeightForFont)
-            if resultRowHeight < minRowHeight {
-                resultRowHeight = minRowHeight
-                save(Double(resultRowHeight), Key.resultRowHeight)
             }
         }
 

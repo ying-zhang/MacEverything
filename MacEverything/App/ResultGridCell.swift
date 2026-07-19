@@ -1,7 +1,5 @@
 import SwiftUI
 import AppKit
-import Quartz
-import UniformTypeIdentifiers
 
 /// Finder-like icon-view cell for file search results. Shows a large thumbnail
 /// (always on, regardless of the list-mode thumbnail toggle) above the filename.
@@ -51,19 +49,11 @@ struct ResultGridCell: View {
             isHovered = hovering
         }
         .contextMenu {
-            let actionItems = contextActionItems
-            Button(L10n.tr("Open")) { openFile(item) }
-            Button(L10n.tr("Reveal in Finder")) { revealInFinder(item) }
-            if item.type == 2 {
-                Button(L10n.tr("Open Folder")) { openInFinder(item) }
-            }
-            Button(L10n.tr("Quick Look")) { quickLook(actionItems) }
-            Divider()
-            Button(L10n.tr("Copy Path")) { copyFiles(actionItems) }
-            Button(L10n.tr("Copy Filename")) { copyFilenames(actionItems) }
-            Divider()
-            Button(L10n.tr("Move to Trash")) { trashFiles(actionItems) }
-            Button(L10n.tr("Open in Terminal")) { openInTerminal(item) }
+            FileItemContextMenu(
+                item: item,
+                actionItems: contextActionItems,
+                onDeleteItems: onDeleteItems
+            )
         }
         .onDrag {
             return NSItemProvider(object: NSURL(fileURLWithPath: item.fullPath))
@@ -81,7 +71,7 @@ struct ResultGridCell: View {
         _ = iconCache.revision
         // Grid mode always shows thumbnails for browsable files; the list-mode
         // `showThumbnails` toggle does not apply here.
-        if item.type != 2 && !item.name.hasSuffix(".app") {
+        if !item.isFolder && !item.isApplication {
             _ = thumbnailService.revision
             if let thumb = thumbnailService.thumbnail(for: item.fullPath,
                                                        modTime: item.modTime,
@@ -120,64 +110,10 @@ struct ResultGridCell: View {
             case .toggleSelection:
                 onSelect(false, true)
             case .open:
-                openFile(item)
+                FileActions.open(item)
             case .reveal:
-                revealInFinder(item)
+                FileActions.revealInFinder(item)
             }
         }
-    }
-
-    private func openFile(_ item: FileItem) {
-        FileActions.open(
-            URL(fileURLWithPath: item.fullPath),
-            isApplication: item.type == 5 || item.name.lowercased().hasSuffix(".app")
-        )
-    }
-
-    private func revealInFinder(_ item: FileItem) {
-        NSWorkspace.shared.selectFile(item.fullPath, inFileViewerRootedAtPath: "")
-    }
-
-    private func openInFinder(_ item: FileItem) {
-        FileActions.open(URL(fileURLWithPath: item.fullPath))
-    }
-
-    private func openInTerminal(_ item: FileItem) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/open")
-        process.arguments = ["-a", "Terminal", item.path]
-        try? process.run()
-    }
-
-    private func copyFiles(_ items: [FileItem]) {
-        guard !items.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.writeObjects(items.map { NSURL(fileURLWithPath: $0.fullPath) })
-    }
-
-    private func copyFilenames(_ items: [FileItem]) {
-        guard !items.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(items.map(\.name).joined(separator: "\n"), forType: .string)
-    }
-
-    private func trashFiles(_ items: [FileItem]) {
-        guard !items.isEmpty else { return }
-        var removed: [String] = []
-        for item in items {
-            do {
-                try FileManager.default.trashItem(at: URL(fileURLWithPath: item.fullPath), resultingItemURL: nil)
-                removed.append(item.id)
-            } catch {
-                NSSound.beep()
-            }
-        }
-        if !removed.isEmpty {
-            onDeleteItems?(removed)
-        }
-    }
-
-    private func quickLook(_ items: [FileItem]) {
-        QuickLookPreviewController.shared.open(urls: items.map { URL(fileURLWithPath: $0.fullPath) })
     }
 }

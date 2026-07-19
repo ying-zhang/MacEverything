@@ -3,6 +3,21 @@ import ServiceManagement
 import AppKit
 
 struct GeneralSettingsView: View {
+    private enum ColorEditorMode: String, CaseIterable, Identifiable {
+        case light
+        case dark
+
+        var id: String { rawValue }
+
+        var title: String {
+            switch self {
+            case .light: return L10n.tr("Light")
+            case .dark: return L10n.tr("Dark")
+            }
+        }
+    }
+
+    @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var theme = ThemeManager.shared
     @State private var newIndexPath = ""
@@ -14,6 +29,7 @@ struct GeneralSettingsView: View {
     @State private var showingClearContentIndexConfirmation = false
     @State private var showingResetAppearanceConfirmation = false
     @State private var fontSearchText = ""
+    @State private var colorEditorMode: ColorEditorMode = .light
     @State private var mainIndexBaseBytes: UInt64 = 0
     @State private var mainIndexWalBytes: UInt64 = 0
     @State private var mainIndexLegacyBytes: UInt64 = 0
@@ -115,6 +131,11 @@ struct GeneralSettingsView: View {
         }
         .onAppear {
             refreshContentIndexInfo()
+            selectActiveColorMode()
+        }
+        .onChange(of: settings.appearanceMode) { selectActiveColorMode() }
+        .onChange(of: colorScheme) {
+            if settings.appearanceMode == .system { selectActiveColorMode() }
         }
     }
 
@@ -458,20 +479,20 @@ struct GeneralSettingsView: View {
             }
             .pickerStyle(.segmented)
 
-            GroupBox(L10n.tr("Light Mode Colors")) {
-                HStack {
-                    ColorPicker(L10n.tr("Background"), selection: lightBgBinding, supportsOpacity: false)
-                    Spacer()
-                    ColorPicker(L10n.tr("Text Color"), selection: lightTextBinding, supportsOpacity: false)
-                }
-                .padding(.vertical, 4)
-            }
+            GroupBox(L10n.tr("Colors")) {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker(L10n.tr("Edit Colors For"), selection: $colorEditorMode) {
+                        ForEach(ColorEditorMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
 
-            GroupBox(L10n.tr("Dark Mode Colors")) {
-                HStack {
-                    ColorPicker(L10n.tr("Background"), selection: darkBgBinding, supportsOpacity: false)
-                    Spacer()
-                    ColorPicker(L10n.tr("Text Color"), selection: darkTextBinding, supportsOpacity: false)
+                    HStack {
+                        ColorPicker(L10n.tr("Background"), selection: editedBackgroundBinding, supportsOpacity: false)
+                        Spacer()
+                        ColorPicker(L10n.tr("Text Color"), selection: editedTextBinding, supportsOpacity: false)
+                    }
                 }
                 .padding(.vertical, 4)
             }
@@ -522,13 +543,13 @@ struct GeneralSettingsView: View {
             Divider()
 
             BoundedIntegerControl(
-                title: L10n.tr("Result Row Height"),
+                title: L10n.tr("List Result Row Height"),
                 value: rowHeightIntBinding,
-                range: max(24, Int(settings.minRowHeightForFont))...120,
+                range: 20...120,
                 step: 2
             )
 
-            Toggle(L10n.tr("Show file thumbnails"), isOn: $settings.showThumbnails)
+            Toggle(L10n.tr("Show Thumbnails"), isOn: $settings.showThumbnails)
             Text(L10n.tr("Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons."))
                 .font(.caption)
                 .foregroundColor(.secondary)
@@ -536,8 +557,12 @@ struct GeneralSettingsView: View {
             Divider()
 
             HStack {
-                Text(L10n.tr("Icon Size"))
-                Slider(value: $settings.gridIconSize, in: 48...160, step: 8)
+                Text(L10n.tr("Thumbnail Size"))
+                Slider(
+                    value: settings.gridIconSizeLevelBinding,
+                    in: 0...Double(AppSettings.gridIconSizes.count - 1),
+                    step: 1
+                )
                 Text(String(format: "%.0f pt", settings.gridIconSize))
                     .frame(width: 48, alignment: .trailing)
             }
@@ -562,6 +587,22 @@ struct GeneralSettingsView: View {
         let families = NSFontManager.shared.availableFontFamilies
         if fontSearchText.isEmpty { return families }
         return families.filter { $0.localizedCaseInsensitiveContains(fontSearchText) }
+    }
+
+    private var editedBackgroundBinding: Binding<Color> {
+        colorEditorMode == .light ? lightBgBinding : darkBgBinding
+    }
+
+    private var editedTextBinding: Binding<Color> {
+        colorEditorMode == .light ? lightTextBinding : darkTextBinding
+    }
+
+    private func selectActiveColorMode() {
+        switch settings.appearanceMode {
+        case .light: colorEditorMode = .light
+        case .dark: colorEditorMode = .dark
+        case .system: colorEditorMode = colorScheme == .dark ? .dark : .light
+        }
     }
 
     private var lightBgBinding: Binding<Color> {

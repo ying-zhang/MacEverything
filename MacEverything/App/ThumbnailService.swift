@@ -58,8 +58,8 @@ final class ThumbnailService: ObservableObject {
 
                 if let thumbnail {
                     let image = thumbnail.nsImage
-                    image.size = NSSize(width: pixelSize, height: pixelSize)
-                    let cost = Int(pixelSize * pixelSize * 4)
+                    image.size = Self.aspectFitSize(image.size, maximumDimension: pixelSize)
+                    let cost = Int(image.size.width * image.size.height * scale * scale * 4)
                     self.cache.setObject(image, forKey: key as NSString, cost: cost)
                     self.revision &+= 1
                 } else {
@@ -81,5 +81,13 @@ final class ThumbnailService: ObservableObject {
     private func cacheKey(path: String, modTime: time_t, pixelSize: CGFloat, scale: CGFloat) -> String {
         let normalized = URL(fileURLWithPath: path).standardizedFileURL.path
         return "\(normalized)|\(modTime)|\(Int(pixelSize))|\(Int(scale))"
+    }
+
+    private static func aspectFitSize(_ size: NSSize, maximumDimension: CGFloat) -> NSSize {
+        guard size.width > 0, size.height > 0, maximumDimension > 0 else {
+            return NSSize(width: maximumDimension, height: maximumDimension)
+        }
+        let scale = min(maximumDimension / size.width, maximumDimension / size.height)
+        return NSSize(width: size.width * scale, height: size.height * scale)
     }
 }

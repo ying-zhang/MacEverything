@@ -114,7 +114,8 @@ struct ContentView: View {
                 QuickFilterBar(
                     quickFilter: $viewModel.quickFilter,
                     pathFilter: $viewModel.pathFilter,
-                    showPathFilter: $showPathFilter
+                    showPathFilter: $showPathFilter,
+                    displayControlsDisabled: service.isScanning || viewModel.displayItems.isEmpty
                 )
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -123,7 +124,7 @@ struct ContentView: View {
             Divider()
 
             // Status bar
-            HStack {
+            HStack(spacing: 8) {
                 if service.isScanning {
                     ProgressView()
                         .controlSize(.small)
@@ -174,7 +175,6 @@ struct ContentView: View {
                             .foregroundColor(.secondary)
                     }
                 }
-                Spacer()
             }
             .font(.callout)
             .padding(.horizontal, 12)
@@ -311,13 +311,6 @@ struct ContentView: View {
                 }
 
                 if !viewModel.displayItems.isEmpty {
-                    HStack {
-                        Spacer()
-                        ResultDisplayModeSwitcher()
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.top, 2)
-
                     if settings.resultDisplayMode == .list {
                         ResultHeaderView(viewModel: viewModel)
                             .environmentObject(columnLayout)
@@ -360,19 +353,7 @@ struct ContentView: View {
                                     .id(item.id)
                             }
                             if viewModel.hasMoreResults {
-                                HStack {
-                                    Spacer()
-                                    ProgressView()
-                                        .controlSize(.small)
-                                    Text(L10n.tr("Loading more results..."))
-                                        .font(.callout)
-                                        .foregroundColor(.secondary)
-                                    Spacer()
-                                }
-                                .padding(.vertical, 8)
-                                .onAppear {
-                                    viewModel.loadMore()
-                                }
+                                LoadingMoreResultsFooter(onAppear: viewModel.loadMore)
                             }
                         }
                         } else {
@@ -411,19 +392,7 @@ struct ContentView: View {
                         .onChange(of: columns) { viewModel.gridColumnCount = columns }
                         .onAppear { viewModel.gridColumnCount = columns }
                         if viewModel.hasMoreResults {
-                            HStack {
-                                Spacer()
-                                ProgressView()
-                                    .controlSize(.small)
-                                Text(L10n.tr("Loading more results..."))
-                                    .font(.callout)
-                                    .foregroundColor(.secondary)
-                                Spacer()
-                            }
-                            .padding(.vertical, 8)
-                            .onAppear {
-                                viewModel.loadMore()
-                            }
+                            LoadingMoreResultsFooter(onAppear: viewModel.loadMore)
                         }
                         }
                     }
@@ -605,6 +574,57 @@ private struct ResultDisplayModeSwitcher: View {
     }
 }
 
+private struct ResultDisplayControls: View {
+    let isDisabled: Bool
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ResultDisplayModeSwitcher()
+
+            Divider()
+                .frame(height: 18)
+            Image(systemName: "square.grid.3x3")
+                .foregroundColor(.secondary)
+                .accessibilityHidden(true)
+            Slider(
+                value: settings.gridIconSizeLevelBinding,
+                in: 0...Double(AppSettings.gridIconSizes.count - 1),
+                step: 1
+            )
+                .controlSize(.small)
+                .frame(width: 96)
+                .help(L10n.tr("Thumbnail Size"))
+                .accessibilityLabel(L10n.tr("Thumbnail Size"))
+                .accessibilityValue(Text("\(Int(settings.gridIconSize)) pt"))
+                .accessibilityIdentifier("gridIconSizeSlider")
+                .disabled(settings.resultDisplayMode != .grid)
+            Image(systemName: "square.grid.2x2")
+                .foregroundColor(.secondary)
+                .accessibilityHidden(true)
+        }
+        .disabled(isDisabled)
+    }
+}
+
+private struct LoadingMoreResultsFooter: View {
+    let onAppear: () -> Void
+
+    var body: some View {
+        HStack {
+            Spacer()
+            ProgressView()
+                .controlSize(.small)
+            Text(L10n.tr("Loading more results..."))
+                .font(.callout)
+                .foregroundColor(.secondary)
+            Spacer()
+        }
+        .padding(.vertical, 8)
+        .onAppear(perform: onAppear)
+    }
+}
+
 private struct ResultHeaderView: View {
     @ObservedObject var viewModel: SearchViewModel
     @ObservedObject private var settings = AppSettings.shared
@@ -709,10 +729,11 @@ private struct QuickFilterBar: View {
     @Binding var quickFilter: QuickFilter
     @Binding var pathFilter: String
     @Binding var showPathFilter: Bool
+    let displayControlsDisabled: Bool
 
     var body: some View {
         GeometryReader { proxy in
-            let showExpandedPathFilter = proxy.size.width >= 820 || showPathFilter || !pathFilter.isEmpty
+            let showExpandedPathFilter = proxy.size.width >= 980 || showPathFilter || !pathFilter.isEmpty
 
             HStack(spacing: 8) {
                 Text(L10n.tr("Quick filter"))
@@ -727,6 +748,9 @@ private struct QuickFilterBar: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
+                .controlSize(.small)
+                .frame(width: 310)
+                .layoutPriority(1)
                 .help(L10n.tr("Quick filters"))
 
                 Button {
@@ -765,8 +789,14 @@ private struct QuickFilterBar: View {
                         RoundedRectangle(cornerRadius: 6)
                             .stroke(Color(nsColor: .separatorColor).opacity(0.7))
                     )
-                    .frame(minWidth: 180, idealWidth: 260, maxWidth: 360)
+                    .frame(minWidth: 120, idealWidth: 220, maxWidth: 300)
                 }
+
+                Spacer(minLength: 8)
+
+                ResultDisplayControls(isDisabled: displayControlsDisabled)
+                    .fixedSize(horizontal: true, vertical: false)
+                    .layoutPriority(2)
             }
         }
         .frame(height: 30)
