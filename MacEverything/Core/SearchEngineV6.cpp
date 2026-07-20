@@ -266,9 +266,10 @@ void SearchEngine::completePhase2() {
             if (i >= types_.size()) break;
             if (snapTypes[i] != 0 && types_[i] == 0) {
                 // Was live in snapshot, now tombstoned — trigram was built, need to remove
-                // The trigram entry points at index i which is now tombstoned.
-                // Query-time type==0 check will filter it, but we can clean up explicitly.
-                removeTrigramsForRecord(i);  // Safe: namePool_[i] is tombstoned, this is a no-op
+                // Use snapshot name data (pre-tombstone) to find and remove stale trigram entries
+                if (i < snapNamePool.entryCount() && snapNamePool.isLive(i)) {
+                    removeTrigramsForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
+                }
                 removePinyinInitialsForRecord(i);
             }
         }

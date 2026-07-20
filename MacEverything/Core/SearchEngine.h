@@ -499,6 +499,8 @@ private:
     void addTrigramsForRecord(uint32_t idx, const char* data, uint16_t len);
     /// Remove trigrams for a single record from the index
     void removeTrigramsForRecord(uint32_t idx);
+    /// Remove trigrams using explicit name data (for tombstoned records whose namePool_ entry is cleared)
+    void removeTrigramsForRecord(uint32_t idx, const char* data, uint16_t len);
 
     /// Build extension index from namePool_ (maps extension -> sorted record indices)
     void buildExtensionIndex();

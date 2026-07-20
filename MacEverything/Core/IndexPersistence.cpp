@@ -210,8 +210,13 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
         LOG_INFO("IndexPersistence", "Flushed v6 flat index, lastEventId=" << metadata.lastEventId
                   << ", liveRecords=" << engine_->liveRecordCount());
     } else {
-        LOG_ERROR("IndexPersistence", "Failed to flush paged index — keeping old WAL for recovery");
-        if (oldWal) oldWal->close();
+        LOG_ERROR("IndexPersistence", "Failed to flush index — rolling back WAL");
+        {
+            std::lock_guard<std::mutex> lock(walMutex_);
+            wal_ = oldWal;
+        }
+        engine_->attachWAL(oldWal);
+        newWal->closeAndDelete();
         return;
     }
 
@@ -270,8 +275,13 @@ void IndexPersistence::fullCompact(const IndexMetadata& metadata) {
         LOG_INFO("IndexPersistence", "Full compaction done, lastEventId=" << metadata.lastEventId
                   << ", liveRecords=" << engine_->liveRecordCount());
     } else {
-        LOG_ERROR("IndexPersistence", "Failed to write full compaction — keeping old WAL");
-        if (oldWal) oldWal->close();
+        LOG_ERROR("IndexPersistence", "Failed to write full compaction — rolling back WAL");
+        {
+            std::lock_guard<std::mutex> lock(walMutex_);
+            wal_ = oldWal;
+        }
+        engine_->attachWAL(oldWal);
+        newWal->closeAndDelete();
         return;
     }
 

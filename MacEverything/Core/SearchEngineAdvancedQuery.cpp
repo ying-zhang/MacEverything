@@ -279,8 +279,8 @@ static bool evalFilter(const QueryNode& node,
                               node.numVal1, node.numVal2);
     }
 
-    // Unknown filter — pass through
-    return true;
+    // Unknown filter — reject (prevents typos like szie: from silently matching all)
+    return false;
 }
 
 /// Evaluate a TERM node against a single record.

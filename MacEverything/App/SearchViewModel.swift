@@ -87,7 +87,7 @@ nonisolated private func isAllowedContentSearchPath(
 ) -> Bool {
     let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
     let insideRoot = standardizedRoots.isEmpty || standardizedRoots.contains { root in
-        standardizedPath == root || standardizedPath.hasPrefix(root + "/")
+        root == "/" || standardizedPath == root || standardizedPath.hasPrefix(root + "/")
     }
     guard insideRoot else { return false }
 
@@ -581,7 +581,8 @@ class SearchViewModel: ObservableObject {
         }
 
         let lowerText = text.lowercased()
-        if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
+        let isContentPrefix = lowerText.hasPrefix("infile:") || lowerText.hasPrefix("content:")
+        if isContentPrefix, settings.snapshot.contentIndexingEnabled {
             isContentSearch = true
             displayItems = []
             cachedResults = []
@@ -590,7 +591,8 @@ class SearchViewModel: ObservableObject {
             loadedCount = 0
             clearSelection()
 
-            let keyword = String(text.dropFirst(7))
+            let prefixLen = lowerText.hasPrefix("infile:") ? 7 : 8
+            let keyword = String(text.dropFirst(prefixLen))
             contentKeyword = keyword // H-9: cache computed keyword
             guard !keyword.isEmpty else {
                 contentResults = []
@@ -670,6 +672,9 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    private static let contentFetchLimit: UInt32 = 500
+    private static let contentDisplayLimit = 200
+
     private func performContentSearch(_ keyword: String) {
         let bridge = self.bridge
         let gen = searchGeneration
@@ -678,11 +683,11 @@ class SearchViewModel: ObservableObject {
         let stdExcluded = snapshot.contentSearchExcludedPaths.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
-            let results = bridge.queryContent(keyword, maxResults: 200)
+            let results = bridge.queryContent(keyword, maxResults: Self.contentFetchLimit)
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
 
             var items: [ContentFileItem] = []
-            items.reserveCapacity(results.count)
+            items.reserveCapacity(min(results.count, Self.contentDisplayLimit))
             for r in results {
                 guard isAllowedContentSearchPath(
                     r.filePath,
@@ -697,14 +702,16 @@ class SearchViewModel: ObservableObject {
                     matchOffset: r.matchOffset,
                     fileType: r.fileType
                 ))
+                if items.count >= Self.contentDisplayLimit { break }
             }
             let finalItems = items
+            let limitReached = results.count >= Self.contentFetchLimit || items.count >= Self.contentDisplayLimit
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
                 self.contentResults = finalItems
                 self.totalMatches = finalItems.count
-                self.resultLimitReached = false
+                self.resultLimitReached = limitReached
                 self.queryTimeMs = elapsed
             }
         }
@@ -1033,7 +1040,8 @@ class SearchViewModel: ObservableObject {
         if !focused {
             // Record search text to history when window loses focus
             let text = searchText
-            if text.count >= 2 && !text.lowercased().hasPrefix("infile:") {
+            let lower = text.lowercased()
+            if text.count >= 2 && !lower.hasPrefix("infile:") && !lower.hasPrefix("content:") {
                 historyStore.recordQuery(text)
             }
         }
@@ -1126,8 +1134,12 @@ class SearchViewModel: ObservableObject {
         if !contentKeyword.isEmpty {
             return contentKeyword
         }
-        if searchText.lowercased().hasPrefix("infile:") {
+        let lower = searchText.lowercased()
+        if lower.hasPrefix("infile:") {
             return String(searchText.dropFirst(7))
+        }
+        if lower.hasPrefix("content:") {
+            return String(searchText.dropFirst(8))
         }
         return ""
     }
@@ -1183,7 +1195,8 @@ class SearchViewModel: ObservableObject {
 
     private func updateGhostSuggestion() {
         let text = searchText
-        guard !text.isEmpty, !text.lowercased().hasPrefix("infile:") else {
+        let lowerGhost = text.lowercased()
+        guard !text.isEmpty, !lowerGhost.hasPrefix("infile:"), !lowerGhost.hasPrefix("content:") else {
             ghostSuggestion = nil
             return
         }
@@ -1204,7 +1217,8 @@ class SearchViewModel: ObservableObject {
     private func scheduleHistoryRecord() {
         settledTask?.cancel()
         let text = searchText
-        guard text.count >= 2, !text.lowercased().hasPrefix("infile:") else { return }
+        let lowerHist = text.lowercased()
+        guard text.count >= 2, !lowerHist.hasPrefix("infile:"), !lowerHist.hasPrefix("content:") else { return }
         settledTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
             guard !Task.isCancelled, let self, self.searchText == text else { return }
@@ -1242,8 +1256,10 @@ class SearchViewModel: ObservableObject {
         allowQuickFilterAutoResetForCurrentSearch = true
         showingRecent = false
         let lowerText = searchText.lowercased()
-        if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
-            let keyword = String(searchText.dropFirst(7))
+        let isSubmitContent = lowerText.hasPrefix("infile:") || lowerText.hasPrefix("content:")
+        if isSubmitContent, settings.snapshot.contentIndexingEnabled {
+            let prefixLen = lowerText.hasPrefix("infile:") ? 7 : 8
+            let keyword = String(searchText.dropFirst(prefixLen))
             contentKeyword = keyword
             isContentSearch = true
             performContentSearch(keyword)

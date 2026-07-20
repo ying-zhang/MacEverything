@@ -69,6 +69,7 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
         CFStringRef path = CFStringCreateWithCString(kCFAllocatorDefault,
                                                       rootPath.c_str(),
                                                       kCFStringEncodingUTF8);
+        if (!path) continue;
         CFArrayAppendValue(pathsToWatch, path);
         CFRelease(path);
     }

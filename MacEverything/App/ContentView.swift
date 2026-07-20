@@ -705,6 +705,12 @@ private struct ColumnResizeHandle: ViewModifier {
                         isCursorPushed = false
                     }
                 }
+                .onDisappear {
+                    if isCursorPushed {
+                        NSCursor.pop()
+                        isCursorPushed = false
+                    }
+                }
         }
     }
 }

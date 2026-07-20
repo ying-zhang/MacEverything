@@ -348,11 +348,12 @@ void ContentIndexPersistence::compact(bool force) {
                   << ", walBytes=" << (oldWal ? oldWal->currentSize() : 0));
     } else {
         LOG_ERROR("ContentIndexPersistence", "Failed to write content base index"
-                  << " — keeping old WAL for recovery");
-        // Keep old WAL alive for crash recovery; close without deleting
-        if (oldWal) {
-            oldWal->close();
+                  << " — rolling back WAL");
+        {
+            std::lock_guard<std::mutex> lock(walMutex_);
+            wal_ = oldWal;
         }
+        newWal->closeAndDelete();
         return;
     }
 

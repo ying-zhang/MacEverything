@@ -360,6 +360,10 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     }
 
     // Read section table
+    if (header.sectionCount > kSectionCountLegacy) {
+        LOG_ERROR("FlatIndexWriter", "Invalid sectionCount: " << header.sectionCount);
+        fclose(f); return false;
+    }
     fseek(f, kHeaderSize, SEEK_SET);
     std::vector<SectionEntry> sections(header.sectionCount);
     if (fread(sections.data(), sizeof(SectionEntry), header.sectionCount, f)
