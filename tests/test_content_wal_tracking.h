@@ -113,6 +113,31 @@ static void runContentWalTrackingTests() {
         wal.closeAndDelete();
     }
 
+    // Test 6: Reopening a current-format WAL must preserve existing entries.
+    {
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+
+        {
+            ContentIndexWAL wal;
+            check(wal.open(walPath), "ContentIndexWAL: initial reopen fixture opens");
+            check(wal.appendAdd(7, "/tmp/reopen.txt", 0xBEEF, {10, 20, 30}),
+                  "ContentIndexWAL: reopen fixture append succeeds");
+            wal.close();
+        }
+        const auto sizeBeforeReopen = fs::file_size(walPath);
+        {
+            ContentIndexWAL wal;
+            check(wal.open(walPath), "ContentIndexWAL: existing V2 WAL reopens");
+            check(wal.currentSize() == sizeBeforeReopen,
+                  "ContentIndexWAL: reopen does not truncate existing WAL");
+            wal.close();
+        }
+        auto entries = ContentIndexWAL::readAll(walPath);
+        check(entries.size() == 1 && entries[0].fullPath == "/tmp/reopen.txt",
+              "ContentIndexWAL: existing entry survives reopen");
+    }
+
     // Cleanup
     fs::remove_all(tmpDir);
 

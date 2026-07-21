@@ -4,6 +4,42 @@
 #include <cstring>
 #include <cmath>
 #include <cstdio>
+#include <filesystem>
+#include <algorithm>
+
+namespace {
+std::vector<std::string> walSegments(const std::string& base) {
+    namespace fs = std::filesystem;
+    std::vector<std::pair<uint64_t, std::string>> found;
+    std::error_code ec;
+    if (fs::exists(base, ec)) found.push_back({0, base});
+    const std::string prefix = base + ".seg.";
+    fs::path p(base);
+    auto dir = p.parent_path().empty() ? fs::path(".") : p.parent_path();
+    for (const auto& e : fs::directory_iterator(dir, ec)) {
+        if (ec) break;
+        auto name = e.path().string();
+        if (name.rfind(prefix, 0) != 0) continue;
+        try { found.push_back({std::stoull(name.substr(prefix.size())), name}); }
+        catch (...) {}
+    }
+    std::sort(found.begin(), found.end());
+    std::vector<std::string> paths;
+    for (auto& pth : found) paths.push_back(std::move(pth.second));
+    return paths;
+}
+
+std::string nextWalSegment(const std::string& base) {
+    uint64_t n = 1;
+    const std::string prefix = base + ".seg.";
+    for (const auto& path : walSegments(base)) {
+        if (path.rfind(prefix, 0) != 0) continue;
+        try { n = std::max(n, std::stoull(path.substr(prefix.size())) + 1); }
+        catch (...) {}
+    }
+    return prefix + std::to_string(n);
+}
+}
 
 IndexPersistence::IndexPersistence(std::shared_ptr<SearchEngine> engine,
                                    const std::string& basePath,
@@ -48,7 +84,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 LOG_WARN("IndexPersistence", "Ignoring v6 index because config changed");
                 engine_->loadRecords({});
                 std::remove(v6Path_.c_str());
-                std::remove(walPath_.c_str());
+                for (const auto& segment : walSegments(walPath_)) std::remove(segment.c_str());
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
@@ -68,7 +104,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
             if (!expectedConfigSignature.empty()) {
                 LOG_WARN("IndexPersistence", "Ignoring paged index because config signature is unavailable");
                 engine_->loadRecords({});
-                std::remove(walPath_.c_str());
+                for (const auto& segment : walSegments(walPath_)) std::remove(segment.c_str());
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
@@ -93,7 +129,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
             if (!expectedConfigSignature.empty()) {
                 LOG_WARN("IndexPersistence", "Ignoring legacy index because config signature is unavailable");
                 engine_->loadRecords({});
-                std::remove(walPath_.c_str());
+                for (const auto& segment : walSegments(walPath_)) std::remove(segment.c_str());
                 loaded = false;
             } else {
                 LOG_INFO("IndexPersistence", "Loaded legacy index, lastEventId=" << lastEventId
@@ -111,11 +147,12 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
     }
 
     // 3. In-place WAL replay using pathIndex_ for O(1) lookups
-    auto entries = IndexWAL::readAll(walPath_);
-    if (!entries.empty()) {
-        LOG_INFO("IndexPersistence", "Replaying " << entries.size() << " WAL entries (in-place mode)");
-        engine_->replayWALEntries(std::move(entries));
-        LOG_INFO("IndexPersistence", "WAL replay done, liveRecords=" << engine_->liveRecordCount());
+    for (const auto& segment : walSegments(walPath_)) {
+        auto entries = IndexWAL::readAll(segment);
+        if (!entries.empty()) {
+            LOG_INFO("IndexPersistence", "Replaying " << entries.size() << " WAL entries from " << segment);
+            engine_->replayWALEntries(std::move(entries));
+        }
     }
 
     return lastEventId;
@@ -123,7 +160,9 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
 
 void IndexPersistence::attachWAL() {
     auto newWal = std::make_shared<IndexWAL>();
-    if (newWal->open(walPath_)) {
+    auto segments = walSegments(walPath_);
+    std::string activePath = segments.empty() ? walPath_ : segments.back();
+    if (newWal->open(activePath)) {
         {
             std::lock_guard<std::mutex> lock(walMutex_);
             wal_ = newWal;
@@ -142,6 +181,8 @@ void IndexPersistence::flush(uint64_t lastEventId, bool force) {
 }
 
 void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
+    std::lock_guard<std::mutex> compactionLock(compactionMutex_);
+
     // Skip logic:
     //   - No WAL → skip.
     //   - force=true: skip only if WAL file is header-only (no entries at all,
@@ -150,21 +191,22 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
     static constexpr size_t kWALHeaderSize = 2 * sizeof(uint32_t); // magic + version
     {
         std::lock_guard<std::mutex> lock(walMutex_);
+        const bool pendingSegments = walSegments(walPath_).size() > 1;
         if (!wal_) {
             LOG_INFO("IndexPersistence", "Skipping flush — no WAL");
             return;
         }
         if (force) {
-            if (wal_->currentSize() <= kWALHeaderSize) {
+            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments) {
                 LOG_INFO("IndexPersistence", "Skipping flush — WAL is empty");
                 return;
             }
         } else {
-            if (!wal_->isDirty()) {
+            if (!wal_->isDirty() && !pendingSegments) {
                 LOG_INFO("IndexPersistence", "Skipping flush — no mutations since last flush");
                 return;
             }
-            if (wal_->entryCount() < kCompactThreshold) {
+            if (wal_->entryCount() < kCompactThreshold && !pendingSegments) {
                 LOG_INFO("IndexPersistence", "Skipping flush — only "
                           << wal_->entryCount() << " entries (threshold=" << kCompactThreshold << ")");
                 return;
@@ -182,13 +224,13 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
     if (tombstoneRatio > kTombstoneCompactRatio) {
         LOG_INFO("IndexPersistence", "Tombstone ratio " << (tombstoneRatio * 100)
                   << "% > " << (kTombstoneCompactRatio * 100) << "% — triggering full compaction");
-        fullCompact(metadata);
+        fullCompactLocked(metadata);
         return;
     }
 
     // 1. Open a fresh WAL before detaching the old one
     auto newWal = std::make_shared<IndexWAL>();
-    std::string newWalPath = walPath_ + ".new";
+    std::string newWalPath = nextWalSegment(walPath_);
     if (!newWal->open(newWalPath)) {
         LOG_ERROR("IndexPersistence", "Failed to open new WAL for flush");
         return;
@@ -210,33 +252,25 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
         LOG_INFO("IndexPersistence", "Flushed v6 flat index, lastEventId=" << metadata.lastEventId
                   << ", liveRecords=" << engine_->liveRecordCount());
     } else {
-        LOG_ERROR("IndexPersistence", "Failed to flush index — rolling back WAL");
-        {
-            std::lock_guard<std::mutex> lock(walMutex_);
-            wal_ = oldWal;
-        }
-        engine_->attachWAL(oldWal);
-        newWal->closeAndDelete();
+        LOG_ERROR("IndexPersistence", "Failed to flush index — retaining WAL segments");
         return;
     }
 
-    // 4. Rename new WAL to replace old
-    if (rename(newWalPath.c_str(), walPath_.c_str()) != 0) {
-        LOG_ERROR("IndexPersistence", "Failed to rename WAL: " << newWalPath
-                  << " -> " << walPath_ << " (errno=" << errno << ": " << strerror(errno) << ")");
-    } else {
-        std::lock_guard<std::mutex> lock(walMutex_);
-        if (wal_) wal_->updatePath(walPath_);
-    }
-
-    // 5. Close old WAL
     if (oldWal) oldWal->close();
+    for (const auto& segment : walSegments(walPath_)) {
+        if (segment != newWalPath) std::remove(segment.c_str());
+    }
 }
 
 void IndexPersistence::fullCompact(const IndexMetadata& metadata) {
+    std::lock_guard<std::mutex> compactionLock(compactionMutex_);
+    fullCompactLocked(metadata);
+}
+
+void IndexPersistence::fullCompactLocked(const IndexMetadata& metadata) {
     // 1. Open a fresh WAL
     auto newWal = std::make_shared<IndexWAL>();
-    std::string newWalPath = walPath_ + ".new";
+    std::string newWalPath = nextWalSegment(walPath_);
     if (!newWal->open(newWalPath)) {
         LOG_ERROR("IndexPersistence", "Failed to open new WAL for full compaction");
         return;
@@ -262,9 +296,9 @@ void IndexPersistence::fullCompact(const IndexMetadata& metadata) {
     }
     if (!remap.empty() && contentIndex_) {
         contentIndex_->remapFileIndices(remap);
-        // Flush content index to disk so its base file stays in sync with the
-        // search engine's compacted indices.  Without this, the content base
-        // file retains old indices that point to wrong records after restart.
+        // Persist the remapped in-memory cache opportunistically.  Its on-disk
+        // records are path-keyed, so a failure here cannot create numeric-index
+        // aliasing after restart.
         if (contentPersistence_) {
             contentPersistence_->compact(true);
         }
@@ -275,27 +309,14 @@ void IndexPersistence::fullCompact(const IndexMetadata& metadata) {
         LOG_INFO("IndexPersistence", "Full compaction done, lastEventId=" << metadata.lastEventId
                   << ", liveRecords=" << engine_->liveRecordCount());
     } else {
-        LOG_ERROR("IndexPersistence", "Failed to write full compaction — rolling back WAL");
-        {
-            std::lock_guard<std::mutex> lock(walMutex_);
-            wal_ = oldWal;
-        }
-        engine_->attachWAL(oldWal);
-        newWal->closeAndDelete();
+        LOG_ERROR("IndexPersistence", "Failed to write full compaction — retaining WAL segments");
         return;
     }
 
-    // 5. Rename WAL
-    if (rename(newWalPath.c_str(), walPath_.c_str()) != 0) {
-        LOG_ERROR("IndexPersistence", "Failed to rename WAL: " << newWalPath
-                  << " -> " << walPath_);
-    } else {
-        std::lock_guard<std::mutex> lock(walMutex_);
-        if (wal_) wal_->updatePath(walPath_);
-    }
-
-    // 6. Close old WAL
     if (oldWal) oldWal->close();
+    for (const auto& segment : walSegments(walPath_)) {
+        if (segment != newWalPath) std::remove(segment.c_str());
+    }
 }
 
 double IndexPersistence::computeAdaptiveInterval() const {

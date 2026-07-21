@@ -9,6 +9,7 @@ final class FileIconCache: ObservableObject {
     private let cache = NSCache<NSString, NSImage>()
     private let appIconQueue = DispatchQueue(label: "com.maceverything.app-icons", qos: .utility)
     private var loadingAppKeys: Set<String> = []
+    private let loadingAppKeysLock = NSLock()
     @Published private(set) var revision: UInt64 = 0
 
     private init() {
@@ -59,7 +60,10 @@ final class FileIconCache: ObservableObject {
         }
 
         let placeholder = genericIcon(key: "type:application", contentType: .applicationBundle)
-        guard loadingAppKeys.insert(key).inserted else { return placeholder }
+        loadingAppKeysLock.lock()
+        let inserted = loadingAppKeys.insert(key).inserted
+        loadingAppKeysLock.unlock()
+        guard inserted else { return placeholder }
 
         appIconQueue.async { [weak self] in
             guard let self else { return }
@@ -67,7 +71,9 @@ final class FileIconCache: ObservableObject {
             self.cache.setObject(image, forKey: key as NSString)
             DispatchQueue.main.async { [weak self] in
                 guard let self else { return }
+                self.loadingAppKeysLock.lock()
                 self.loadingAppKeys.remove(key)
+                self.loadingAppKeysLock.unlock()
                 self.revision &+= 1
             }
         }

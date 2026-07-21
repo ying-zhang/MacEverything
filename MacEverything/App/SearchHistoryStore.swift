@@ -26,7 +26,8 @@ final class SearchHistoryStore {
 
         let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
         guard trimmed.count >= Self.minQueryLength,
-              !trimmed.lowercased().hasPrefix("infile:") else { return }
+              !trimmed.lowercased().hasPrefix("infile:"),
+              !trimmed.lowercased().hasPrefix("content:") else { return }
 
         let lower = trimmed.lowercased()
         if let idx = entries.firstIndex(where: { $0.query.lowercased() == lower }) {

@@ -88,6 +88,9 @@ private:
     double currentIntervalSec_ = 0;
     mutable std::mutex walMutex_;
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
+    std::mutex compactionMutex_;
+
+    void fullCompactLocked(const IndexMetadata& metadata);
 
     /// Compute the next auto-compaction interval based on dirty ratio and WAL size.
     double computeAdaptiveInterval() const;

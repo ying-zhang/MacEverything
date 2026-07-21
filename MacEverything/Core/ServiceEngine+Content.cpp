@@ -24,7 +24,9 @@ void ServiceEngine::setupContentPersistence() {
     std::string basePath = cacheDir + "/content_index.bin";
     std::string walPath  = cacheDir + "/content_index.wal";
 
-    auto newContentPersistence = std::make_shared<ContentIndexPersistence>(contentIndex, basePath, walPath);
+    auto newContentPersistence = std::make_shared<ContentIndexPersistence>(
+        contentIndex, basePath, walPath,
+        [engine](const std::string& path) { return engine->indexForPath(path); });
     setContentPersistence(newContentPersistence);
     newContentPersistence->load();
 
@@ -78,6 +80,7 @@ void ServiceEngine::startContentIndexing() {
     isContentIndexing_.store(true, std::memory_order_relaxed);
     cancelContentIndexing_.store(false, std::memory_order_relaxed);
     uint64_t myGeneration = contentIndexGeneration_.load(std::memory_order_acquire);
+    contentIndexingActiveGeneration_.store(myGeneration, std::memory_order_release);
     uint64_t lifecycleGeneration = lifecycleGeneration_.load(std::memory_order_acquire);
 
     LOG_INFO("ServiceEngine", "Content indexing started");
@@ -87,6 +90,9 @@ void ServiceEngine::startContentIndexing() {
     dispatch_group_enter(contentIndexingGroup_);
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
         if (!this->isGenerationCurrent(lifecycleGeneration)) {
+            if (this->contentIndexingActiveGeneration_.load(std::memory_order_acquire) == myGeneration) {
+                this->isContentIndexing_.store(false, std::memory_order_release);
+            }
             dispatch_group_leave(this->contentIndexingGroup_);
             return;
         }
@@ -134,10 +140,11 @@ void ServiceEngine::startContentIndexing() {
             if (update == ContentIndexUpdate::Upserted && contentPersistence) {
                 ContentFileInfo info;
                 if (contentIndex->getFileInfo(entry.idx, info)) {
-                    contentPersistence->walAppendAdd(entry.idx, info.contentHash, info.trigrams, info.lastModTime);
+                    contentPersistence->walAppendAdd(entry.idx, entry.fullPath, info.contentHash,
+                                                     info.trigrams, info.lastModTime);
                 }
             } else if (update == ContentIndexUpdate::Removed && contentPersistence) {
-                contentPersistence->walAppendRemove(entry.idx);
+                contentPersistence->walAppendRemove(entry.idx, entry.fullPath);
             } else if (update == ContentIndexUpdate::Unchanged && contentIndex->isFileIndexed(entry.idx)) {
                 skipped->fetch_add(1, std::memory_order_relaxed);
             }
@@ -161,7 +168,9 @@ void ServiceEngine::startContentIndexing() {
                  << totalIndexed << " files (" << skippedCount
                  << " skipped by modTime) in " << contentElapsed << "s");
 
-        this->isContentIndexing_.store(false, std::memory_order_relaxed);
+        if (this->contentIndexingActiveGeneration_.load(std::memory_order_acquire) == myGeneration) {
+            this->isContentIndexing_.store(false, std::memory_order_release);
+        }
 
         if (this->onContentIndexComplete) {
             this->onContentIndexComplete(totalIndexed);
@@ -241,6 +250,14 @@ void ServiceEngine::clearContentIndex() {
     fs::remove(cacheDir + "/content_index.bin", ec);
     ec.clear();
     fs::remove(cacheDir + "/content_index.wal", ec);
+    ec.clear();
+    for (const auto& entry : fs::directory_iterator(cacheDir, ec)) {
+        if (ec) break;
+        if (entry.path().filename().string().rfind("content_index.wal.seg.", 0) == 0) {
+            fs::remove(entry.path(), ec);
+            ec.clear();
+        }
+    }
 
     auto newIndex = std::make_shared<ContentIndex>();
     newIndex->setExtensions(exts);
@@ -285,7 +302,7 @@ void ServiceEngine::updateContentForPath(
         if (fileIndex != UINT32_MAX && contentIndex->isFileIndexed(fileIndex)) {
             contentIndex->removeFile(fileIndex);
             if (contentPersistence) {
-                contentPersistence->walAppendRemove(fileIndex);
+                contentPersistence->walAppendRemove(fileIndex, fullPath);
             }
         }
     } else {
@@ -299,10 +316,11 @@ void ServiceEngine::updateContentForPath(
             if (update == ContentIndexUpdate::Upserted && contentPersistence) {
                 ContentFileInfo info;
                 if (contentIndex->getFileInfo(fileIndex, info)) {
-                    contentPersistence->walAppendAdd(fileIndex, info.contentHash, info.trigrams, info.lastModTime);
+                    contentPersistence->walAppendAdd(fileIndex, fullPath, info.contentHash,
+                                                     info.trigrams, info.lastModTime);
                 }
             } else if (update == ContentIndexUpdate::Removed && contentPersistence) {
-                contentPersistence->walAppendRemove(fileIndex);
+                contentPersistence->walAppendRemove(fileIndex, fullPath);
             }
         }
     }

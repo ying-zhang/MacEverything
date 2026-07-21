@@ -23,6 +23,9 @@ class QueryDateParser {
     }
 
     static time_t safeMktime(struct tm* t) {
+        // The caller may have changed a calendar field after a previous
+        // mktime() call.  Ask libc to recalculate DST for the new date.
+        t->tm_isdst = -1;
         time_t result = mktime(t);
         return (result == static_cast<time_t>(-1)) ? 0 : result;
     }

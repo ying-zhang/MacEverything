@@ -251,7 +251,7 @@ void SearchEngine::queryDirList(const ParsedQuery& pq,
 
         // Look up in lowerPathLookup_ (case-insensitive, matches namePool_)
         auto it = lowerPathLookup_.find(fullDirPath);
-        if (it == pathLookup_.end()) continue;
+        if (it == lowerPathLookup_.end()) continue;
 
         uint32_t childPathIdx = it->second;
         if (childPathIdx < pathIdxToRecords_.size()) {

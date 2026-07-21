@@ -121,4 +121,39 @@ static void runReviewRegressionTests() {
     }
 
     std::cout << "\n";
+
+    // A directory with no indexed children must not dereference a missing
+    // lowerPathLookup_ entry in DIR_LIST mode.
+    {
+        SearchEngine engine;
+        engine.loadRecords({{"Dir", "/review_parent", 2, 0, 100}});
+        auto results = engine.query("/review_parent/Dir/*", 100, false);
+        check(results.empty(), "Review: DIR_LIST missing child path returns empty safely");
+    }
+
+    // Content persistence resolves stable paths to the current runtime index.
+    {
+        auto tmpDir = fs::temp_directory_path() /
+            ("maceverything_content_identity_" + std::to_string(getpid()));
+        fs::remove_all(tmpDir);
+        fs::create_directories(tmpDir);
+        auto filePath = (tmpDir / "identity.txt").string();
+        { std::ofstream out(filePath); out << "stable path identity"; }
+        auto basePath = (tmpDir / "content.bin").string();
+
+        ContentIndex saved;
+        saved.setExtensions({"txt"});
+        check(saved.indexFile(5, filePath) == ContentIndexUpdate::Upserted,
+              "Review: content identity fixture indexed");
+        check(saved.saveToFile(basePath), "Review: path-keyed content base saved");
+
+        ContentIndex loaded;
+        check(loaded.loadFromFile(basePath, [&](const std::string& path) {
+                  return path == filePath ? uint32_t{42} : UINT32_MAX;
+              }), "Review: path-keyed content base loaded");
+        ContentFileInfo info;
+        check(loaded.getFileInfo(42, info) && info.fullPath == filePath,
+              "Review: content path resolves to remapped runtime index");
+        fs::remove_all(tmpDir);
+    }
 }

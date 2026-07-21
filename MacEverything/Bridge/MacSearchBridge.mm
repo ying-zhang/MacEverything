@@ -327,9 +327,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
 - (void)rescanSubtree:(NSString *)dirPath
            completion:(nullable void (^)(void))completion {
     if (completion) {
-        auto block = [completion]() {
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(); });
-        };
+        auto block = [completion]() { completion(); };
         _serviceEngine->rescanSubtree(std::string([dirPath UTF8String]), block);
     } else {
         _serviceEngine->rescanSubtree(std::string([dirPath UTF8String]));
@@ -343,9 +341,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
 - (void)removeSubtree:(NSString *)pathPrefix
            completion:(nullable void (^)(uint32_t removedCount))completion {
     if (completion) {
-        auto block = [completion](uint32_t removed) {
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(removed); });
-        };
+        auto block = [completion](uint32_t removed) { completion(removed); };
         _serviceEngine->removeSubtree(std::string([pathPrefix UTF8String]), block);
     } else {
         _serviceEngine->removeSubtree(std::string([pathPrefix UTF8String]));

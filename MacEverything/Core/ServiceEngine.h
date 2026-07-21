@@ -94,6 +94,9 @@ public:
 
     uint32_t recordCount();
     uint32_t liveRecordCount();
+    bool isContentPathAllowed(const std::string& path) const {
+        return isPathAllowedByConfig(path, true);
+    }
 
     // ── Callbacks (set before starting) ──
     IndexChangedCallback onIndexChanged;
@@ -185,6 +188,7 @@ private:
     std::atomic<bool> isScanning_{false};
     std::atomic<bool> isMonitoring_{false};
     std::atomic<bool> isContentIndexing_{false};
+    std::atomic<uint64_t> contentIndexingActiveGeneration_{0};
     std::atomic<bool> shuttingDown_{false};
     std::atomic<bool> startupCompleted_{false};
     std::atomic<bool> isSyncing_{false};
