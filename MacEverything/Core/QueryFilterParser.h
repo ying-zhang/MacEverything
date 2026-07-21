@@ -160,7 +160,9 @@ private:
 
         if (numEnd == 0) return 0;
 
-        double value = std::stod(s.substr(0, numEnd));
+        double value = 0;
+        try { value = std::stod(s.substr(0, numEnd)); }
+        catch (...) { return 0; }
 
         // Parse unit suffix
         std::string unit = me::toLower(s.substr(numEnd));
@@ -177,6 +179,7 @@ private:
         }
         // "b" or empty = bytes, no multiplier
 
+        if (value < 0) value = 0;
         return static_cast<uint64_t>(value * multiplier);
     }
 };

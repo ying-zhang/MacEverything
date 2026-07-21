@@ -157,7 +157,7 @@ struct ContentView: View {
                         Text("·")
                             .foregroundColor(.secondary)
                         if viewModel.resultLimitReached {
-                            Text(L10n.tr("More than %d results", Int(settings.snapshot.maxResults)))
+                            Text(L10n.tr("More than %d results", viewModel.effectiveMaxResults))
                                 .foregroundColor(.secondary)
                                 .accessibilityIdentifier("matchCount")
                         } else {
@@ -194,7 +194,20 @@ struct ContentView: View {
                 }
             } else if viewModel.isContentSearch {
                 // Content search results
-                if viewModel.contentResults.isEmpty && !viewModel.contentKeyword.isEmpty && service.scanComplete {
+                if viewModel.contentSearchUnavailable {
+                    VStack(spacing: 8) {
+                        Spacer()
+                        Image(systemName: "text.magnifyingglass")
+                            .font(.system(size: 36))
+                            .foregroundColor(.secondary.opacity(0.5))
+                        Text(L10n.tr("Content indexing is disabled"))
+                            .font(.headline)
+                        Text(L10n.tr("Enable text content indexing in Settings to use content search."))
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        Spacer()
+                    }
+                } else if viewModel.contentResults.isEmpty && !viewModel.contentKeyword.isEmpty && service.scanComplete {
                     VStack(spacing: 8) {
                         Spacer()
                         if service.isContentIndexing {
@@ -253,7 +266,9 @@ struct ContentView: View {
                     if viewModel.totalMatches > 0 {
                         HStack {
                             Spacer()
-                            Text(L10n.tr("%d content matches", viewModel.contentResults.count))
+                            Text(viewModel.resultLimitReached
+                                 ? L10n.tr("More than %d results", viewModel.effectiveMaxResults)
+                                 : L10n.tr("%d content matches", viewModel.contentResults.count))
                                 .font(.callout)
                                 .foregroundColor(.secondary)
                                 .padding(8)
@@ -381,7 +396,7 @@ struct ContentView: View {
                     HStack {
                         Spacer()
                         Text(viewModel.resultLimitReached
-                             ? L10n.tr("Result %d, total results limited to %d; add search terms.", viewModel.displayItems.count, Int(settings.snapshot.maxResults))
+                             ? L10n.tr("Result %d, total results limited to %d; add search terms.", viewModel.displayItems.count, viewModel.effectiveMaxResults)
                              : L10n.tr("Showing %d of %d results", viewModel.displayItems.count, viewModel.totalMatches))
                             .font(.callout)
                             .foregroundColor(.secondary)
@@ -701,6 +716,12 @@ private struct ColumnResizeHandle: ViewModifier {
                         NSCursor.resizeLeftRight.push()
                         isCursorPushed = true
                     } else if !hovering, isCursorPushed {
+                        NSCursor.pop()
+                        isCursorPushed = false
+                    }
+                }
+                .onDisappear {
+                    if isCursorPushed {
                         NSCursor.pop()
                         isCursorPushed = false
                     }

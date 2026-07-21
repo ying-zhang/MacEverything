@@ -29,6 +29,14 @@ static void runWalRaceIndexPersistenceTest() {
         engine, basePath, walPath, pagesPathFor(basePath), ptablePathFor(basePath), basePath + ".v6");
     persistence->attachWAL();
 
+    FileRecord seed;
+    seed.name = "wal-seed.txt";
+    seed.path = "/test/dir";
+    seed.type = 1;
+    seed.size = 1;
+    seed.modTime = time(nullptr);
+    engine->addRecord(std::move(seed));
+
     // Test 1: Concurrent compact() calls should not race on wal_
     std::atomic<bool> stop{false};
     std::atomic<int> compactCount{0};
@@ -51,11 +59,17 @@ static void runWalRaceIndexPersistenceTest() {
     for (auto& t : compactors) t.join();
 
     check(compactCount.load() > 0, "H1: Concurrent compacts completed without crash");
+    size_t activeWalCount = 0;
+    for (const auto& entry : fs::directory_iterator(tmpDir)) {
+        const auto name = entry.path().filename().string();
+        if (name == "idx.wal" || name.rfind("idx.wal.seg.", 0) == 0) activeWalCount++;
+    }
+    check(activeWalCount == 1, "H1: Concurrent compacts retain exactly one active WAL");
 
     // Test 2: attachWAL + compact() interleaving
     persistence->attachWAL();
     persistence->compact(999, /*force=*/true);
-    check(engine->liveRecordCount() == 100, "H1: attachWAL + compact interleaving preserved all records");
+    check(engine->liveRecordCount() == 101, "H1: attachWAL + compact interleaving preserved all records");
 
     persistence.reset();
     fs::remove_all(tmpDir);

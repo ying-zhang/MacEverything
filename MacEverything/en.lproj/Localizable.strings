@@ -20,6 +20,8 @@
 "Indexed %d / %d files" = "Indexed %d / %d files";
 "Search results will appear after indexing completes" = "Search results will appear after indexing completes";
 "No content matches found" = "No content matches found";
+"Content indexing is disabled" = "Content indexing is disabled";
+"Enable text content indexing in Settings to use content search." = "Enable text content indexing in Settings to use content search.";
 "No files indexed. Configure extensions in Content Settings." = "No files indexed. Configure extensions in Content Settings.";
 "Type a keyword after infile: to search file contents" = "Type a keyword after infile: to search file contents";
 "%d content matches" = "%d content matches";

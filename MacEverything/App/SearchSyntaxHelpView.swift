@@ -98,7 +98,7 @@ struct SearchSyntaxHelpView: View {
 
     private var dateFilterSection: some View {
         SyntaxSection(title: L10n.tr("Date Filter")) {
-            SyntaxNote(L10n.tr("Prefixes: dm: (modified)  dc: (created)  da: (accessed)"))
+            SyntaxNote(L10n.tr("Prefix: dm: (modified)  Also: datemodified:"))
             SyntaxRow("dm:today", L10n.tr("Modified today"))
             SyntaxRow("dm:yesterday", L10n.tr("Modified yesterday"))
             SyntaxRow("dm:thisweek", L10n.tr("Modified this week"))
@@ -108,7 +108,7 @@ struct SearchSyntaxHelpView: View {
             SyntaxRow("dm:2024-01-15", L10n.tr("Modified on specific date"))
             SyntaxRow("dm:>2024-01", L10n.tr("Modified after January 2024"))
             SyntaxRow("dm:2024-01..2024-06", L10n.tr("Modified between Jan and Jun 2024"))
-            SyntaxNote(L10n.tr("Also: datemodified:  datecreated:  dateaccessed:"))
+            SyntaxNote(L10n.tr("dc: da: also available (currently use modified time)"))
         }
     }
 

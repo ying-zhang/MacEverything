@@ -423,8 +423,10 @@ void ServiceEngine::removeSubtree(const std::string& pathPrefix,
             if (ci) {
                 auto cp = safeContentPersistence();
                 for (uint32_t idx : removedIndices) {
+                    ContentFileInfo info;
+                    bool hadContent = ci->getFileInfo(idx, info);
                     ci->removeFile(idx);
-                    if (cp) cp->walAppendRemove(idx);
+                    if (cp && hadContent) cp->walAppendRemove(idx, info.fullPath);
                 }
             }
         }

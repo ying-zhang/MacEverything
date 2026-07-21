@@ -80,25 +80,6 @@ nonisolated private func fileItem(from result: MEFileResult) -> FileItem {
     )
 }
 
-nonisolated private func isAllowedContentSearchPath(
-    _ path: String,
-    standardizedRoots: [String],
-    standardizedExcluded: [String]
-) -> Bool {
-    let standardizedPath = URL(fileURLWithPath: path).standardizedFileURL.path
-    let insideRoot = standardizedRoots.isEmpty || standardizedRoots.contains { root in
-        standardizedPath == root || standardizedPath.hasPrefix(root + "/")
-    }
-    guard insideRoot else { return false }
-
-    for excluded in standardizedExcluded {
-        if standardizedPath == excluded || standardizedPath.hasPrefix(excluded + "/") {
-            return false
-        }
-    }
-    return true
-}
-
 @MainActor
 final class SearchServiceModel: ObservableObject {
     static let shared = SearchServiceModel()
@@ -292,7 +273,15 @@ final class SearchServiceModel: ObservableObject {
 
     func refreshContentIndexInfo() {
         let fileManager = FileManager.default
-        let paths = [SearchViewModel.contentIndexPath, SearchViewModel.contentWalPath]
+        var paths = [SearchViewModel.contentIndexPath]
+        if let names = try? fileManager.contentsOfDirectory(atPath: SearchViewModel.cacheDir) {
+            paths.append(contentsOf: names.compactMap { name in
+                guard name == "content_index.wal" || name.hasPrefix("content_index.wal.seg.") else {
+                    return nil
+                }
+                return (SearchViewModel.cacheDir as NSString).appendingPathComponent(name)
+            })
+        }
         var total: UInt64 = 0
         for path in paths {
             guard let attrs = try? fileManager.attributesOfItem(atPath: path),
@@ -424,6 +413,7 @@ class SearchViewModel: ObservableObject {
     @Published var showingRecent: Bool = false
     @Published var isContentSearch: Bool = false
     @Published var contentResults: [ContentFileItem] = []
+    @Published var contentSearchUnavailable: Bool = false
     @Published var ghostSuggestion: String? = nil
     @Published var selectedItemID: String? = nil
     @Published var selectedItemIDs: Set<String> = []
@@ -554,6 +544,7 @@ class SearchViewModel: ObservableObject {
             displayItems = []
             showingRecent = false
             isContentSearch = false
+            contentSearchUnavailable = false
             contentResults = []
             contentKeyword = "" // H-9: reset cached keyword
             ghostSuggestion = nil
@@ -581,7 +572,9 @@ class SearchViewModel: ObservableObject {
         }
 
         let lowerText = text.lowercased()
-        if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
+        let isContentPrefix = lowerText.hasPrefix("infile:") || lowerText.hasPrefix("content:")
+        if isContentPrefix, settings.snapshot.contentIndexingEnabled {
+            contentSearchUnavailable = false
             isContentSearch = true
             displayItems = []
             cachedResults = []
@@ -590,7 +583,8 @@ class SearchViewModel: ObservableObject {
             loadedCount = 0
             clearSelection()
 
-            let keyword = String(text.dropFirst(7))
+            let prefixLen = lowerText.hasPrefix("infile:") ? 7 : 8
+            let keyword = String(text.dropFirst(prefixLen))
             contentKeyword = keyword // H-9: cache computed keyword
             guard !keyword.isEmpty else {
                 contentResults = []
@@ -606,8 +600,18 @@ class SearchViewModel: ObservableObject {
                 guard !Task.isCancelled else { return }
                 performContentSearch(keyword)
             }
+        } else if isContentPrefix {
+            isContentSearch = true
+            contentSearchUnavailable = true
+            contentResults = []
+            contentKeyword = currentContentSearchKeyword()
+            totalMatches = 0
+            resultLimitReached = false
+            queryTimeMs = 0
+            clearSelection()
         } else {
             isContentSearch = false
+            contentSearchUnavailable = false
             contentResults = []
             contentKeyword = "" // H-9: reset cached keyword
 
@@ -670,25 +674,23 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    private static let contentDisplayLimit = 200
+
+    var effectiveMaxResults: Int {
+        isContentSearch ? Self.contentDisplayLimit : Int(settings.snapshot.maxResults)
+    }
+
     private func performContentSearch(_ keyword: String) {
         let bridge = self.bridge
         let gen = searchGeneration
-        let snapshot = settings.snapshot
-        let stdRoots = snapshot.contentSearchRoots.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
-        let stdExcluded = snapshot.contentSearchExcludedPaths.map { URL(fileURLWithPath: $0).standardizedFileURL.path }
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
-            let results = bridge.queryContent(keyword, maxResults: 200)
+            let results = bridge.queryContent(keyword, maxResults: UInt32(Self.contentDisplayLimit + 1))
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
 
             var items: [ContentFileItem] = []
-            items.reserveCapacity(results.count)
-            for r in results {
-                guard isAllowedContentSearchPath(
-                    r.filePath,
-                    standardizedRoots: stdRoots,
-                    standardizedExcluded: stdExcluded
-                ) else { continue }
+            items.reserveCapacity(min(results.count, Self.contentDisplayLimit))
+            for r in results.prefix(Self.contentDisplayLimit) {
                 items.append(ContentFileItem(
                     id: "\(r.filePath):\(r.matchOffset)",
                     fileName: r.fileName,
@@ -699,12 +701,13 @@ class SearchViewModel: ObservableObject {
                 ))
             }
             let finalItems = items
+            let limitReached = results.count > Self.contentDisplayLimit
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
                 self.contentResults = finalItems
                 self.totalMatches = finalItems.count
-                self.resultLimitReached = false
+                self.resultLimitReached = limitReached
                 self.queryTimeMs = elapsed
             }
         }
@@ -733,6 +736,7 @@ class SearchViewModel: ObservableObject {
 
     func clearContentResults() {
         contentResults = []
+        contentSearchUnavailable = false
         totalMatches = 0
         resultLimitReached = false
         queryTimeMs = 0
@@ -1033,7 +1037,8 @@ class SearchViewModel: ObservableObject {
         if !focused {
             // Record search text to history when window loses focus
             let text = searchText
-            if text.count >= 2 && !text.lowercased().hasPrefix("infile:") {
+            let lower = text.lowercased()
+            if text.count >= 2 && !lower.hasPrefix("infile:") && !lower.hasPrefix("content:") {
                 historyStore.recordQuery(text)
             }
         }
@@ -1126,8 +1131,12 @@ class SearchViewModel: ObservableObject {
         if !contentKeyword.isEmpty {
             return contentKeyword
         }
-        if searchText.lowercased().hasPrefix("infile:") {
+        let lower = searchText.lowercased()
+        if lower.hasPrefix("infile:") {
             return String(searchText.dropFirst(7))
+        }
+        if lower.hasPrefix("content:") {
+            return String(searchText.dropFirst(8))
         }
         return ""
     }
@@ -1183,7 +1192,8 @@ class SearchViewModel: ObservableObject {
 
     private func updateGhostSuggestion() {
         let text = searchText
-        guard !text.isEmpty, !text.lowercased().hasPrefix("infile:") else {
+        let lowerGhost = text.lowercased()
+        guard !text.isEmpty, !lowerGhost.hasPrefix("infile:"), !lowerGhost.hasPrefix("content:") else {
             ghostSuggestion = nil
             return
         }
@@ -1204,7 +1214,8 @@ class SearchViewModel: ObservableObject {
     private func scheduleHistoryRecord() {
         settledTask?.cancel()
         let text = searchText
-        guard text.count >= 2, !text.lowercased().hasPrefix("infile:") else { return }
+        let lowerHist = text.lowercased()
+        guard text.count >= 2, !lowerHist.hasPrefix("infile:"), !lowerHist.hasPrefix("content:") else { return }
         settledTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 2_000_000_000) // 2 seconds
             guard !Task.isCancelled, let self, self.searchText == text else { return }
@@ -1242,13 +1253,25 @@ class SearchViewModel: ObservableObject {
         allowQuickFilterAutoResetForCurrentSearch = true
         showingRecent = false
         let lowerText = searchText.lowercased()
-        if lowerText.hasPrefix("infile:"), settings.snapshot.contentIndexingEnabled {
-            let keyword = String(searchText.dropFirst(7))
+        let isSubmitContent = lowerText.hasPrefix("infile:") || lowerText.hasPrefix("content:")
+        if isSubmitContent, settings.snapshot.contentIndexingEnabled {
+            contentSearchUnavailable = false
+            let prefixLen = lowerText.hasPrefix("infile:") ? 7 : 8
+            let keyword = String(searchText.dropFirst(prefixLen))
             contentKeyword = keyword
             isContentSearch = true
             performContentSearch(keyword)
+        } else if isSubmitContent {
+            isContentSearch = true
+            contentSearchUnavailable = true
+            contentKeyword = currentContentSearchKeyword()
+            contentResults = []
+            totalMatches = 0
+            resultLimitReached = false
+            queryTimeMs = 0
         } else {
             isContentSearch = false
+            contentSearchUnavailable = false
             performSearch(searchText)
         }
         scheduleHistoryRecord()
