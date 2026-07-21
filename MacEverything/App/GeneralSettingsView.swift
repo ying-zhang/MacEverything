@@ -11,6 +11,8 @@ struct GeneralSettingsView: View {
     @State private var newContentSearchExcludedPath = ""
     @State private var showingResetIndexDefaultsConfirmation = false
     @State private var showingClearContentIndexConfirmation = false
+    @State private var showingResetAppearanceConfirmation = false
+    @State private var fontSearchText = ""
     @State private var mainIndexBaseBytes: UInt64 = 0
     @State private var mainIndexWalBytes: UInt64 = 0
     @State private var mainIndexLegacyBytes: UInt64 = 0
@@ -66,6 +68,14 @@ struct GeneralSettingsView: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    appearanceSection
+                }
+                .padding()
+            }
+            .tabItem { Text(L10n.tr("Appearance")) }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
                     startupSection
                     shortcutSection
                     serviceSection
@@ -76,7 +86,7 @@ struct GeneralSettingsView: View {
             }
             .tabItem { Text(L10n.tr("General")) }
         }
-        .frame(width: 720, height: 620)
+        .frame(width: 720, height: 660)
         .alert(L10n.tr("Reset Index Defaults?"), isPresented: $showingResetIndexDefaultsConfirmation) {
             Button(L10n.tr("Reset"), role: .destructive) {
                 settings.resetIndexDefaults()
@@ -93,6 +103,14 @@ struct GeneralSettingsView: View {
             Button(L10n.tr("Cancel"), role: .cancel) {}
         } message: {
             Text(L10n.tr("This removes the persisted content index files and clears current content search data."))
+        }
+        .alert(L10n.tr("Reset Appearance Defaults?"), isPresented: $showingResetAppearanceConfirmation) {
+            Button(L10n.tr("Reset"), role: .destructive) {
+                settings.resetAppearanceDefaults()
+            }
+            Button(L10n.tr("Cancel"), role: .cancel) {}
+        } message: {
+            Text(L10n.tr("This will reset theme, colors, font, font size, and row height to defaults."))
         }
         .onAppear {
             refreshContentIndexInfo()
@@ -421,13 +439,142 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Show modified date"), isOn: $settings.showModifiedDate)
             Toggle(L10n.tr("Show content snippets"), isOn: $settings.showContentSnippets)
 
-            Picker(L10n.tr("Result Density"), selection: $settings.resultDensity) {
-                ForEach(ResultDensity.allCases) { density in
-                    Text(density.title).tag(density)
+            BoundedIntegerControl(
+                title: L10n.tr("Result Row Height"),
+                value: rowHeightIntBinding,
+                range: 24...80,
+                step: 2
+            )
+
+            Toggle(L10n.tr("Show file thumbnails"), isOn: $settings.showThumbnails)
+            Text(L10n.tr("Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+        }
+    }
+
+    private var rowHeightIntBinding: Binding<Int> {
+        Binding(
+            get: { Int(settings.resultRowHeight) },
+            set: { settings.resultRowHeight = CGFloat($0) }
+        )
+    }
+
+    private var appearanceSection: some View {
+        SettingsSection(title: L10n.tr("Appearance")) {
+            Picker(L10n.tr("Theme"), selection: $settings.appearanceMode) {
+                ForEach(AppearanceMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
                 }
             }
             .pickerStyle(.segmented)
+
+            GroupBox(L10n.tr("Light Mode Colors")) {
+                HStack {
+                    ColorPicker(L10n.tr("Background"), selection: lightBgBinding, supportsOpacity: false)
+                    Spacer()
+                    ColorPicker(L10n.tr("Text Color"), selection: lightTextBinding, supportsOpacity: false)
+                }
+                .padding(.vertical, 4)
+            }
+
+            GroupBox(L10n.tr("Dark Mode Colors")) {
+                HStack {
+                    ColorPicker(L10n.tr("Background"), selection: darkBgBinding, supportsOpacity: false)
+                    Spacer()
+                    ColorPicker(L10n.tr("Text Color"), selection: darkTextBinding, supportsOpacity: false)
+                }
+                .padding(.vertical, 4)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 6) {
+                Text(L10n.tr("Font Family"))
+                    .font(.subheadline)
+                    .foregroundColor(.secondary)
+                Picker("", selection: $settings.fontFamily) {
+                    Text(L10n.tr("System Default")).tag("")
+                    ForEach(filteredFontFamilies, id: \.self) { family in
+                        Text(family).tag(family)
+                    }
+                }
+                .labelsHidden()
+                TextField(L10n.tr("Search"), text: $fontSearchText)
+                    .textFieldStyle(.roundedBorder)
+            }
+
+            HStack {
+                Text(L10n.tr("Font Size"))
+                Slider(value: $settings.fontSize, in: 10...24, step: 1)
+                Text(String(format: "%.0f pt", settings.fontSize))
+                    .frame(width: 48, alignment: .trailing)
+            }
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text(L10n.tr("Preview"))
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+                Text(L10n.tr("The quick brown fox jumps over the lazy dog 0123456789"))
+                    .font(ThemeManager.shared.bodyFont)
+                    .foregroundColor(ThemeManager.shared.resolvedTextColor)
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(ThemeManager.shared.resolvedBackgroundColor)
+                    .cornerRadius(6)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
+                    )
+            }
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button(role: .destructive) {
+                    showingResetAppearanceConfirmation = true
+                } label: {
+                    Text(L10n.tr("Reset Appearance Defaults"))
+                }
+            }
         }
+    }
+
+    private var filteredFontFamilies: [String] {
+        let families = NSFontManager.shared.availableFontFamilies
+        if fontSearchText.isEmpty { return families }
+        return families.filter { $0.localizedCaseInsensitiveContains(fontSearchText) }
+    }
+
+    private var lightBgBinding: Binding<Color> {
+        Binding(
+            get: { Color(rgbaString: settings.lightBackgroundColor) ?? Color(nsColor: .windowBackgroundColor) },
+            set: { settings.lightBackgroundColor = $0.rgbaString ?? "" }
+        )
+    }
+
+    private var lightTextBinding: Binding<Color> {
+        Binding(
+            get: { Color(rgbaString: settings.lightTextColor) ?? .black },
+            set: { settings.lightTextColor = $0.rgbaString ?? "" }
+        )
+    }
+
+    private var darkBgBinding: Binding<Color> {
+        Binding(
+            get: { Color(rgbaString: settings.darkBackgroundColor) ?? Color(nsColor: .windowBackgroundColor) },
+            set: { settings.darkBackgroundColor = $0.rgbaString ?? "" }
+        )
+    }
+
+    private var darkTextBinding: Binding<Color> {
+        Binding(
+            get: { Color(rgbaString: settings.darkTextColor) ?? .white },
+            set: { settings.darkTextColor = $0.rgbaString ?? "" }
+        )
     }
 
     private var startupSection: some View {

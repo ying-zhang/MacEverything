@@ -189,7 +189,7 @@ struct HighlightedSearchField: NSViewRepresentable {
         let textView = HighlightedNSTextView()
         textView.isRichText = false
         textView.allowsUndo = true
-        textView.font = .systemFont(ofSize: 26)
+        textView.font = ThemeManager.shared.searchFieldNSFont
         textView.textColor = .labelColor
         textView.backgroundColor = .clear
         textView.drawsBackground = false
@@ -248,6 +248,12 @@ struct HighlightedSearchField: NSViewRepresentable {
         if textView.placeholderString != placeholder {
             textView.placeholderString = placeholder
             textView.needsDisplay = true
+        }
+
+        let expectedFont = ThemeManager.shared.searchFieldNSFont
+        if textView.font != expectedFont {
+            textView.font = expectedFont
+            context.coordinator.applyHighlighting(textView)
         }
 
         let shouldFocus = isFocused.wrappedValue || context.coordinator.lastFocusRequest != focusRequest
@@ -339,7 +345,7 @@ struct HighlightedSearchField: NSViewRepresentable {
             guard let textStorage = textView.textStorage else { return }
             let fullRange = NSRange(location: 0, length: textStorage.length)
             let text = textStorage.string
-            let font = NSFont.systemFont(ofSize: 26)
+            let font = ThemeManager.shared.searchFieldNSFont
 
             // Reset to default style
             textStorage.beginEditing()
@@ -429,7 +435,7 @@ class HighlightedNSTextView: NSTextView {
         // Draw ghost suggestion behind the real text (before super.draw paints the typed text)
         if let ghost = ghostSuggestion, !ghost.isEmpty, !string.isEmpty {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: font ?? NSFont.systemFont(ofSize: 26),
+                .font: font ?? ThemeManager.shared.searchFieldNSFont,
                 .foregroundColor: NSColor.secondaryLabelColor.withAlphaComponent(0.4),
             ]
             let ghostStr = NSAttributedString(string: ghost, attributes: attrs)
@@ -446,7 +452,7 @@ class HighlightedNSTextView: NSTextView {
         // Draw placeholder when empty
         if string.isEmpty && !placeholderString.isEmpty {
             let attrs: [NSAttributedString.Key: Any] = [
-                .font: font ?? NSFont.systemFont(ofSize: 26),
+                .font: font ?? ThemeManager.shared.searchFieldNSFont,
                 .foregroundColor: NSColor.placeholderTextColor,
             ]
             let placeholder = NSAttributedString(string: placeholderString, attributes: attrs)

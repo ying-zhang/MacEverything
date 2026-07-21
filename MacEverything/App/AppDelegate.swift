@@ -217,7 +217,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private func createSearchWindow(presentation: SearchWindowSupport.Presentation) -> NSWindow {
         NSApp.activate(ignoringOtherApps: true)
         let tabTarget = presentation == .tab ? targetSearchWindowForNewTab() : nil
-        let hostingController = NSHostingController(rootView: ContentView())
+        let hostingController = NSHostingController(rootView: ContentView().environmentObject(ThemeManager.shared))
         let win = NSWindow(contentViewController: hostingController)
         win.styleMask = NSWindow.StyleMask([.titled, .closable, .miniaturizable, .resizable])
         win.setContentSize(NSSize(width: 800, height: 600))

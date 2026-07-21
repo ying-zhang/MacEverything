@@ -9,6 +9,7 @@ struct MacEverythingApp: App {
     var body: some Scene {
         WindowGroup("MacEverything", id: "search") {
             ContentView()
+                .environmentObject(ThemeManager.shared)
         }
         .windowStyle(.titleBar)
         .defaultSize(width: 800, height: 600)

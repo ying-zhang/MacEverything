@@ -345,3 +345,25 @@
 "Names containing whitespace" = "Names containing whitespace";
 "Names containing non-ASCII characters" = "Names containing non-ASCII characters";
 "Filename cannot contain / or null characters" = "Filename cannot contain / or null characters";
+
+/* Appearance settings */
+"Follow System" = "Follow System";
+"Light" = "Light";
+"Dark" = "Dark";
+"Appearance" = "Appearance";
+"Theme" = "Theme";
+"Light Mode Colors" = "Light Mode Colors";
+"Dark Mode Colors" = "Dark Mode Colors";
+"Background" = "Background";
+"Text Color" = "Text Color";
+"Font Family" = "Font Family";
+"System Default" = "System Default";
+"Font Size" = "Font Size";
+"Reset Appearance Defaults" = "Reset Appearance Defaults";
+"Reset Appearance Defaults?" = "Reset Appearance Defaults?";
+"This will reset theme, colors, font, font size, and row height to defaults." = "This will reset theme, colors, font, font size, and row height to defaults.";
+"Result Row Height" = "Result Row Height";
+"Show file thumbnails" = "Show file thumbnails";
+"Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons." = "Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons.";
+"Preview" = "Preview";
+"The quick brown fox jumps over the lazy dog 0123456789" = "The quick brown fox jumps over the lazy dog 0123456789";

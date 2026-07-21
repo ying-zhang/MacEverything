@@ -7,6 +7,7 @@ struct ContentView: View {
     @ObservedObject private var service = SearchServiceModel.shared
     @ObservedObject private var searchOptions = SearchOptions.shared
     @ObservedObject private var settings = AppSettings.shared
+    @EnvironmentObject private var theme: ThemeManager
     @State private var scrollViewID = 0
     @State private var hostWindow: NSWindow?
     @FocusState private var isSearchFieldFocused: Bool
@@ -408,6 +409,7 @@ struct ContentView: View {
             }
         }
         .frame(minWidth: 600, minHeight: 400)
+        .background(theme.resolvedBackgroundColor)
         .onAppear {
             updateSearchWindowTitle()
         }

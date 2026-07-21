@@ -7,28 +7,30 @@ struct ContentResultRow: View {
     var onDelete: (() -> Void)?
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var iconCache = FileIconCache.shared
+    @EnvironmentObject private var theme: ThemeManager
     @State private var isHovered = false
 
     var body: some View {
-        let dense = settings.resultDensity == .compact
+        let rowHeight = settings.resultRowHeight
+        let iconSize = min(rowHeight - 8, 32)
         HStack(spacing: 8) {
             fileIcon(for: item.filePath)
                 .resizable()
                 .aspectRatio(contentMode: .fit)
-                .frame(width: dense ? 20 : 24, height: dense ? 20 : 24)
+                .frame(width: iconSize, height: iconSize)
 
-            VStack(alignment: .leading, spacing: dense ? 1 : 3) {
+            VStack(alignment: .leading, spacing: rowHeight < 40 ? 1 : 3) {
                 HStack(spacing: 6) {
                     Text(item.fileName)
-                        .font(.title3)
+                        .font(theme.bodyFont)
                         .fontWeight(.medium)
-                        .foregroundColor(.primary)
+                        .foregroundColor(theme.resolvedTextColor)
                         .lineLimit(1)
                         .help(item.fileName)
 
                     if settings.showPath {
                         Text(directoryPath(item.filePath))
-                            .font(.subheadline)
+                            .font(theme.bodyFont)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
                             .truncationMode(.middle)
@@ -36,15 +38,15 @@ struct ContentResultRow: View {
                     }
                 }
 
-                if settings.showContentSnippets {
+                if settings.showContentSnippets && rowHeight >= 40 {
                     highlightMatches(in: item.snippet, hints: hints, font: .caption, color: .secondary)
-                        .lineLimit(dense ? 1 : 2)
+                        .lineLimit(rowHeight < 60 ? 1 : 2)
                 }
             }
 
             Spacer()
         }
-        .padding(.vertical, dense ? 2 : 5)
+        .padding(.vertical, max(2, (rowHeight - 28) / 2))
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
