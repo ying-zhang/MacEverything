@@ -272,16 +272,24 @@ final class AppSettings: ObservableObject {
             let value = clamped(fontSize, 10.0, 24.0)
             if value != fontSize { fontSize = value; return }
             save(Double(value), Key.fontSize)
+            let minRowHeight = minRowHeightForFont
+            if resultRowHeight < minRowHeight {
+                resultRowHeight = minRowHeight
+            }
         }
     }
     @Published var resultRowHeight: CGFloat {
         didSet {
-            let value = clamped(resultRowHeight, 24.0, 80.0)
+            let value = clamped(resultRowHeight, max(24.0, minRowHeightForFont), 80.0)
             if value != resultRowHeight { resultRowHeight = value; return }
             save(Double(value), Key.resultRowHeight)
         }
     }
     @Published var showThumbnails: Bool { didSet { save(showThumbnails, Key.showThumbnails) } }
+
+    /// Minimum row height that fits the current font without clipping.
+    /// Uses a 1.4× line-height multiple plus 4pt of vertical padding so text never overflows the row.
+    var minRowHeightForFont: CGFloat { ceil(fontSize * 1.4) + 4 }
 
     private let defaults = UserDefaults.standard
 
@@ -464,7 +472,17 @@ final class AppSettings: ObservableObject {
             }
         }
 
-        defaults.set(5, forKey: Key.settingsSchemaVersion)
+        if version < 6 {
+            // Reconcile row height with the font-derived minimum so previously-saved
+            // combos (e.g. large font with a small row height) don't render clipped.
+            let minRowHeight = max(24.0, minRowHeightForFont)
+            if resultRowHeight < minRowHeight {
+                resultRowHeight = minRowHeight
+                save(Double(resultRowHeight), Key.resultRowHeight)
+            }
+        }
+
+        defaults.set(6, forKey: Key.settingsSchemaVersion)
     }
 
     private func save(_ value: Bool, _ key: String) {

@@ -4,6 +4,7 @@ import AppKit
 
 struct GeneralSettingsView: View {
     @ObservedObject private var settings = AppSettings.shared
+    @ObservedObject private var theme = ThemeManager.shared
     @State private var newIndexPath = ""
     @State private var newExcludedPath = ""
     @State private var newExcludedPattern = ""
@@ -442,7 +443,7 @@ struct GeneralSettingsView: View {
             BoundedIntegerControl(
                 title: L10n.tr("Result Row Height"),
                 value: rowHeightIntBinding,
-                range: 24...80,
+                range: max(24, Int(settings.minRowHeightForFont))...80,
                 step: 2
             )
 
@@ -518,11 +519,11 @@ struct GeneralSettingsView: View {
                     .font(.caption)
                     .foregroundColor(.secondary)
                 Text(L10n.tr("The quick brown fox jumps over the lazy dog 0123456789"))
-                    .font(ThemeManager.shared.bodyFont)
-                    .foregroundColor(ThemeManager.shared.resolvedTextColor)
+                    .font(theme.bodyFont)
+                    .foregroundColor(theme.resolvedTextColor)
                     .padding(8)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(ThemeManager.shared.resolvedBackgroundColor)
+                    .background(theme.resolvedBackgroundColor)
                     .cornerRadius(6)
                     .overlay(
                         RoundedRectangle(cornerRadius: 6)

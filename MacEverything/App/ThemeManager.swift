@@ -24,7 +24,7 @@ final class ThemeManager: ObservableObject {
                 }
             }
 
-        appearanceObserver = NotificationCenter.default.addObserver(
+        appearanceObserver = DistributedNotificationCenter.default().addObserver(
             forName: NSNotification.Name("AppleInterfaceThemeChangedNotification"),
             object: nil,
             queue: .main
@@ -39,7 +39,7 @@ final class ThemeManager: ObservableObject {
 
     deinit {
         if let observer = appearanceObserver {
-            NotificationCenter.default.removeObserver(observer)
+            DistributedNotificationCenter.default().removeObserver(observer)
         }
     }
 

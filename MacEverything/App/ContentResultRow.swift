@@ -46,7 +46,8 @@ struct ContentResultRow: View {
 
             Spacer()
         }
-        .padding(.vertical, max(2, (rowHeight - 28) / 2))
+        .frame(height: rowHeight)
+        .clipped()
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)

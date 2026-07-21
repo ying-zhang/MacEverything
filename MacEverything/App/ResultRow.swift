@@ -120,6 +120,7 @@ struct ResultRow: View {
             ))
         }
         .frame(height: rowHeight)
+        .clipped()
         .accessibilityIdentifier("resultRow")
     }
 
@@ -180,7 +181,7 @@ struct ResultRow: View {
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, max(2, (rowHeight - 28) / 2))
+        .padding(.vertical, max(2, (rowHeight - iconSize) / 2))
         .padding(.horizontal, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
