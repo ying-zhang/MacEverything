@@ -19,6 +19,7 @@ struct ContentView: View {
         VStack(spacing: 0) {
             WindowReader { window in
                 hostWindow = window
+                viewModel.registerActiveWindow(window)
                 if SearchWindowSupport.isSearchWindow(window) {
                     window.delegate = NSApp.delegate as? NSWindowDelegate
                 }
@@ -412,6 +413,11 @@ struct ContentView: View {
         .background(theme.resolvedBackgroundColor)
         .onAppear {
             updateSearchWindowTitle()
+        }
+        .onDisappear {
+            if let window = hostWindow {
+                viewModel.unregisterActiveWindow(window)
+            }
         }
         .onReceive(NotificationCenter.default.publisher(for: .clearContentIndex)) { _ in
             viewModel.clearContentResults()
