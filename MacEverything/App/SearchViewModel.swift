@@ -406,6 +406,9 @@ final class SearchServiceModel: ObservableObject {
 class SearchViewModel: ObservableObject {
     @Published var searchText: String = ""
     @Published var displayItems: [FileItem] = []
+    /// Number of columns in the grid result view. Written by ContentView's geometry
+    /// so keyboard navigation can move up/down by a whole row. Ignored in list mode.
+    @Published var gridColumnCount: Int = 1
     @Published var totalMatches: Int = 0
     @Published var resultLimitReached: Bool = false
     @Published var queryTimeMs: Double = 0
@@ -886,6 +889,49 @@ class SearchViewModel: ObservableObject {
         } else {
             if let last = displayItems.last { selectForKeyboard(last) }
         }
+        return true
+    }
+
+    func selectGridDown() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        if let currentID = selectedItemID,
+           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
+            let columns = max(1, gridColumnCount)
+            let nextIdx = min(idx + columns, displayItems.count - 1)
+            selectForKeyboard(displayItems[nextIdx])
+        } else if let first = displayItems.first { selectForKeyboard(first) }
+        return true
+    }
+
+    func selectGridUp() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        guard let currentID = selectedItemID,
+              let idx = displayItems.firstIndex(where: { $0.id == currentID }) else {
+            if let last = displayItems.last { selectForKeyboard(last) }
+            return true
+        }
+        let columns = max(1, gridColumnCount)
+        if idx < columns { return false }
+        selectForKeyboard(displayItems[idx - columns])
+        return true
+    }
+
+    func selectGridRight() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        if let currentID = selectedItemID,
+           let idx = displayItems.firstIndex(where: { $0.id == currentID }) {
+            let nextIdx = min(idx + 1, displayItems.count - 1)
+            selectForKeyboard(displayItems[nextIdx])
+        } else if let first = displayItems.first { selectForKeyboard(first) }
+        return true
+    }
+
+    func selectGridLeft() -> Bool {
+        guard !displayItems.isEmpty else { return false }
+        guard let currentID = selectedItemID,
+              let idx = displayItems.firstIndex(where: { $0.id == currentID }) else { return false }
+        if idx == 0 { return false }
+        selectForKeyboard(displayItems[idx - 1])
         return true
     }
 

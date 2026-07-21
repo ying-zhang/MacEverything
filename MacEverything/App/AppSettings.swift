@@ -82,6 +82,20 @@ enum ResultDensity: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum ResultDisplayMode: String, CaseIterable, Codable, Identifiable {
+    case list
+    case grid
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .list: return L10n.tr("List")
+        case .grid: return L10n.tr("Grid")
+        }
+    }
+}
+
 enum EnterKeyAction: String, CaseIterable, Codable, Identifiable {
     case openFile
     case rename
@@ -194,6 +208,8 @@ final class AppSettings: ObservableObject {
         static let fontSize = "settings.fontSize"
         static let resultRowHeight = "settings.resultRowHeight"
         static let showThumbnails = "settings.showThumbnails"
+        static let resultDisplayMode = "settings.resultDisplayMode"
+        static let gridIconSize = "settings.gridIconSize"
         static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
@@ -280,12 +296,20 @@ final class AppSettings: ObservableObject {
     }
     @Published var resultRowHeight: CGFloat {
         didSet {
-            let value = clamped(resultRowHeight, max(24.0, minRowHeightForFont), 80.0)
+            let value = clamped(resultRowHeight, max(24.0, minRowHeightForFont), 120.0)
             if value != resultRowHeight { resultRowHeight = value; return }
             save(Double(value), Key.resultRowHeight)
         }
     }
     @Published var showThumbnails: Bool { didSet { save(showThumbnails, Key.showThumbnails) } }
+    @Published var resultDisplayMode: ResultDisplayMode { didSet { save(resultDisplayMode.rawValue, Key.resultDisplayMode) } }
+    @Published var gridIconSize: CGFloat {
+        didSet {
+            let value = clamped(gridIconSize, 48.0, 160.0)
+            if value != gridIconSize { gridIconSize = value; return }
+            save(Double(value), Key.gridIconSize)
+        }
+    }
 
     /// Minimum row height that fits the current font without clipping.
     /// Uses a 1.4× line-height multiple plus 4pt of vertical padding so text never overflows the row.
@@ -346,8 +370,10 @@ final class AppSettings: ObservableObject {
         darkTextColor = defaults.string(forKey: Key.darkTextColor) ?? ""
         fontFamily = defaults.string(forKey: Key.fontFamily) ?? ""
         fontSize = CGFloat(clamped(defaults.object(forKey: Key.fontSize) as? Double ?? 13.0, 10.0, 24.0))
-        resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 24.0, 80.0))
+        resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 24.0, 120.0))
         showThumbnails = defaults.object(forKey: Key.showThumbnails) as? Bool ?? false
+        resultDisplayMode = ResultDisplayMode(rawValue: defaults.string(forKey: Key.resultDisplayMode) ?? "") ?? .list
+        gridIconSize = CGFloat(clamped(defaults.object(forKey: Key.gridIconSize) as? Double ?? 96.0, 48.0, 160.0))
 
         migrateSettingsIfNeeded()
     }
@@ -425,6 +451,8 @@ final class AppSettings: ObservableObject {
         fontFamily = ""
         fontSize = 13
         resultRowHeight = 38
+        resultDisplayMode = .list
+        gridIconSize = 96
     }
 
     private func migrateSettingsIfNeeded() {
