@@ -365,5 +365,10 @@
 "Result Row Height" = "结果行高";
 "Show file thumbnails" = "显示文件缩略图";
 "Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons." = "缩略图可能增加 CPU、内存和磁盘访问。文件夹和应用程序始终使用系统图标。";
+"Display Mode" = "显示模式";
+"List" = "列表";
+"Grid" = "图标";
+"Icon Size" = "图标大小";
+"Only applies in icon mode" = "仅在图标模式下生效";
 "Preview" = "预览";
 "The quick brown fox jumps over the lazy dog 0123456789" = "敏捷的棕色狐狸跳过懒狗 0123456789";

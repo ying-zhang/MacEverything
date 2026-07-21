@@ -439,18 +439,6 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Show size"), isOn: $settings.showSize)
             Toggle(L10n.tr("Show modified date"), isOn: $settings.showModifiedDate)
             Toggle(L10n.tr("Show content snippets"), isOn: $settings.showContentSnippets)
-
-            BoundedIntegerControl(
-                title: L10n.tr("Result Row Height"),
-                value: rowHeightIntBinding,
-                range: max(24, Int(settings.minRowHeightForFont))...80,
-                step: 2
-            )
-
-            Toggle(L10n.tr("Show file thumbnails"), isOn: $settings.showThumbnails)
-            Text(L10n.tr("Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons."))
-                .font(.caption)
-                .foregroundColor(.secondary)
         }
     }
 
@@ -530,6 +518,32 @@ struct GeneralSettingsView: View {
                             .stroke(Color(nsColor: .separatorColor), lineWidth: 1)
                     )
             }
+
+            Divider()
+
+            BoundedIntegerControl(
+                title: L10n.tr("Result Row Height"),
+                value: rowHeightIntBinding,
+                range: max(24, Int(settings.minRowHeightForFont))...120,
+                step: 2
+            )
+
+            Toggle(L10n.tr("Show file thumbnails"), isOn: $settings.showThumbnails)
+            Text(L10n.tr("Thumbnails may increase CPU, memory and disk access. Folders and applications always use system icons."))
+                .font(.caption)
+                .foregroundColor(.secondary)
+
+            Divider()
+
+            HStack {
+                Text(L10n.tr("Icon Size"))
+                Slider(value: $settings.gridIconSize, in: 48...160, step: 8)
+                Text(String(format: "%.0f pt", settings.gridIconSize))
+                    .frame(width: 48, alignment: .trailing)
+            }
+            Text(L10n.tr("Only applies in icon mode"))
+                .font(.caption)
+                .foregroundColor(.secondary)
 
             Divider()
 

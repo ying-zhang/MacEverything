@@ -116,16 +116,37 @@ class ResultListKeyView: NSView {
             return
         }
 
+        let gridMode = AppSettings.shared.resultDisplayMode == .grid
+
         switch event.keyCode {
         case 125: // Down arrow
-            _ = coordinator.parent.viewModel.selectNext()
+            _ = gridMode
+                ? coordinator.parent.viewModel.selectGridDown()
+                : coordinator.parent.viewModel.selectNext()
             coordinator.refreshQuickLook()
         case 126: // Up arrow
-            if coordinator.parent.viewModel.selectPrevious() {
+            let moved = gridMode
+                ? coordinator.parent.viewModel.selectGridUp()
+                : coordinator.parent.viewModel.selectPrevious()
+            if moved {
                 coordinator.refreshQuickLook()
             } else {
                 coordinator.parent.wantsFocus = false
                 coordinator.parent.onReturnFocusToSearch?()
+            }
+        case 123: // Left arrow (grid only)
+            if gridMode {
+                _ = coordinator.parent.viewModel.selectGridLeft()
+                coordinator.refreshQuickLook()
+            } else {
+                super.keyDown(with: event)
+            }
+        case 124: // Right arrow (grid only)
+            if gridMode {
+                _ = coordinator.parent.viewModel.selectGridRight()
+                coordinator.refreshQuickLook()
+            } else {
+                super.keyDown(with: event)
             }
         case 49: // Space - toggle Quick Look
             coordinator.toggleQuickLook()

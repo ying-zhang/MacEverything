@@ -14,6 +14,7 @@ struct ContentView: View {
     @State private var resultListFocused = false
     @State private var showPathFilter = false
     @State private var searchFieldFocusRequest = 0
+    @State private var gridWidth: CGFloat = 800
 
     var body: some View {
         VStack(spacing: 0) {
@@ -310,14 +311,24 @@ struct ContentView: View {
                 }
 
                 if !viewModel.displayItems.isEmpty {
-                    ResultHeaderView(viewModel: viewModel)
-                        .environmentObject(columnLayout)
-                        .padding(.horizontal, 8)
+                    HStack {
+                        Spacer()
+                        ResultDisplayModeSwitcher()
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.top, 2)
+
+                    if settings.resultDisplayMode == .list {
+                        ResultHeaderView(viewModel: viewModel)
+                            .environmentObject(columnLayout)
+                            .padding(.horizontal, 8)
+                    }
                 }
 
                 ScrollViewReader { scrollProxy in
                     let selectedItems = viewModel.selectedItemsInDisplayOrder()
                     ScrollView {
+                        if settings.resultDisplayMode == .list {
                         LazyVStack(spacing: 0) {
                             ForEach(viewModel.displayItems) { item in
                                 ResultRow(
@@ -363,6 +374,57 @@ struct ContentView: View {
                                     viewModel.loadMore()
                                 }
                             }
+                        }
+                        } else {
+                        let cellWidth = settings.gridIconSize + 24
+                        let columns = max(1, Int(floor(max(1, gridWidth - 16) / cellWidth)))
+                        LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 8), count: columns), spacing: 8) {
+                            ForEach(viewModel.displayItems) { item in
+                                ResultGridCell(
+                                    item: item,
+                                    hints: viewModel.highlightHints,
+                                    isSelected: viewModel.selectedItemIDs.contains(item.id),
+                                    selectedItems: selectedItems,
+                                    onSelect: { extending, toggling in
+                                        viewModel.select(item, extending: extending, toggling: toggling)
+                                        resultListFocused = true
+                                        isSearchFieldFocused = false
+                                    },
+                                    onDeleteItems: { ids in
+                                        for id in ids {
+                                            viewModel.removeItemFromResults(id: id)
+                                        }
+                                    }
+                                )
+                                .id(item.id)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 8)
+                        .background(
+                            GeometryReader { proxy in
+                                Color.clear
+                                    .onAppear { gridWidth = proxy.size.width }
+                                    .onChange(of: proxy.size.width) { gridWidth = proxy.size.width }
+                            }
+                        )
+                        .onChange(of: columns) { viewModel.gridColumnCount = columns }
+                        .onAppear { viewModel.gridColumnCount = columns }
+                        if viewModel.hasMoreResults {
+                            HStack {
+                                Spacer()
+                                ProgressView()
+                                    .controlSize(.small)
+                                Text(L10n.tr("Loading more results..."))
+                                    .font(.callout)
+                                    .foregroundColor(.secondary)
+                                Spacer()
+                            }
+                            .padding(.vertical, 8)
+                            .onAppear {
+                                viewModel.loadMore()
+                            }
+                        }
                         }
                     }
                     .id(scrollViewID)
@@ -525,6 +587,21 @@ private struct WindowReader: NSViewRepresentable {
                 onWindowChange(window)
             }
         }
+    }
+}
+
+private struct ResultDisplayModeSwitcher: View {
+    @ObservedObject private var settings = AppSettings.shared
+
+    var body: some View {
+        Picker(L10n.tr("Display Mode"), selection: $settings.resultDisplayMode) {
+            Image(systemName: "list.bullet").tag(ResultDisplayMode.list)
+            Image(systemName: "square.grid.2x2").tag(ResultDisplayMode.grid)
+        }
+        .pickerStyle(.segmented)
+        .labelsHidden()
+        .help(L10n.tr("Display Mode"))
+        .accessibilityIdentifier("resultDisplayModeSwitcher")
     }
 }
 

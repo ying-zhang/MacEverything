@@ -66,6 +66,7 @@
 		D1000002 /* MacEverythingMCP in Copy MCP Binary */ = {isa = PBXBuildFile; fileRef = C2000099; };
 		A100003C /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000058; };
 		A100003D /* ThumbnailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000059; };
+		A10000AB /* ResultGridCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000AB; };
 		A100003E /* QuickLookThumbnailing.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A200005A; };
 /* End PBXBuildFile section */
 
@@ -170,6 +171,7 @@
 		A2000057 /* FileActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileActions.swift; sourceTree = "<group>"; };
 		A2000058 /* ThemeManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThemeManager.swift; sourceTree = "<group>"; };
 		A2000059 /* ThumbnailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailService.swift; sourceTree = "<group>"; };
+		A20000AB /* ResultGridCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultGridCell.swift; sourceTree = "<group>"; };
 		A200005A /* QuickLookThumbnailing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLookThumbnailing.framework; path = System/Library/Frameworks/QuickLookThumbnailing.framework; sourceTree = SDKROOT; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -337,6 +339,7 @@
 				A2000057 /* FileActions.swift */,
 				A2000058 /* ThemeManager.swift */,
 				A2000059 /* ThumbnailService.swift */,
+				A20000AB /* ResultGridCell.swift */,
 			);
 			path = App;
 			sourceTree = "<group>";
@@ -519,6 +522,7 @@
 				A1000003 /* SearchViewModel.swift in Sources */,
 				A1000004 /* ContentView.swift in Sources */,
 				A1000005 /* ResultRow.swift in Sources */,
+				A10000AB /* ResultGridCell.swift in Sources */,
 				A1000006 /* PermissionView.swift in Sources */,
 				A1000007 /* HotkeyManager.swift in Sources */,
 				A1000008 /* MacSearchBridge.mm in Sources */,
