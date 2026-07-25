@@ -38,6 +38,10 @@ struct AdvancedFilterState: Equatable {
         (fileSize == .any ? 0 : 1) + (modifiedDate == .any ? 0 : 1)
     }
 
+    func hasSamePresets(as other: AdvancedFilterState) -> Bool {
+        fileSize == other.fileSize && modifiedDate == other.modifiedDate
+    }
+
     var queryTokens: [String] {
         var tokens: [String] = []
 
@@ -80,6 +84,12 @@ struct AdvancedFilterState: Equatable {
                       components.year ?? 1970,
                       components.month ?? 1,
                       components.day ?? 1)
+    }
+}
+
+enum ResultRowMetrics {
+    static func effectiveHeight(configuredHeight: CGFloat, fontLineHeight: CGFloat) -> CGFloat {
+        max(configuredHeight, ceil(fontLineHeight) + 4)
     }
 }
 

@@ -443,6 +443,7 @@ class SearchViewModel: ObservableObject {
     private let historyStore = SearchHistoryStore()
     private let searchOptions = SearchOptions.shared
     private var searchTask: Task<Void, Never>?
+    private var advancedFilterTask: Task<Void, Never>?
     private var recentTask: Task<Void, Never>?
     private var settledTask: Task<Void, Never>?
     private var windowRestoreRefreshTask: Task<Void, Never>?
@@ -576,6 +577,7 @@ class SearchViewModel: ObservableObject {
     }
 
     func onSearchTextChanged() {
+        advancedFilterTask?.cancel()
         searchTask?.cancel()
         recentTask?.cancel()
         searchGeneration &+= 1
@@ -1249,6 +1251,7 @@ class SearchViewModel: ObservableObject {
     func onQuickFilterChanged() {
         guard service.scanComplete else { return }
         if !isContentSearch {
+            advancedFilterTask?.cancel()
             allowQuickFilterAutoResetForCurrentSearch = false
             rerunCurrentSearch()
         }
@@ -1260,10 +1263,25 @@ class SearchViewModel: ObservableObject {
         totalMatches = cachedItems.count
     }
 
-    func onAdvancedFiltersChanged() {
+    func onAdvancedFiltersChanged(from oldValue: AdvancedFilterState,
+                                  to newValue: AdvancedFilterState) {
+        advancedFilterTask?.cancel()
         guard service.scanComplete, !isContentSearch else { return }
         allowQuickFilterAutoResetForCurrentSearch = false
-        rerunCurrentSearch()
+
+        guard oldValue.hasSamePresets(as: newValue) else {
+            rerunCurrentSearch()
+            return
+        }
+
+        advancedFilterTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            guard !Task.isCancelled,
+                  let self,
+                  self.service.scanComplete,
+                  !self.isContentSearch else { return }
+            self.rerunCurrentSearch()
+        }
     }
 
     func clearAdvancedFilters() {

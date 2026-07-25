@@ -11,7 +11,10 @@ struct ContentResultRow: View {
     @State private var isHovered = false
 
     var body: some View {
-        let rowHeight = settings.resultRowHeight
+        let rowHeight = ResultRowMetrics.effectiveHeight(
+            configuredHeight: settings.resultRowHeight,
+            fontLineHeight: theme.bodyNSFont.ascender - theme.bodyNSFont.descender + theme.bodyNSFont.leading
+        )
         let iconSize = min(rowHeight - 8, 32)
         HStack(spacing: 8) {
             fileIcon(for: item.filePath)
@@ -65,8 +68,10 @@ struct ContentResultRow: View {
             Button(L10n.tr("Copy File")) { copyFile() }
             Button(L10n.tr("Copy Filename")) { copyFilename() }
             Divider()
-            Button(L10n.tr("Move to Trash")) { trashFile() }
             Button(L10n.tr("Open in Terminal")) { openInTerminal() }
+            Button(role: .destructive) { trashFile() } label: {
+                Text(L10n.tr("Move to Trash"))
+            }
         }
         .onDrag {
             return NSItemProvider(object: NSURL(fileURLWithPath: item.filePath))

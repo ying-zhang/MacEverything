@@ -26,6 +26,20 @@ private func expect(_ actual: [String], _ expected: [String], _ message: String)
     }
 }
 
+private func expect(_ actual: Bool, _ expected: Bool, _ message: String) {
+    if actual != expected {
+        fputs("FAIL: \(message): expected \(expected), got \(actual)\n", stderr)
+        failures += 1
+    }
+}
+
+private func expect(_ actual: CGFloat, _ expected: CGFloat, _ message: String) {
+    if actual != expected {
+        fputs("FAIL: \(message): expected \(expected), got \(actual)\n", stderr)
+        failures += 1
+    }
+}
+
 @main
 struct ResultInteractionTests {
     static func main() {
@@ -92,9 +106,17 @@ struct ResultInteractionTests {
         expect(GridNavigation.leftIndex(currentIndex: 3, itemCount: 3),
                nil, "left rejects an invalid selection")
 
+        expect(ResultRowMetrics.effectiveHeight(configuredHeight: 38, fontLineHeight: 17.2),
+               38, "configured row height is preserved when the font fits")
+        expect(ResultRowMetrics.effectiveHeight(configuredHeight: 20, fontLineHeight: 28.1),
+               33, "row height expands enough to avoid clipping a large font")
+
         var filters = AdvancedFilterState()
+        let defaultFilters = filters
         expect(filters.queryTokens, [], "default advanced filters add no query tokens")
         filters.fileSize = .oneToHundredMB
+        expect(filters.hasSamePresets(as: defaultFilters), false,
+               "changing a filter preset requires an immediate search")
         filters.modifiedDate = .lastSevenDays
         expect(filters.queryTokens, ["size:1mb..100mb", "dm:last7days"],
                "size and modified-date presets compose as engine filters")
@@ -102,6 +124,10 @@ struct ResultInteractionTests {
         filters.fileSize = .custom
         filters.customMinimumSizeMB = 500
         filters.customMaximumSizeMB = 10
+        var editedCustomValues = filters
+        editedCustomValues.customMaximumSizeMB = 20
+        expect(filters.hasSamePresets(as: editedCustomValues), true,
+               "editing custom values can use a debounced search")
         expect(filters.queryTokens.first.map { [$0] } ?? [], ["size:10mb..500mb"],
                "custom size range normalizes reversed bounds")
 

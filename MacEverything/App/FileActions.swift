@@ -110,10 +110,12 @@ struct FileItemContextMenu: View {
         Button(L10n.tr("Copy Path")) { FileActions.copyFiles(actionItems) }
         Button(L10n.tr("Copy Filename")) { FileActions.copyFilenames(actionItems) }
         Divider()
-        Button(L10n.tr("Move to Trash")) {
+        Button(L10n.tr("Open in Terminal")) { FileActions.openInTerminal(item) }
+        Button(role: .destructive) {
             let removed = FileActions.moveToTrash(actionItems)
             if !removed.isEmpty { onDeleteItems?(removed) }
+        } label: {
+            Text(L10n.tr("Move to Trash"))
         }
-        Button(L10n.tr("Open in Terminal")) { FileActions.openInTerminal(item) }
     }
 }

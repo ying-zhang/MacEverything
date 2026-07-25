@@ -108,7 +108,10 @@ struct ResultRow: View {
     @State private var showRenameError = false
 
     var body: some View {
-        let rowHeight = settings.resultRowHeight
+        let rowHeight = ResultRowMetrics.effectiveHeight(
+            configuredHeight: settings.resultRowHeight,
+            fontLineHeight: theme.bodyNSFont.ascender - theme.bodyNSFont.descender + theme.bodyNSFont.leading
+        )
         GeometryReader { proxy in
             rowContent(rowHeight: rowHeight, widths: columnLayout.resolvedWidths(
                 showPath: settings.showPath,

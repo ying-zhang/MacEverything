@@ -121,7 +121,7 @@ Type `infile:keyword` to search file contents — results include highlighted co
 - **Advanced filters** — a labeled entry on the right side of the bottom status bar filters by file size and modified date, with common presets and custom ranges
 - **Configurable result columns** — sort by name, extension, path, size, or modified date; extension/path/size/date columns can be shown or hidden, and column widths are resizable
 - **List and icon modes** — the labeled view controls sit on the right side of the vertically centered quick-filter bar; the five-level aspect-preserving thumbnail slider stays visible and is disabled in list mode or when there are no results
-- **Adjustable result appearance** — list thumbnails are enabled by default, list row height is independently adjustable from `20–120 pt`, and the color editor automatically selects the active light or dark appearance
+- **Adjustable result appearance** — list thumbnails are enabled by default, results can be made more compact or spacious, and the color editor automatically selects the active light or dark appearance
 - **Drag & drop** — drag files directly from search results to Finder, VS Code, Xcode, or any application
 - **Keyboard and context actions** — Enter can open or rename the selected result; supports arrow-key selection, result-list focus, and context actions for Open / Reveal in Finder / Copy Path
 - **Cmd+Click** — quickly locate files in Finder

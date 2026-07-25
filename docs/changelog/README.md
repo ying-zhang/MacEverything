@@ -149,6 +149,7 @@
 | [132](132-docs-release-preparation.md) | docs | 公开发布前文档审计与修复 | 2026-04-19 |
 | [146](146-release-1.5.md) | docs | MacEverything 1.5 Release Notes | 2026-05-21 |
 | [147](147-结果显示控件与五档缩放.md) | feature | 结果显示控件与五档缩放 | 2026-07-22 |
+| [148](148-release-1.7.22.md) | docs | MacEverything 1.7.22 Release Notes | 2026-07-22 |
 
 ## 统计
 
@@ -159,9 +160,9 @@
 | performance | 31 |
 | refactor | 17 |
 | test | 5 |
-| docs | 2 |
+| docs | 3 |
 | chore | 1 |
-| **合计** | **140 条 (133 个编号, 7 组重复编号各 2 条)** |
+| **合计** | **141 条 (134 个编号, 7 组重复编号各 2 条)** |
 
 ---
 

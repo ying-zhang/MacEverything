@@ -381,8 +381,8 @@ struct ContentView: View {
         .onChange(of: viewModel.pathFilter) {
             viewModel.onPathFilterChanged()
         }
-        .onChange(of: viewModel.advancedFilters) {
-            viewModel.onAdvancedFiltersChanged()
+        .onChange(of: viewModel.advancedFilters) { oldValue, newValue in
+            viewModel.onAdvancedFiltersChanged(from: oldValue, to: newValue)
         }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.onWindowFocusChanged(true)
@@ -448,6 +448,8 @@ private struct SearchStatusBar: View {
     @State private var showingAdvancedFilters = false
 
     var body: some View {
+        let advancedFiltersDisabled = !service.scanComplete || viewModel.isContentSearch
+
         HStack(spacing: 8) {
             HStack(spacing: 8) {
                 if service.isScanning {
@@ -502,7 +504,7 @@ private struct SearchStatusBar: View {
 
             HStack(spacing: 4) {
                 Text(L10n.tr("Advanced Filters"))
-                    .foregroundColor((!service.scanComplete || viewModel.isContentSearch)
+                    .foregroundColor(advancedFiltersDisabled
                                      ? Color.secondary.opacity(0.5)
                                      : Color.secondary)
                     .lineLimit(1)
@@ -519,7 +521,9 @@ private struct SearchStatusBar: View {
                                 .font(.caption2.monospacedDigit())
                         }
                     }
-                    .foregroundColor(viewModel.advancedFilters.activeFilterCount > 0 ? .accentColor : .secondary)
+                    .foregroundColor(advancedFiltersDisabled
+                                     ? Color.secondary.opacity(0.5)
+                                     : (viewModel.advancedFilters.activeFilterCount > 0 ? .accentColor : .secondary))
                     .frame(width: 36, height: 22)
                 }
                 .buttonStyle(.borderless)
@@ -530,7 +534,7 @@ private struct SearchStatusBar: View {
                     AdvancedFilterPopover(viewModel: viewModel)
                 }
             }
-            .disabled(!service.scanComplete || viewModel.isContentSearch)
+            .disabled(advancedFiltersDisabled)
             .fixedSize(horizontal: true, vertical: false)
         }
         .font(.callout)
