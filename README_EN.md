@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#installation"><img src="https://img.shields.io/badge/macOS-14%2B-blue?logo=apple" alt="macOS 14+" /></a>
+  <a href="#installation"><img src="https://img.shields.io/badge/macOS-15%2B-blue?logo=apple" alt="macOS 15+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" /></a>
   <a href="#testing"><img src="https://img.shields.io/badge/tests-79%20modules-brightgreen" alt="79 test modules" /></a>
   <a href="#ai-tool-integration-mcp"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet" alt="MCP Compatible" /></a>
@@ -129,10 +129,10 @@ Type `infile:keyword` to search file contents — results include highlighted co
 
 ### AI Tool Integration (MCP)
 
-Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server — lets AI coding tools instantly search your file system. Enable with one click from the menu bar. Supports **Claude Code**, **Cursor**, and **Claude Desktop**.
+Built-in [Model Context Protocol](https://modelcontextprotocol.io/) server — lets AI coding tools instantly search your file system. Enable it from the menu bar or Settings. Supports **Codex**, **Claude Code**, **Cursor**, and **Claude Desktop**.
 
 ```
-Claude Code / Cursor / Claude Desktop
+Codex / Claude Code / Cursor / Claude Desktop
        │
        ▼  (stdio JSON-RPC 2.0)
   MacEverythingMCP
@@ -140,6 +140,8 @@ Claude Code / Cursor / Claude Desktop
        ▼  (HTTP localhost:19860)
   MacEverything.app
 ```
+
+MacEverything registers with each client's current global configuration mechanism: Codex through `codex mcp` and `~/.codex/config.toml`, Claude Code through user-scoped `claude mcp` configuration, Cursor through `~/.cursor/mcp.json`, and Claude Desktop through its Application Support configuration. Restart the client or open a new session after changing the integration.
 
 | Tool | Description |
 |------|-------------|
@@ -162,6 +164,28 @@ curl "http://localhost:19860/api/memory"                          # Memory break
 
 The HTTP server binds to loopback only, supports concurrent connections, retries short-lived port conflicts during startup, and validates request body size so slow or malformed clients do not block the service.
 
+### Command-Line Client
+
+Release builds include the short `mace` command for querying a running MacEverything app:
+
+```bash
+mace readme                 # Filename search; prints one full path per line
+mace -c "TODO fix"          # Full-text content search
+mace -r -n 20              # 20 most recently modified files
+mace -s                    # Index status
+mace -j readme             # Preserve the complete JSON response
+mace -0 readme | xargs -0  # NUL-delimited paths for safe piping
+```
+
+Without Homebrew, link the bundled executable into your personal command directory:
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf /Applications/MacEverything.app/Contents/MacOS/mace ~/.local/bin/mace
+```
+
+Make sure `~/.local/bin` is in `PATH`, or invoke `/Applications/MacEverything.app/Contents/MacOS/mace` directly.
+
 ### Installation
 
 #### Download DMG (Recommended)
@@ -174,24 +198,30 @@ The HTTP server binds to loopback only, supports concurrent connections, retries
 
 #### Build from Source
 
-**Requirements:** macOS 14+, Xcode 15+ (full Xcode, not just Command Line Tools), Homebrew, RE2
+**Requirements:** macOS 15+, Xcode 16+ (full Xcode, not just Command Line Tools), plus RE2/Abseil headers and dynamic libraries for the target architecture. Homebrew is not required.
+
+For a Homebrew-free setup, install an official MacEverything release first and reuse the verified arm64 libraries bundled with the app. This script downloads matching RE2 `2025-11-05` and Abseil `20260107.1` headers from the official Google repositories:
 
 ```bash
-brew install re2
+scripts/prepare-re2-deps-from-app.sh
 ```
+
+Dependencies are placed in the Git-ignored `third_party/re2/` directory. The app and destination paths can also be passed explicitly:
+
+```bash
+scripts/prepare-re2-deps-from-app.sh /Applications/MacEverything.app third_party/re2
+```
+
+For dependencies prepared another way, call `scripts/prepare-re2-deps.sh` with `RE2_SOURCE_DIR`, `ABSEIL_SOURCE_DIR`, `RE2_LIB_DIR`, and `ABSEIL_LIB_DIR`. Homebrew remains an optional source, but is not part of the default local build workflow.
 
 ```bash
 git clone https://github.com/user/MacEverything.git && cd MacEverything
-
-xcodebuild -project MacEverything.xcodeproj -scheme MacEverything \
-  -configuration Release build SYMROOT=build
-
-hdiutil create -volname MacEverything \
-  -srcfolder build/Release/MacEverything.app \
-  -ov -format UDZO MacEverything.dmg
+scripts/prepare-re2-deps-from-app.sh
+make test-fast
+scripts/build-release-dmgs.sh arm64
 ```
 
-Release builds and GitHub Actions artifacts automatically embed Homebrew's `libre2` and its dependencies into `.app/Contents/Frameworks` so the distributed app can launch on Macs without Homebrew/RE2 installed. Release scripts build separate arm64 and Intel DMGs and verify the app binary, MCP binary, embedded dylibs, architectures, and dependency paths.
+Release builds and GitHub Actions artifacts embed `libre2` and the Abseil dependency closure it actually uses into `.app/Contents/Frameworks`, so the distributed app does not depend on the development machine. The release script verifies the app, MCP, `mace`, and embedded dylib architectures and dependency paths; the final arm64 DMG is written to `artifacts/MacEverything-arm64.dmg`.
 
 #### CLI Daemon
 
@@ -222,11 +252,12 @@ make daemon
 └─────────────────────────────────────┘
 ```
 
-The same C++20 core engine powers three deployment modes:
+The same C++20 core engine supports four usage modes:
 
 | Mode | Description |
 |------|-------------|
 | **GUI App** | SwiftUI menu-bar app, `Option+Space` global hotkey |
+| **CLI Client** | Short `mace` command for querying the running GUI app |
 | **CLI Daemon** | Headless `maceverything-daemon` — same engine, no UI |
 | **MCP Server** | `MacEverythingMCP` — stdio JSON-RPC proxy for AI tools |
 
@@ -345,6 +376,7 @@ MacEverything/
 │   └── MCPConfigManager   # One-click MCP setup
 ├── CLI/                   # Command-line tools
 │   ├── daemon_main        # Headless daemon
+│   ├── mace_main          # Short query client
 │   └── mcp_main           # MCP server (stdio JSON-RPC)
 └── tests/                 # 79 test modules
 ```

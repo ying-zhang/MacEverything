@@ -1,5 +1,6 @@
 #include "SearchEngine.h"
 #include "StringUtils.h"
+#include "PostingListIntersection.h"
 #include <algorithm>
 
 // ---------------------------------------------------------------------------
@@ -31,12 +32,7 @@ std::vector<uint32_t> SearchEngine::intersectPostingLists(
 
     for (size_t i = 1; i < postings.size() && !result.empty(); i++) {
         const auto& other = *postings[i];
-        std::vector<uint32_t> isect;
-        isect.reserve(std::min(result.size(), other.size()));
-        std::set_intersection(result.begin(), result.end(),
-                              other.begin(), other.end(),
-                              std::back_inserter(isect));
-        result = std::move(isect);
+        result = me::intersectSortedPostingLists(result, other);
     }
     return result;
 }
@@ -82,12 +78,7 @@ std::vector<uint32_t> SearchEngine::intersectPostingListsMulti(
 
     for (size_t i = 1; i < postings.size() && !result.empty(); i++) {
         const auto& other = *postings[i];
-        std::vector<uint32_t> isect;
-        isect.reserve(std::min(result.size(), other.size()));
-        std::set_intersection(result.begin(), result.end(),
-                              other.begin(), other.end(),
-                              std::back_inserter(isect));
-        result = std::move(isect);
+        result = me::intersectSortedPostingLists(result, other);
     }
     return result;
 }

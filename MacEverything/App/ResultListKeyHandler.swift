@@ -32,7 +32,9 @@ struct ResultListKeyHandler: NSViewRepresentable {
     }
 
     @MainActor
-    class Coordinator: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+    class Coordinator: NSObject,
+        @preconcurrency QLPreviewPanelDataSource,
+        @preconcurrency QLPreviewPanelDelegate {
         var parent: ResultListKeyHandler
         weak var keyView: ResultListKeyView?
 

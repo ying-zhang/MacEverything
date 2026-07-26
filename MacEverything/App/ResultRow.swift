@@ -376,7 +376,9 @@ final class ResultColumnLayout: ObservableObject {
 }
 
 @MainActor
-final class QuickLookPreviewController: NSObject, QLPreviewPanelDataSource, QLPreviewPanelDelegate {
+final class QuickLookPreviewController: NSObject,
+    @preconcurrency QLPreviewPanelDataSource,
+    QLPreviewPanelDelegate {
     static let shared = QuickLookPreviewController()
     private var urls: [URL] = []
 

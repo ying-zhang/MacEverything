@@ -32,12 +32,11 @@ static void runRegexTrigramTests() {
     // ── Test 2: Escaped metachar becomes literal ──
     {
         auto lits = me_test::extractRegexLiterals("foo\\.bar");
-        bool hasFoo = false, hasBar = false;
+        bool hasFoo = false;
         for (auto& l : lits) {
             if (l == "foo") hasFoo = true;
             // "foo.bar" might be a single literal since \. is literal '.'
-            if (l == "foo.bar") { hasFoo = true; hasBar = true; }
-            if (l == "bar") hasBar = true;
+            if (l == "foo.bar") hasFoo = true;
         }
         check(hasFoo, "60.2 extractRegexLiterals escaped dot: got 'foo'");
     }

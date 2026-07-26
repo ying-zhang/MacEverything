@@ -86,26 +86,26 @@ inline CompiledGlob compileGlob(const std::string& pattern) {
     if (pattern.size() >= 2 && pattern[0] == '*' &&
         pattern.find('*', 1) == std::string::npos &&
         pattern.find('?', 1) == std::string::npos) {
-        return {CompiledGlob::SUFFIX, pattern.substr(1), pattern};
+        return {CompiledGlob::SUFFIX, pattern.substr(1), pattern, {}};
     }
     // prefix* -> PREFIX("prefix")
     if (pattern.size() >= 2 && pattern.back() == '*' &&
         pattern.find('*') == pattern.size() - 1 &&
         pattern.find('?') == std::string::npos) {
-        return {CompiledGlob::PREFIX, pattern.substr(0, pattern.size() - 1), pattern};
+        return {CompiledGlob::PREFIX, pattern.substr(0, pattern.size() - 1), pattern, {}};
     }
     // *keyword* -> CONTAINS("keyword")
     if (pattern.size() >= 3 && pattern.front() == '*' && pattern.back() == '*') {
         std::string mid = pattern.substr(1, pattern.size() - 2);
         if (mid.find('*') == std::string::npos &&
             mid.find('?') == std::string::npos) {
-            return {CompiledGlob::CONTAINS, mid, pattern};
+            return {CompiledGlob::CONTAINS, mid, pattern, {}};
         }
     }
     // No wildcard -> EXACT
     if (pattern.find('*') == std::string::npos &&
         pattern.find('?') == std::string::npos) {
-        return {CompiledGlob::EXACT, pattern, pattern};
+        return {CompiledGlob::EXACT, pattern, pattern, {}};
     }
     // GENERIC: extract literal segments for trigram pre-filtering
     auto allSegs = extractLiteralSegments(pattern);

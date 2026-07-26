@@ -14,7 +14,7 @@
 </p>
 
 <p align="center">
-  <a href="#安装"><img src="https://img.shields.io/badge/macOS-14%2B-blue?logo=apple" alt="macOS 14+" /></a>
+  <a href="#安装"><img src="https://img.shields.io/badge/macOS-15%2B-blue?logo=apple" alt="macOS 15+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" /></a>
   <a href="#测试体系"><img src="https://img.shields.io/badge/tests-79%20modules-brightgreen" alt="79 test modules" /></a>
   <a href="#ai-工具集成-mcp"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet" alt="MCP Compatible" /></a>
@@ -129,10 +129,10 @@
 
 ### AI 工具集成 (MCP)
 
-内置 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器，让 AI 编程工具即时搜索你的文件系统。在菜单栏一键开启，支持 **Claude Code**、**Cursor**、**Claude Desktop**。
+内置 [Model Context Protocol](https://modelcontextprotocol.io/) 服务器，让 AI 编程工具即时搜索你的文件系统。在菜单栏或设置中一键开启，支持 **Codex**、**Claude Code**、**Cursor** 和 **Claude Desktop**。
 
 ```
-Claude Code / Cursor / Claude Desktop
+Codex / Claude Code / Cursor / Claude Desktop
        │
        ▼  (stdio JSON-RPC 2.0)
   MacEverythingMCP
@@ -140,6 +140,8 @@ Claude Code / Cursor / Claude Desktop
        ▼  (HTTP localhost:19860)
   MacEverything.app
 ```
+
+MacEverything 按各客户端当前的全局配置方式进行注册：Codex 使用 `codex mcp` 管理 `~/.codex/config.toml`，Claude Code 使用用户级 `claude mcp` 配置，Cursor 写入 `~/.cursor/mcp.json`，Claude Desktop 写入其应用支持目录中的配置文件。配置后请重新启动对应客户端或开启一个新会话。
 
 | 工具 | 说明 |
 |------|------|
@@ -162,6 +164,28 @@ curl "http://localhost:19860/api/memory"                          # 内存拆分
 
 HTTP 服务仅绑定本机回环地址，支持并发连接；启动时会对短暂端口占用进行重试，请求体大小也会做上限校验，避免慢连接或异常请求阻塞服务。
 
+### 命令行客户端
+
+Release 应用内置短命令 `mace`，用于查询正在运行的 MacEverything：
+
+```bash
+mace readme                 # 文件名搜索，默认逐行输出完整路径
+mace -c "TODO fix"          # 全文内容搜索
+mace -r -n 20              # 最近修改的 20 个文件
+mace -s                    # 索引状态
+mace -j readme             # 保留完整 JSON 响应
+mace -0 readme | xargs -0  # NUL 分隔，安全处理带空格的路径
+```
+
+不安装 Homebrew 也可以把应用内的可执行文件链接到个人命令目录：
+
+```bash
+mkdir -p ~/.local/bin
+ln -sf /Applications/MacEverything.app/Contents/MacOS/mace ~/.local/bin/mace
+```
+
+确保 `~/.local/bin` 在 `PATH` 中。也可以直接运行 `/Applications/MacEverything.app/Contents/MacOS/mace`。
+
 ### 安装
 
 #### 下载 DMG（推荐）
@@ -174,24 +198,30 @@ HTTP 服务仅绑定本机回环地址，支持并发连接；启动时会对短
 
 #### 从源码构建
 
-**环境要求：** macOS 14+，Xcode 15+（完整 Xcode，不只是 Command Line Tools），Homebrew，RE2
+**环境要求：** macOS 15+、Xcode 16+（完整 Xcode，不只是 Command Line Tools），以及 RE2/Abseil 头文件和目标架构动态库。Homebrew 不是必需依赖。
+
+不使用 Homebrew 时，可先安装官方发布版 MacEverything，再从应用包复用已经验证过的 arm64 动态库；脚本会从 Google 官方仓库下载与动态库匹配的 RE2 `2025-11-05` 和 Abseil `20260107.1` 头文件：
 
 ```bash
-brew install re2
+scripts/prepare-re2-deps-from-app.sh
 ```
+
+依赖会放入 Git 忽略的 `third_party/re2/`。也可以把应用路径和输出目录显式传给脚本：
+
+```bash
+scripts/prepare-re2-deps-from-app.sh /Applications/MacEverything.app third_party/re2
+```
+
+如已通过其他方式准备 RE2/Abseil，可使用 `RE2_SOURCE_DIR`、`ABSEIL_SOURCE_DIR`、`RE2_LIB_DIR` 和 `ABSEIL_LIB_DIR` 调用 `scripts/prepare-re2-deps.sh`。Homebrew 仍可作为可选的依赖来源，但不参与默认本地构建流程。
 
 ```bash
 git clone https://github.com/user/MacEverything.git && cd MacEverything
-
-xcodebuild -project MacEverything.xcodeproj -scheme MacEverything \
-  -configuration Release build SYMROOT=build
-
-hdiutil create -volname MacEverything \
-  -srcfolder build/Release/MacEverything.app \
-  -ov -format UDZO MacEverything.dmg
+scripts/prepare-re2-deps-from-app.sh
+make test-fast
+scripts/build-release-dmgs.sh arm64
 ```
 
-Release 构建和 GitHub Actions 发布包会自动把 Homebrew 的 `libre2` 及其依赖嵌入 `.app/Contents/Frameworks`，避免发布包在未安装 Homebrew/RE2 的 Mac 上启动失败。发布脚本会分别构建 arm64 与 Intel DMG，并验证主应用、MCP 可执行文件和嵌入 dylib 的架构与依赖路径。
+Release 构建和 GitHub Actions 发布包会自动把 `libre2` 及其实际使用的 Abseil 依赖闭包嵌入 `.app/Contents/Frameworks`，避免发布包依赖开发机环境。发布脚本会验证主应用、MCP、`mace` 和内嵌 dylib 的架构与依赖路径；最终 arm64 DMG 位于 `artifacts/MacEverything-arm64.dmg`。
 
 #### CLI 守护进程
 
@@ -222,11 +252,12 @@ make daemon
 └─────────────────────────────────────┘
 ```
 
-同一套 C++20 核心引擎驱动三种部署模式：
+同一套 C++20 核心引擎支持四种使用模式：
 
 | 模式 | 说明 |
 |------|------|
 | **GUI 应用** | SwiftUI 菜单栏应用，`Option+Space` 全局快捷键 |
+| **CLI 客户端** | 短命令 `mace` — 查询正在运行的 GUI 应用 |
 | **CLI 守护进程** | 无头 `maceverything-daemon` — 相同引擎，无 UI |
 | **MCP 服务器** | `MacEverythingMCP` — stdio JSON-RPC 代理，供 AI 工具调用 |
 
@@ -345,6 +376,7 @@ MacEverything/
 │   └── MCPConfigManager   # MCP 一键配置
 ├── CLI/                   # 命令行工具
 │   ├── daemon_main        # 无头守护进程
+│   ├── mace_main          # 短命令查询客户端
 │   └── mcp_main           # MCP 服务器（stdio JSON-RPC）
 └── tests/                 # 79 个测试模块
 ```

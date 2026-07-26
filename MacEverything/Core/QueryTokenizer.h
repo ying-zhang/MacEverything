@@ -46,22 +46,22 @@ public:
 
             // Single-character operators
             if (c == '|') {
-                tokens.push_back({TokenType::PIPE, "|"});
+                tokens.push_back({TokenType::PIPE, "|", {}, {}});
                 i++;
                 continue;
             }
             if (c == '!') {
-                tokens.push_back({TokenType::BANG, "!"});
+                tokens.push_back({TokenType::BANG, "!", {}, {}});
                 i++;
                 continue;
             }
             if (c == '<') {
-                tokens.push_back({TokenType::LANGLE, "<"});
+                tokens.push_back({TokenType::LANGLE, "<", {}, {}});
                 i++;
                 continue;
             }
             if (c == '>') {
-                tokens.push_back({TokenType::RANGLE, ">"});
+                tokens.push_back({TokenType::RANGLE, ">", {}, {}});
                 i++;
                 continue;
             }
@@ -75,7 +75,7 @@ public:
                     i++;
                 }
                 if (i < len) i++; // skip closing quote
-                tokens.push_back({TokenType::QUOTED, text});
+                tokens.push_back({TokenType::QUOTED, text, {}, {}});
                 continue;
             }
 
@@ -130,11 +130,11 @@ public:
                         continue;
                     }
                 }
-                tokens.push_back({TokenType::WORD, word});
+                tokens.push_back({TokenType::WORD, word, {}, {}});
             }
         }
 
-        tokens.push_back({TokenType::END, ""});
+        tokens.push_back({TokenType::END, "", {}, {}});
         return tokens;
     }
 

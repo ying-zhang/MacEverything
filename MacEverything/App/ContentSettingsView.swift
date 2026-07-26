@@ -78,7 +78,7 @@ struct ContentSettingsView: View {
 
     private func loadSettings() {
         indexedCount = bridge.contentIndexedFileCount()
-        extensions = (bridge.contentGetExtensions() as? [String]) ?? []
+        extensions = bridge.contentGetExtensions()
         maxFileSizeMB = Double(bridge.contentGetMaxFileSize()) / (1024.0 * 1024.0)
 
         initialExtensions = extensions

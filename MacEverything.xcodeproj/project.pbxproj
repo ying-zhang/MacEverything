@@ -7,7 +7,8 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		C1000001 /* mcp_main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = C2000001; };
+		C1000001 /* mcp_main.mm in Sources */ = {isa = PBXBuildFile; fileRef = C2000001; };
+		F1000001 /* mace_main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F2000001; };
 		A1000001 /* MacEverythingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
 		A1000002 /* AppDelegate.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000002; };
 		A1000003 /* SearchViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000003; };
@@ -64,6 +65,8 @@
 		A100002A /* SearchOptions.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000043; };
 		D1000001 /* MCPConfigManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = D2000001; };
 		D1000002 /* MacEverythingMCP in Copy MCP Binary */ = {isa = PBXBuildFile; fileRef = C2000099; };
+		F1000002 /* mace in Copy Helper Binaries */ = {isa = PBXBuildFile; fileRef = F2000099; };
+		G1000001 /* CLIInstallManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = G2000001; };
 		A100003C /* ThemeManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000058; };
 		A100003D /* ThumbnailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000059; };
 		A10000AB /* ResultGridCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000AB; };
@@ -84,6 +87,13 @@
 			proxyType = 1;
 			remoteGlobalIDString = C5000001;
 			remoteInfo = MacEverythingMCP;
+		};
+		F3000001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A8000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = F5000001;
+			remoteInfo = mace;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -175,20 +185,27 @@
 		A200005A /* QuickLookThumbnailing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLookThumbnailing.framework; path = System/Library/Frameworks/QuickLookThumbnailing.framework; sourceTree = SDKROOT; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
-		C2000001 /* mcp_main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mcp_main.cpp; sourceTree = "<group>"; };
+		C2000001 /* mcp_main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = mcp_main.mm; sourceTree = "<group>"; };
 		C2000099 /* MacEverythingMCP */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = MacEverythingMCP; sourceTree = BUILT_PRODUCTS_DIR; };
+		F2000001 /* mace_main.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = mace_main.cpp; sourceTree = "<group>"; };
+		F2000002 /* MaceClient.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = MaceClient.h; sourceTree = "<group>"; };
+		F2000099 /* mace */ = {isa = PBXFileReference; explicitFileType = "compiled.mach-o.executable"; includeInIndex = 0; path = mace; sourceTree = BUILT_PRODUCTS_DIR; };
+		G2000001 /* CLIInstallManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIInstallManager.swift; sourceTree = "<group>"; };
+		H2000001 /* PostingListIntersection.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = PostingListIntersection.h; sourceTree = "<group>"; };
+		H2000002 /* TrigramExtraction.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = TrigramExtraction.h; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXCopyFilesBuildPhase section */
-		D6000001 /* Copy MCP Binary */ = {
+		D6000001 /* Copy Helper Binaries */ = {
 			isa = PBXCopyFilesBuildPhase;
 			buildActionMask = 2147483647;
 			dstPath = "";
 			dstSubfolderSpec = 6;
 			files = (
 				D1000002 /* MacEverythingMCP in Copy MCP Binary */,
+				F1000002 /* mace in Copy Helper Binaries */,
 			);
-			name = "Copy MCP Binary";
+			name = "Copy Helper Binaries";
 			runOnlyForDeploymentPostprocessing = 0;
 		};
 /* End PBXCopyFilesBuildPhase section */
@@ -225,24 +242,29 @@
 /* End PBXVariantGroup section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		E6000001 /* Embed Homebrew Dylibs */ = {
+		E6000001 /* Embed Runtime Dylibs */ = {
 			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
 			inputFileListPaths = (
 			);
 			inputPaths = (
+				"$(SRCROOT)/scripts/embed-homebrew-dylibs.sh",
+				"$(RE2_DEPENDENCY_ROOT)/lib/libre2.dylib",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/$(EXECUTABLE_NAME)",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/MacEverythingMCP",
+				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/mace",
 			);
-			name = "Embed Homebrew Dylibs";
+			name = "Embed Runtime Dylibs";
 			outputFileListPaths = (
 			);
 			outputPaths = (
+				"$(DERIVED_FILE_DIR)/embed-runtime-dylibs.stamp",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\" \"MacEverythingMCP\"\n";
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\" \"MacEverythingMCP\" \"mace\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -304,7 +326,9 @@
 		C4000001 /* CLI */ = {
 			isa = PBXGroup;
 			children = (
-				C2000001 /* mcp_main.cpp */,
+				C2000001 /* mcp_main.mm */,
+				F2000001 /* mace_main.cpp */,
+				F2000002 /* MaceClient.h */,
 			);
 			path = CLI;
 			sourceTree = "<group>";
@@ -312,6 +336,7 @@
 		A4000003 /* App */ = {
 			isa = PBXGroup;
 			children = (
+				G2000001 /* CLIInstallManager.swift */,
 				A2000001 /* MacEverythingApp.swift */,
 				A2000002 /* AppDelegate.swift */,
 				A2000003 /* SearchViewModel.swift */,
@@ -359,6 +384,8 @@
 			isa = PBXGroup;
 			children = (
 				A200000E /* FileRecord.h */,
+				H2000001 /* PostingListIntersection.h */,
+				H2000002 /* TrigramExtraction.h */,
 				A200000A /* DirectoryScanner.h */,
 				A200000B /* DirectoryScanner.cpp */,
 				A200000C /* SearchEngine.h */,
@@ -421,6 +448,7 @@
 				A2000099 /* MacEverything.app */,
 				B2000002 /* MacEverythingUITests.xctest */,
 				C2000099 /* MacEverythingMCP */,
+				F2000099 /* mace */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -435,13 +463,14 @@
 				A6000001 /* Sources */,
 				A3000001 /* Frameworks */,
 				A3000002 /* Resources */,
-				D6000001 /* Copy MCP Binary */,
-				E6000001 /* Embed Homebrew Dylibs */,
+				D6000001 /* Copy Helper Binaries */,
+				E6000001 /* Embed Runtime Dylibs */,
 			);
 			buildRules = (
 			);
 			dependencies = (
 				D7000001 /* PBXTargetDependency */,
+				F7000001 /* PBXTargetDependency */,
 			);
 			name = MacEverything;
 			productName = MacEverything;
@@ -481,6 +510,21 @@
 			productReference = C2000099 /* MacEverythingMCP */;
 			productType = "com.apple.product-type.tool";
 		};
+		F5000001 /* mace */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = F9000001 /* Build configuration list for PBXNativeTarget "mace" */;
+			buildPhases = (
+				F6000001 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = mace;
+			productName = mace;
+			productReference = F2000099 /* mace */;
+			productType = "com.apple.product-type.tool";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -508,6 +552,7 @@
 				A5000001 /* MacEverything */,
 				B5000001 /* MacEverythingUITests */,
 				C5000001 /* MacEverythingMCP */,
+				F5000001 /* mace */,
 			);
 		};
 /* End PBXProject section */
@@ -517,6 +562,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				G1000001 /* CLIInstallManager.swift in Sources */,
 				A1000001 /* MacEverythingApp.swift in Sources */,
 				A1000002 /* AppDelegate.swift in Sources */,
 				A1000003 /* SearchViewModel.swift in Sources */,
@@ -585,7 +631,15 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				C1000001 /* mcp_main.cpp in Sources */,
+				C1000001 /* mcp_main.mm in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F6000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				F1000001 /* mace_main.cpp in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -601,6 +655,11 @@
 			isa = PBXTargetDependency;
 			target = C5000001 /* MacEverythingMCP */;
 			targetProxy = D3000001 /* PBXContainerItemProxy */;
+		};
+		F7000001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = F5000001 /* mace */;
+			targetProxy = F3000001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -619,7 +678,7 @@
 					"DEBUG=1",
 					"$(inherited)",
 				);
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				ONLY_ACTIVE_ARCH = YES;
 				SDKROOT = macosx;
@@ -639,7 +698,7 @@
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				ENABLE_NS_ASSERTIONS = NO;
 				GCC_OPTIMIZATION_LEVEL = 2;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				SDKROOT = macosx;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -669,17 +728,9 @@
 					"$(SRCROOT)/MacEverything/Core",
 					"$(SRCROOT)/MacEverything/Bridge",
 					"$(RE2_DEPENDENCY_ROOT)/include",
-					"/opt/homebrew/opt/re2/include",
-					"/opt/homebrew/opt/abseil/include",
-					"/usr/local/opt/re2/include",
-					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(RE2_DEPENDENCY_ROOT)/lib",
-					"/opt/homebrew/opt/re2/lib",
-					"/opt/homebrew/opt/abseil/lib",
-					"/usr/local/opt/re2/lib",
-					"/usr/local/opt/abseil/lib",
 				);
 				OTHER_LDFLAGS = (
 					"-lre2",
@@ -709,17 +760,9 @@
 					"$(SRCROOT)/MacEverything/Core",
 					"$(SRCROOT)/MacEverything/Bridge",
 					"$(RE2_DEPENDENCY_ROOT)/include",
-					"/opt/homebrew/opt/re2/include",
-					"/opt/homebrew/opt/abseil/include",
-					"/usr/local/opt/re2/include",
-					"/usr/local/opt/abseil/include",
 				);
 				LIBRARY_SEARCH_PATHS = (
 					"$(RE2_DEPENDENCY_ROOT)/lib",
-					"/opt/homebrew/opt/re2/lib",
-					"/opt/homebrew/opt/abseil/lib",
-					"/usr/local/opt/re2/lib",
-					"/usr/local/opt/abseil/lib",
 				);
 				OTHER_LDFLAGS = (
 					"-lre2",
@@ -767,7 +810,11 @@
 				CODE_SIGN_STYLE = Automatic;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
 				GCC_OPTIMIZATION_LEVEL = 0;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					Foundation,
+				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -778,7 +825,33 @@
 				CODE_SIGN_STYLE = Automatic;
 				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
 				GCC_OPTIMIZATION_LEVEL = 2;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					Foundation,
+				);
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Release;
+		};
+		F8000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				GCC_OPTIMIZATION_LEVEL = 0;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+			};
+			name = Debug;
+		};
+		F8000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
+				GCC_OPTIMIZATION_LEVEL = 2;
+				MACOSX_DEPLOYMENT_TARGET = 15.0;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;
@@ -818,6 +891,15 @@
 			buildConfigurations = (
 				C8000001 /* Debug */,
 				C8000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		F9000001 /* Build configuration list for PBXNativeTarget "mace" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				F8000001 /* Debug */,
+				F8000002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

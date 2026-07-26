@@ -8,6 +8,7 @@
 #include "ASTGlobTransform.h"
 #include "CompiledGlob.h"
 #include "SIMDSearch.h"
+#include "PostingListIntersection.h"
 #include "Logger.h"
 #include <algorithm>
 #include <cstring>
@@ -469,24 +470,6 @@ static bool evalNode(const QueryNode& node,
     return false;
 }
 
-/// Extract all TERM texts from the AST (for trigram pre-filtering).
-static void collectTerms(const QueryNode& node, std::vector<std::string>& terms) {
-    switch (node.type) {
-        case QueryNodeType::TERM:
-            terms.push_back(node.textLower);
-            break;
-        case QueryNodeType::AND:
-        case QueryNodeType::OR:
-            for (auto& child : node.children) collectTerms(*child, terms);
-            break;
-        case QueryNodeType::NOT:
-            if (!node.children.empty()) collectTerms(*node.children[0], terms);
-            break;
-        case QueryNodeType::FILTER:
-            break;
-    }
-}
-
 /// Find the single best (longest) SUBSTRING TERM from the AND-level for trigram pre-filtering.
 /// For OR queries we can't pre-filter (any branch might match), so return empty.
 /// Skips __pathseg filter nodes and recurses into AND children.
@@ -622,7 +605,6 @@ static uint8_t termQuality(const char* nameData, uint16_t nameLen,
 /// Compute composite score for a match given multi-term analysis.
 static uint32_t computeMultiTermScore(const char* nameData, uint16_t nameLen,
                                       const std::vector<std::string>& terms,
-                                      const char* pinyinData, uint16_t pinyinLen,
                                       uint32_t pathLen) {
     if (terms.empty())
         return SearchEngine::encodeScore(0, 0, pathLen);
@@ -802,12 +784,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     if (ti == 0) {
                         intersected = std::move(termCands);
                     } else {
-                        std::vector<uint32_t> isect;
-                        isect.reserve(std::min(intersected.size(), termCands.size()));
-                        std::set_intersection(intersected.begin(), intersected.end(),
-                                              termCands.begin(), termCands.end(),
-                                              std::back_inserter(isect));
-                        intersected = std::move(isect);
+                        intersected = me::intersectSortedPostingLists(intersected, termCands);
                     }
                 }
                 if (allOk && !intersected.empty()) {
@@ -903,12 +880,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     [](const auto* a, const auto* b) { return a->size() < b->size(); });
                 std::vector<uint32_t> cjkCands(postings[0]->begin(), postings[0]->end());
                 for (size_t i = 1; i < postings.size() && !cjkCands.empty(); i++) {
-                    std::vector<uint32_t> isect;
-                    isect.reserve(std::min(cjkCands.size(), postings[i]->size()));
-                    std::set_intersection(cjkCands.begin(), cjkCands.end(),
-                                          postings[i]->begin(), postings[i]->end(),
-                                          std::back_inserter(isect));
-                    cjkCands = std::move(isect);
+                    cjkCands = me::intersectSortedPostingLists(cjkCands, *postings[i]);
                 }
                 if (!cjkCands.empty() && cjkCands.size() <= totalSize / 4) {
                     nameCands = std::move(cjkCands);
@@ -939,7 +911,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     if (useTrigram && !pathTrigramIndex_.empty()) {
         std::string pathSegKey = bestPathSegTerm(*ast);
         if (pathSegKey.size() >= 3) {
-            auto pt0 = std::chrono::steady_clock::now();
             bool allFound = false;
             auto pathIdxCands = intersectPostingLists(pathTrigramIndex_, pathSegKey, allFound);
             if (allFound) {
@@ -1089,7 +1060,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   static_cast<time_t>(modTimesPtr[idx]),
                                   nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
-                    uint32_t sc = computeMultiTermScore(nd, nl, sTerms, pyd, pyl,
+                    uint32_t sc = computeMultiTermScore(nd, nl, sTerms,
                                                         static_cast<uint32_t>(opl + 1 + nl));
                     local.push_back({idx, sc});
                 }
@@ -1134,7 +1105,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                               static_cast<time_t>(smallModTimesPtr[idx]),
                               nd, nl, smallLowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                               pathBuf, regexCache)) continue;
-                uint32_t sc = computeMultiTermScore(nd, nl, scoringTerms, pyd, pyl,
+                uint32_t sc = computeMultiTermScore(nd, nl, scoringTerms,
                                                     static_cast<uint32_t>(opl + 1 + nl));
                 merged.push_back({idx, sc});
             }
@@ -1252,7 +1223,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
 
-                    uint32_t sc = computeMultiTermScore(nd, nl, sTerms, pyd, pyl,
+                    uint32_t sc = computeMultiTermScore(nd, nl, sTerms,
                                                         static_cast<uint32_t>(opl + 1 + nl));
                     local.push_back({static_cast<uint32_t>(idx), sc});
                 }

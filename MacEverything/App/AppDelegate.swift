@@ -185,7 +185,8 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
         hideDockItem?.state = isDockIconHidden ? .on : .off
         for (client, item) in mcpMenuItems {
-            item.state = MCPConfigManager.isEnabled(for: client) ? .on : .off
+            item.state = MCPIntegrationModel.shared.isEnabled(client) ? .on : .off
+            item.isEnabled = !MCPIntegrationModel.shared.updating.contains(client)
         }
     }
 
@@ -284,9 +285,10 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
 
     @objc private func toggleMCPClient(_ sender: NSMenuItem) {
         guard let client = sender.representedObject as? MCPClient else { return }
-        let currentlyEnabled = MCPConfigManager.isEnabled(for: client)
-        MCPConfigManager.setEnabled(!currentlyEnabled, for: client)
+        let currentlyEnabled = MCPIntegrationModel.shared.isEnabled(client)
+        MCPIntegrationModel.shared.setEnabled(!currentlyEnabled, for: client)
         sender.state = !currentlyEnabled ? .on : .off
+        sender.isEnabled = false
     }
 
     @objc private func toggleLaunchAtLogin() {

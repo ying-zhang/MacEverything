@@ -37,7 +37,7 @@ Claude Code / Cursor
 
 ## 新增文件
 
-- `MacEverything/CLI/mcp_main.cpp` — MCP Server 主程序 (~530 行)
+- `MacEverything/CLI/mcp_main.mm` — MCP Server 主程序（Objective-C++）
 - `tests/test_mcp_protocol.h` — 协议级集成测试 (9 个测试场景, 29 个断言)
 
 ## 修改文件

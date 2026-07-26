@@ -9,10 +9,10 @@ enum FileActions {
 
     static func open(_ url: URL, isApplication: Bool = false) {
         let configuration = NSWorkspace.OpenConfiguration()
-        let completion: (NSRunningApplication?, Error?) -> Void = { _, error in
+        let completion: @Sendable (NSRunningApplication?, Error?) -> Void = { _, error in
             guard let error else { return }
             AppLogger.error("FileActions", "Failed to open \(url.path): \(error.localizedDescription)")
-            DispatchQueue.main.async {
+            Task { @MainActor in
                 NSSound.beep()
             }
         }

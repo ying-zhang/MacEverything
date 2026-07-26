@@ -3,6 +3,10 @@ import Combine
 import AppKit
 import os
 
+// MacSearchBridge owns a thread-safe C++ ServiceEngine and is explicitly used
+// from background search/indexing tasks throughout the app.
+extension MacSearchBridge: @unchecked Sendable {}
+
 struct FileItem: Identifiable {
     static let fileTypeRegular: UInt8 = 1
     static let fileTypeDirectory: UInt8 = 2
@@ -246,15 +250,17 @@ final class SearchServiceModel: ObservableObject {
         applyRuntimeConfiguration()
         isScanning = true
         bridge.rebuildIndex { [weak self] count in
-            guard let self else { return }
-            self.totalRecords = count
-            self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
-            self.isScanning = false
-            self.scanComplete = true
-            self.isMonitoring = self.bridge.isMonitoring
-            self.isSyncing = self.bridge.isSyncing
-            self.refreshContentIndexInfo()
-            NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+            Task { @MainActor in
+                guard let self else { return }
+                self.totalRecords = count
+                self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
+                self.isScanning = false
+                self.scanComplete = true
+                self.isMonitoring = self.bridge.isMonitoring
+                self.isSyncing = self.bridge.isSyncing
+                self.refreshContentIndexInfo()
+                NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
+            }
         }
         NotificationCenter.default.post(name: .searchServiceDidRefresh, object: nil)
     }
@@ -321,9 +327,11 @@ final class SearchServiceModel: ObservableObject {
         AppLogger.info("VolumeMonitor", "Volume will unmount, pre-removing index: \(path)")
         bridge.markVolumeUnmounting(path)
         bridge.removeSubtree(path) { [weak self] removedCount in
-            guard let self else { return }
-            AppLogger.info("VolumeMonitor", "Pre-removed \(removedCount) records for unmounting volume: \(path)")
-            self.performIndexRefresh()
+            Task { @MainActor in
+                guard let self else { return }
+                AppLogger.info("VolumeMonitor", "Pre-removed \(removedCount) records for unmounting volume: \(path)")
+                self.performIndexRefresh()
+            }
         }
     }
 
@@ -337,11 +345,13 @@ final class SearchServiceModel: ObservableObject {
         }
         AppLogger.info("VolumeMonitor", "Volume unmounted, cleaning up: \(path)")
         bridge.removeSubtree(path) { [weak self] removedCount in
-            guard let self else { return }
-            if removedCount > 0 {
-                AppLogger.info("VolumeMonitor", "Removed \(removedCount) remaining records for unmounted volume: \(path)")
+            Task { @MainActor in
+                guard let self else { return }
+                if removedCount > 0 {
+                    AppLogger.info("VolumeMonitor", "Removed \(removedCount) remaining records for unmounted volume: \(path)")
+                }
+                self.performIndexRefresh()
             }
-            self.performIndexRefresh()
         }
         bridge.clearVolumeUnmounting(path)
     }
@@ -366,8 +376,10 @@ final class SearchServiceModel: ObservableObject {
                 let rescanPath = root.hasPrefix(path + "/") ? root : path
                 AppLogger.info("VolumeMonitor", "Rescanning: \(rescanPath)")
                 self.bridge.rescanSubtree(rescanPath) { [weak self] in
-                    AppLogger.info("VolumeMonitor", "Rescan complete for: \(rescanPath)")
-                    self?.performIndexRefresh()
+                    Task { @MainActor in
+                        AppLogger.info("VolumeMonitor", "Rescan complete for: \(rescanPath)")
+                        self?.performIndexRefresh()
+                    }
                 }
             }
         }
@@ -735,7 +747,7 @@ class SearchViewModel: ObservableObject {
         }
     }
 
-    private static let contentDisplayLimit = 200
+    nonisolated private static let contentDisplayLimit = 200
 
     var effectiveMaxResults: Int {
         isContentSearch ? Self.contentDisplayLimit : Int(settings.snapshot.maxResults)

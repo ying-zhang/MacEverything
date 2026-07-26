@@ -28,12 +28,6 @@ static void appendU16(std::vector<uint8_t>& buf, uint16_t v) {
                reinterpret_cast<uint8_t*>(&v) + 2);
 }
 
-static void appendString(std::vector<uint8_t>& buf, const std::string& s) {
-    uint32_t len = static_cast<uint32_t>(s.size());
-    appendU32(buf, len);
-    buf.insert(buf.end(), s.begin(), s.end());
-}
-
 // v5 record serializer: pathIndex + origName + lowerName + fixed fields
 static void appendRecordV5(std::vector<uint8_t>& buf,
                             const FileRecord& r, uint32_t pathIdx,
@@ -462,7 +456,7 @@ bool PagedIndexWriter::flushDirtyPages(SearchEngine& engine, const IndexMetadata
         buf.reserve(count * 80); // v5 records are smaller
 
         engine.forEachRecordInRangeV5(startIdx, count,
-            [&](uint32_t idx, const FileRecord& r, uint32_t pathIdx,
+            [&](uint32_t, const FileRecord& r, uint32_t pathIdx,
                 const char* lowerName, uint16_t lowerNameLen) {
                 appendRecordV5(buf, r, pathIdx, lowerName, lowerNameLen);
             });
@@ -540,7 +534,7 @@ bool PagedIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& me
         buf.reserve(count * 80);
 
         engine.forEachRecordInRangeV5(startIdx, count,
-            [&](uint32_t idx, const FileRecord& r, uint32_t pathIdx,
+            [&](uint32_t, const FileRecord& r, uint32_t pathIdx,
                 const char* lowerName, uint16_t lowerNameLen) {
                 appendRecordV5(buf, r, pathIdx, lowerName, lowerNameLen);
             });

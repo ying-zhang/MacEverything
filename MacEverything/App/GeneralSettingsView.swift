@@ -20,6 +20,7 @@ struct GeneralSettingsView: View {
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var settings = AppSettings.shared
     @ObservedObject private var theme = ThemeManager.shared
+    @ObservedObject private var mcpIntegration = MCPIntegrationModel.shared
     @State private var newIndexPath = ""
     @State private var newExcludedPath = ""
     @State private var newExcludedPattern = ""
@@ -38,6 +39,8 @@ struct GeneralSettingsView: View {
     @State private var contentIndexWalBytes: UInt64 = 0
     @State private var contentIndexStorageBytes: UInt64 = 0
     @State private var contentIndexedCount: UInt32 = 0
+    @State private var cliInstallStatus: CLIInstallStatus = .notInstalled
+    @State private var cliInstallError = ""
 
     var body: some View {
         TabView {
@@ -96,6 +99,7 @@ struct GeneralSettingsView: View {
                     startupSection
                     shortcutSection
                     serviceSection
+                    cliSection
                     mcpSection
                     maintenanceSection
                 }
@@ -132,6 +136,7 @@ struct GeneralSettingsView: View {
         .onAppear {
             refreshContentIndexInfo()
             selectActiveColorMode()
+            refreshCLIInstallStatus()
         }
         .onChange(of: settings.appearanceMode) { selectActiveColorMode() }
         .onChange(of: colorScheme) {
@@ -706,14 +711,91 @@ struct GeneralSettingsView: View {
         SettingsSection(title: L10n.tr("MCP Integration")) {
             ForEach(MCPClient.allCases, id: \.self) { client in
                 Toggle(client.displayName, isOn: Binding(
-                    get: { MCPConfigManager.isEnabled(for: client) },
-                    set: { MCPConfigManager.setEnabled($0, for: client) }
+                    get: { mcpIntegration.isEnabled(client) },
+                    set: { mcpIntegration.setEnabled($0, for: client) }
                 ))
+                .disabled(mcpIntegration.updating.contains(client))
+                if let error = mcpIntegration.errors[client] {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundColor(.red)
+                }
             }
             Text(L10n.tr("Enable MacEverything MCP integration for supported AI clients."))
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
+    }
+
+    private var cliSection: some View {
+        SettingsSection(title: L10n.tr("Command-Line Client")) {
+            HStack {
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(cliStatusText)
+                    Text(CLIInstallManager.installURL().path)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .textSelection(.enabled)
+                }
+                Spacer()
+                Button(cliActionTitle) {
+                    updateCLIInstallation()
+                }
+                if cliInstallStatus == .conflict {
+                    Button(L10n.tr("Reveal")) {
+                        NSWorkspace.shared.activateFileViewerSelecting([
+                            CLIInstallManager.installURL()
+                        ])
+                    }
+                }
+            }
+
+            if !CLIInstallManager.pathIsConfigured() {
+                Text(L10n.tr("Add ~/.local/bin to PATH to run mace from a terminal."))
+                    .font(.caption)
+                    .foregroundColor(.orange)
+            }
+            if !cliInstallError.isEmpty {
+                Text(cliInstallError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+            }
+        }
+    }
+
+    private var cliStatusText: String {
+        switch cliInstallStatus {
+        case .notInstalled: return L10n.tr("mace is not installed")
+        case .installed: return L10n.tr("mace is installed")
+        case .stale: return L10n.tr("mace points to an older MacEverything app")
+        case .conflict: return L10n.tr("Another file already exists at the command path")
+        }
+    }
+
+    private var cliActionTitle: String {
+        switch cliInstallStatus {
+        case .installed: return L10n.tr("Uninstall")
+        case .stale: return L10n.tr("Update")
+        case .notInstalled, .conflict: return L10n.tr("Install")
+        }
+    }
+
+    private func refreshCLIInstallStatus() {
+        cliInstallStatus = CLIInstallManager.status()
+    }
+
+    private func updateCLIInstallation() {
+        cliInstallError = ""
+        do {
+            if cliInstallStatus == .installed {
+                try CLIInstallManager.uninstall()
+            } else {
+                try CLIInstallManager.install()
+            }
+        } catch {
+            cliInstallError = error.localizedDescription
+        }
+        refreshCLIInstallStatus()
     }
 
     private var maintenanceSection: some View {

@@ -67,9 +67,10 @@ MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Wind
 - Bridge → Core：C++ 直接调用（`ServiceEngine` 的 `shared_ptr`）
 - Core 内部：GCD 队列调度 + `shared_mutex` 保护共享状态
 
-**另有两个独立可执行程序**：
+**另有三个独立可执行程序**：
 - **daemon**（`MacEverything/CLI/daemon_main.cpp`）：无头后台服务，用于服务器部署
-- **MCP Server**（`MacEverything/CLI/mcp_main.cpp`）：Model Context Protocol 服务，供 AI 工具（Claude Code/Cursor）通过 JSON-RPC 2.0 调用
+- **mace**（`MacEverything/CLI/mace_main.cpp`）：短命令客户端，通过本机 HTTP API 查询正在运行的 GUI 应用
+- **MCP Server**（`MacEverything/CLI/mcp_main.mm`）：Model Context Protocol 服务，使用 Foundation 结构化解析 JSON-RPC，供 Codex、Claude Code、Cursor 等工具调用
 
 ---
 
@@ -152,6 +153,10 @@ FileRecord (14 bytes + strings)
 
 **数据结构**：`unordered_map<Trigram, vector<uint32_t>>`，posting list 保持有序。
 
+提取由 `TrigramExtraction.h` 的滚动三字节窗口完成。相邻 trigram 复用前两个
+字节，每个输入字节只做一次 ASCII 小写转换；短输入采用局部排序去重，避免为
+常见文件名随机访问 2 MiB bitmap。
+
 **路径 Trigram 索引**（两级间接）：
 ```
 pathTrigramIndex_: trigram → sorted vector<pathIdx>
@@ -171,6 +176,9 @@ pathIdxToRecords_: pathIdx → sorted vector<recordIdx>
 5. 对每个候选做子串验证（消除 trigram 误匹配）
 6. 使用 `__builtin_prefetch` 预取记录数据（提前 4 条，隐藏内存延迟）
 7. 每 1024 次迭代检查 `queryGeneration_` 原子计数器，支持取消
+
+posting-list 求交统一由 `PostingListIntersection.h` 处理：尺寸接近时使用低开销
+双指针标量合并，列表长度比达到 32:1 时切换到 libc++ 的不均衡列表快速路径。
 
 **Phase 2 — 路径补充扫描**：
 1. 通过 `dispatch_apply`（GCD）并行线性扫描全部记录
@@ -722,7 +730,7 @@ hdiutil create -volname MacEverything \
   -ov -format UDZO MacEverything.dmg
 ```
 
-**环境要求**：macOS 13+, Xcode 15+
+**环境要求**：macOS 15+, Xcode 16+
 
 ### 10.2 测试
 
@@ -776,6 +784,8 @@ make benchmark     # 性能基准测试
 | `PathUtils.h` | 42 | 缓存/日志路径工具 |
 | `Logger.h/.cpp` | 149/155 | 线程安全日志（5MB 轮转，3 备份） |
 | `StringUtils.h/.cpp` | 7/46 | ASCII 快速小写化 + Unicode 回退 |
+| `TrigramExtraction.h` | header-only | 滚动 byte-trigram 提取与自适应去重 |
+| `PostingListIntersection.h` | header-only | 自适应有序 posting-list 求交 |
 
 ### Bridge 层
 
@@ -808,8 +818,10 @@ make benchmark     # 性能基准测试
 
 | 文件 | 行数 | 职责 |
 |------|------|------|
-| `daemon_main.cpp` | 199 | 无头守护进程 |
-| `mcp_main.cpp` | 527 | MCP 服务（JSON-RPC 2.0 stdio） |
+| `daemon_main.cpp` | 197 | 无头守护进程 |
+| `mace_main.cpp` | 184 | 短命令查询客户端 |
+| `MaceClient.h` | 234 | HTTP、URL 和 JSON 响应处理 |
+| `mcp_main.mm` | 481 | MCP 服务（JSON-RPC 2.0 stdio） |
 
 ### 测试
 

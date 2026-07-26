@@ -3,23 +3,73 @@
 // Tests the MCP server binary via subprocess stdio communication.
 
 #include <cstdio>
+#include <cerrno>
+#include <cstdlib>
+#include <fcntl.h>
 #include <string>
 #include <sstream>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <vector>
 
 /// Send JSON-RPC messages to the MCP binary via pipe and capture all responses.
 static std::string mcpExec(const std::string& input) {
-    // Use the built binary path (relative to build dir)
-    std::string cmd = "echo '" + input + "' | ./build/Release/MacEverythingMCP 2>/dev/null";
-    FILE* fp = popen(cmd.c_str(), "r");
-    if (!fp) return "";
+    const char* configured = std::getenv("MACE_MCP_BINARY");
+    std::string binary = configured ? configured : "";
+    if (binary.empty()) {
+        const char* candidates[] = {
+            "./build/mcp/Release/MacEverythingMCP",
+            "./build/arm64/Release/MacEverythingMCP",
+            "./build/Release/MacEverythingMCP"
+        };
+        for (const char* candidate : candidates) {
+            if (access(candidate, X_OK) == 0) {
+                binary = candidate;
+                break;
+            }
+        }
+    }
+    if (binary.empty()) return "";
+    int stdinPipe[2];
+    int stdoutPipe[2];
+    if (pipe(stdinPipe) != 0 || pipe(stdoutPipe) != 0) return "";
+    pid_t pid = fork();
+    if (pid < 0) return "";
+    if (pid == 0) {
+        dup2(stdinPipe[0], STDIN_FILENO);
+        dup2(stdoutPipe[1], STDOUT_FILENO);
+        int devNull = open("/dev/null", O_WRONLY);
+        if (devNull >= 0) dup2(devNull, STDERR_FILENO);
+        close(stdinPipe[0]);
+        close(stdinPipe[1]);
+        close(stdoutPipe[0]);
+        close(stdoutPipe[1]);
+        execl(binary.c_str(), binary.c_str(), static_cast<char*>(nullptr));
+        _exit(127);
+    }
+
+    close(stdinPipe[0]);
+    close(stdoutPipe[1]);
+    size_t written = 0;
+    while (written < input.size()) {
+        ssize_t count = write(stdinPipe[1], input.data() + written, input.size() - written);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        written += static_cast<size_t>(count);
+    }
+    close(stdinPipe[1]);
 
     std::string output;
     char buf[4096];
-    while (fgets(buf, sizeof(buf), fp)) {
-        output += buf;
+    while (true) {
+        ssize_t count = read(stdoutPipe[0], buf, sizeof(buf));
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) break;
+        output.append(buf, static_cast<size_t>(count));
     }
-    pclose(fp);
+    close(stdoutPipe[0]);
+    int status = 0;
+    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
     return output;
 }
 
@@ -47,9 +97,8 @@ static void runMcpProtocolTests() {
     std::cout << "  Part 49: MCP Protocol Tests\n";
     std::cout << "========================================\n\n";
 
-    // Skip if MCP binary not built
-    if (std::system("test -x ./build/Release/MacEverythingMCP") != 0) {
-        std::cout << "  [SKIP] MCP binary not found at ./build/Release/MacEverythingMCP\n";
+    if (mcpExec(R"({"jsonrpc":"2.0","id":0,"method":"ping"})").empty()) {
+        std::cout << "  [SKIP] MCP binary not found in a known build directory\n";
         return;
     }
 
@@ -179,6 +228,54 @@ static void runMcpProtocolTests() {
         auto lines = splitLines(output);
         check(lines.size() == 1, "invalid JSON: 1 response");
         check(jsonContains(lines[0], "-32700"), "invalid JSON: parse error code -32700");
+    }
+
+    // -- Test 10: JSON-looking text inside a value does not affect dispatch --
+    std::cout << "\n  --- Test 10: Structured dispatch ---\n";
+    {
+        std::string input =
+            R"({"jsonrpc":"2.0","id":"safe","method":"ping","params":{"note":"method: tools/list, id: 99"}})";
+        auto lines = splitLines(mcpExec(input));
+        check(lines.size() == 1, "structured dispatch: one response");
+        check(jsonContains(lines[0], "\"id\":\"safe\""), "structured dispatch: string id preserved");
+        check(jsonContains(lines[0], "\"result\":{}"), "structured dispatch: ping selected");
+        check(!jsonContains(lines[0], "search_files"), "structured dispatch: value text ignored");
+    }
+
+    // -- Test 11: Invalid structured field types are rejected --
+    std::cout << "\n  --- Test 11: Structured validation ---\n";
+    {
+        std::string input =
+            R"({"jsonrpc":"2.0","id":21,"method":7})"
+            "\n"
+            R"({"jsonrpc":"2.0","id":22,"method":"tools/call","params":{"name":"search_files","arguments":[]}})";
+        auto lines = splitLines(mcpExec(input));
+        check(lines.size() == 2, "structured validation: two responses");
+        check(jsonContains(lines[0], "-32600"), "non-string method rejected");
+        check(jsonContains(lines[1], "-32602"), "non-object arguments rejected");
+    }
+
+    // -- Test 12: Mixed batch parses objects structurally --
+    std::cout << "\n  --- Test 12: Mixed batch ---\n";
+    {
+        std::string input =
+            R"([{"jsonrpc":"2.0","id":31,"method":"ping"},42,{"jsonrpc":"2.0","id":32,"method":"tools/list"}])";
+        auto lines = splitLines(mcpExec(input));
+        check(lines.size() == 3, "mixed batch: three responses");
+        check(jsonContains(lines[0], "\"id\":31"), "mixed batch: first request");
+        check(jsonContains(lines[1], "-32600"), "mixed batch: primitive rejected");
+        check(jsonContains(lines[2], "\"id\":32"), "mixed batch: final request");
+    }
+
+    // -- Test 13: Explicit null arguments are treated as an empty object --
+    std::cout << "\n  --- Test 13: Null arguments ---\n";
+    {
+        std::string input =
+            R"({"jsonrpc":"2.0","id":41,"method":"tools/call","params":{"name":"index_status","arguments":null}})";
+        auto lines = splitLines(mcpExec(input));
+        check(lines.size() == 1, "null arguments: one response");
+        check(!jsonContains(lines[0], "-32602"), "null arguments: accepted as empty object");
+        check(jsonContains(lines[0], "\"id\":41"), "null arguments: id preserved");
     }
 
     std::cout << "\n  Part 49 complete.\n\n";

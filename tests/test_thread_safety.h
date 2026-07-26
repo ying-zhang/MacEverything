@@ -29,7 +29,7 @@ static void runThreadSafetyTest() {
     // Reader threads
     std::vector<std::thread> threads;
     for (int t = 0; t < NUM_READERS; t++) {
-        threads.emplace_back([&, t] {
+        threads.emplace_back([&] {
             int queries = 0;
             while (running.load(std::memory_order_relaxed)) {
                 try {

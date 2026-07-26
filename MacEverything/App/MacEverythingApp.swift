@@ -5,6 +5,7 @@ struct MacEverythingApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var appSettings = AppSettings.shared
     @StateObject private var searchOptions = SearchOptions.shared
+    @StateObject private var mcpIntegration = MCPIntegrationModel.shared
 
     var body: some Scene {
         WindowGroup("MacEverything", id: "search") {
@@ -91,9 +92,10 @@ struct MacEverythingApp: App {
                 Menu(L10n.tr("MCP Integration")) {
                     ForEach(MCPClient.allCases, id: \.self) { client in
                         Toggle(client.displayName, isOn: Binding(
-                            get: { MCPConfigManager.isEnabled(for: client) },
-                            set: { MCPConfigManager.setEnabled($0, for: client) }
+                            get: { mcpIntegration.isEnabled(client) },
+                            set: { mcpIntegration.setEnabled($0, for: client) }
                         ))
+                        .disabled(mcpIntegration.updating.contains(client))
                     }
                 }
             }

@@ -2,6 +2,8 @@
 #include "Logger.h"
 #include "StringUtils.h"
 #include "SIMDSearch.h"
+#include "PostingListIntersection.h"
+#include "TrigramExtraction.h"
 #include <algorithm>
 #include <fstream>
 #include <iostream>
@@ -110,32 +112,7 @@ std::string ContentIndex::readFileIfText(const std::string& path, uint64_t maxSi
 // --- Trigram extraction ---
 
 std::vector<Trigram> ContentIndex::extractTrigrams(const std::string& text) {
-    if (text.size() < 3) return {};
-
-    // C-1: thread_local bitmap avoids 2MB allocation per call.
-    // Only the dirty bits are cleared each call — O(unique_trigrams) instead of O(2^24).
-    static constexpr size_t kBitmapSize = 1 << 24;
-    thread_local std::vector<bool> seen(kBitmapSize, false);
-    thread_local std::vector<Trigram> dirty;
-
-    for (auto t : dirty) seen[t] = false;
-    dirty.clear();
-
-    std::vector<Trigram> result;
-
-    for (size_t i = 0; i + 2 < text.size(); i++) {
-        uint8_t a = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(text[i])));
-        uint8_t b = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(text[i + 1])));
-        uint8_t c = static_cast<uint8_t>(std::tolower(static_cast<unsigned char>(text[i + 2])));
-        Trigram t = makeTrigram(a, b, c);
-        if (!seen[t]) {
-            seen[t] = true;
-            dirty.push_back(t);
-            result.push_back(t);
-        }
-    }
-
-    return result;
+    return me::extractByteTrigrams(text);
 }
 
 // --- Snippet generation ---
@@ -530,10 +507,7 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
         candidates.assign(postings[0].list->begin(), postings[0].list->end());
         std::vector<uint32_t> temp;
         for (size_t i = 1; i < postings.size() && !candidates.empty(); i++) {
-            temp.clear();
-            std::set_intersection(candidates.begin(), candidates.end(),
-                                  postings[i].list->begin(), postings[i].list->end(),
-                                  std::back_inserter(temp));
+            me::intersectSortedPostingLists(candidates, *postings[i].list, temp);
             candidates.swap(temp);
         }
     } else {
@@ -590,14 +564,6 @@ uint32_t ContentIndex::indexedFileCount() const {
 }
 
 // --- Persistence ---
-
-static bool writeU32(FILE* f, uint32_t v) {
-    return fwrite(&v, sizeof(uint32_t), 1, f) == 1;
-}
-
-static bool writeU64(FILE* f, uint64_t v) {
-    return fwrite(&v, sizeof(uint64_t), 1, f) == 1;
-}
 
 static bool readU32(FILE* f, uint32_t& v) {
     return fread(&v, sizeof(uint32_t), 1, f) == 1;

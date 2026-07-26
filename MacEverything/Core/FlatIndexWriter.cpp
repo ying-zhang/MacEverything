@@ -202,7 +202,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 1: NAMES_ORIG
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeStringPoolSection(f, snap.origNamePool, size, crc);
         fillSection(0, kSectionNamesOrig, offset, size, crc);
     }
@@ -210,7 +210,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 2: NAMES_LOWER
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeStringPoolSection(f, snap.namePool, size, crc);
         fillSection(1, kSectionNamesLower, offset, size, crc);
     }
@@ -218,7 +218,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 3: PATH_POOL
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeStringPoolSection(f, snap.pathPool, size, crc);
         fillSection(2, kSectionPathPool, offset, size, crc);
     }
@@ -228,7 +228,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 4: PATH_INDICES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeArraySection(f, snap.pathIndices, size, crc);
         fillSection(3, kSectionPathIndices, offset, size, crc);
     }
@@ -236,7 +236,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 5: TYPES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeArraySection(f, snap.types, size, crc);
         fillSection(4, kSectionTypes, offset, size, crc);
     }
@@ -244,7 +244,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 6: SIZES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeArraySection(f, snap.sizes, size, crc);
         fillSection(5, kSectionSizes, offset, size, crc);
     }
@@ -252,7 +252,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 7: MOD_TIMES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeArraySection(f, snap.modTimes, size, crc);
         fillSection(6, kSectionModTimes, offset, size, crc);
     }
@@ -260,7 +260,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 8: INODES
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeArraySection(f, snap.inodes, size, crc);
         fillSection(7, kSectionInodes, offset, size, crc);
     }
@@ -268,7 +268,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 9: DEV_IDS
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeArraySection(f, snap.devIds, size, crc);
         fillSection(8, kSectionDevIds, offset, size, crc);
     }
@@ -276,7 +276,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Section 10: METADATA_KV
     {
         uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size, crc;
+        uint32_t size = 0, crc = 0;
         ok = ok && writeMetadataSection(f, meta, size, crc);
         fillSection(9, kSectionMetadataKV, offset, size, crc);
     }

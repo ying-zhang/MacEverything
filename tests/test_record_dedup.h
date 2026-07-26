@@ -64,6 +64,8 @@ inline void runRecordDedupTests() {
 
         auto remap = engine.compactRecords();
         check(engine.liveRecordCount() == 2, "C45: after compact: liveCount == 2");
+        check(engine.recordCount() <= totalBefore,
+              "C45: compaction does not increase record count");
         // After compaction, total should equal live (no tombstones or orphans)
         check(engine.recordCount() == engine.liveRecordCount(),
               "C45: after compact: recordCount == liveRecordCount (no orphans)");

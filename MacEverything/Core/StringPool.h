@@ -50,14 +50,14 @@ public:
     }
 
     /// Mark entry as tombstoned. Buffer space is not reclaimed.
-    void tombstone(uint32_t idx) {
+    void tombstone(size_t idx) {
         if (idx < entries_.size()) {
             entries_[idx].length = 0;
         }
     }
 
     /// Pointer to the string data for entry idx.
-    const char* data(uint32_t idx) const {
+    const char* data(size_t idx) const {
         if (idx >= entries_.size()) return "";
         auto& e = entries_[idx];
         if (e.offset + e.length > buffer_.size()) return "";
@@ -65,7 +65,7 @@ public:
     }
 
     /// Length of entry idx (0 if tombstoned or out-of-bounds).
-    uint16_t length(uint32_t idx) const {
+    uint16_t length(size_t idx) const {
         if (idx >= entries_.size()) return 0;
         auto& e = entries_[idx];
         if (e.offset + e.length > buffer_.size()) return 0;
@@ -73,12 +73,12 @@ public:
     }
 
     /// Whether entry idx is live (not tombstoned).
-    bool isLive(uint32_t idx) const {
+    bool isLive(size_t idx) const {
         return idx < entries_.size() && entries_[idx].length > 0;
     }
 
     /// Get a string_view for entry idx.
-    std::string_view view(uint32_t idx) const {
+    std::string_view view(size_t idx) const {
         if (idx >= entries_.size()) return {};
         auto& e = entries_[idx];
         if (e.offset + e.length > buffer_.size()) return {};
@@ -86,7 +86,7 @@ public:
     }
 
     /// Get a std::string copy for entry idx.
-    std::string str(uint32_t idx) const {
+    std::string str(size_t idx) const {
         if (idx >= entries_.size()) return {};
         auto& e = entries_[idx];
         if (e.offset + e.length > buffer_.size()) return {};
@@ -171,14 +171,14 @@ inline StringPool::CompactResult StringPool::compact(const std::vector<bool>& li
     result.remap.assign(entries_.size(), UINT32_MAX);
     size_t liveBytes = 0;
     size_t liveCount = 0;
-    for (uint32_t i = 0; i < entries_.size(); i++) {
+    for (size_t i = 0; i < entries_.size(); i++) {
         if (i < liveMask.size() && liveMask[i] && entries_[i].length > 0) {
             liveBytes += entries_[i].length;
             liveCount++;
         }
     }
     result.compacted.reserve(liveBytes, liveCount);
-    for (uint32_t i = 0; i < entries_.size(); i++) {
+    for (size_t i = 0; i < entries_.size(); i++) {
         if (i < liveMask.size() && liveMask[i] && entries_[i].length > 0) {
             uint32_t newIdx = result.compacted.append(
                 buffer_.data() + entries_[i].offset, entries_[i].length);

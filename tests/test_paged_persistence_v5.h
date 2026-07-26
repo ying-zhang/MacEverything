@@ -380,7 +380,7 @@ static void testV4ToV5Migration() {
             buf.reserve(count * 100);
 
             engine->forEachRecordInRange(startIdx, count,
-                [&](uint32_t idx, const FileRecord& r, const std::string& path) {
+                [&](uint32_t, const FileRecord& r, const std::string& path) {
                     // v4 format: appendRecordV4 equivalent
                     auto appendU32 = [&](uint32_t v) {
                         buf.insert(buf.end(), reinterpret_cast<uint8_t*>(&v),

@@ -1,12 +1,15 @@
 import Foundation
+import Combine
 
-enum MCPClient: String, CaseIterable {
+enum MCPClient: String, CaseIterable, Sendable {
+    case codex
     case claudeCode
     case cursor
     case claudeDesktop
 
     var displayName: String {
         switch self {
+        case .codex: return "Codex"
         case .claudeCode: return "Claude Code"
         case .cursor: return "Cursor"
         case .claudeDesktop: return "Claude Desktop"
@@ -14,20 +17,69 @@ enum MCPClient: String, CaseIterable {
     }
 
     var configFileURL: URL {
-        let home = FileManager.default.homeDirectoryForCurrentUser
+        configFileURL(homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
+    }
+
+    func configFileURL(homeDirectory: URL) -> URL {
         switch self {
+        case .codex:
+            return homeDirectory.appendingPathComponent(".codex/config.toml")
         case .claudeCode:
-            return home.appendingPathComponent(".claude/settings.json")
+            return homeDirectory.appendingPathComponent(".claude.json")
         case .cursor:
-            return home.appendingPathComponent(".cursor/mcp.json")
+            return homeDirectory.appendingPathComponent(".cursor/mcp.json")
         case .claudeDesktop:
-            return home
+            return homeDirectory
                 .appendingPathComponent("Library/Application Support/Claude/claude_desktop_config.json")
+        }
+    }
+
+    func legacyConfigFileURL(homeDirectory: URL) -> URL? {
+        guard self == .claudeCode else { return nil }
+        return homeDirectory.appendingPathComponent(".claude/settings.json")
+    }
+
+    var cliName: String? {
+        switch self {
+        case .codex: return "codex"
+        case .claudeCode: return "claude"
+        case .cursor, .claudeDesktop: return nil
+        }
+    }
+
+    func enableArguments(binaryPath: String) -> [String]? {
+        switch self {
+        case .codex:
+            return ["mcp", "add", "maceverything", "--", binaryPath]
+        case .claudeCode:
+            return ["mcp", "add", "--transport", "stdio", "--scope", "user",
+                    "maceverything", "--", binaryPath]
+        case .cursor, .claudeDesktop:
+            return nil
+        }
+    }
+
+    var disableArguments: [String]? {
+        switch self {
+        case .codex:
+            return ["mcp", "remove", "maceverything"]
+        case .claudeCode:
+            return ["mcp", "remove", "--scope", "user", "maceverything"]
+        case .cursor, .claudeDesktop:
+            return nil
         }
     }
 }
 
+struct MCPCommandResult {
+    let exitCode: Int32
+    let output: String
+}
+
 struct MCPConfigManager {
+    typealias ExecutableResolver = (_ name: String, _ homeDirectory: URL) -> URL?
+    typealias CommandRunner = (_ executable: URL, _ arguments: [String]) throws -> MCPCommandResult
+
     static var mcpBinaryPath: String? {
         guard let execURL = Bundle.main.executableURL else { return nil }
         return execURL.deletingLastPathComponent()
@@ -35,45 +87,90 @@ struct MCPConfigManager {
     }
 
     static func isEnabled(for client: MCPClient) -> Bool {
-        guard let root = try? readJSON(at: client.configFileURL) else { return false }
-        guard let servers = root["mcpServers"] as? [String: Any] else { return false }
-        return servers["maceverything"] != nil
+        isEnabled(for: client, homeDirectory: FileManager.default.homeDirectoryForCurrentUser)
     }
 
-    static func setEnabled(_ enabled: Bool, for client: MCPClient) {
-        do {
-            if enabled {
-                try enable(for: client)
-            } else {
-                try disable(for: client)
+    static func isEnabled(for client: MCPClient, homeDirectory: URL) -> Bool {
+        let url = client.configFileURL(homeDirectory: homeDirectory)
+        switch client {
+        case .codex:
+            guard let text = try? String(contentsOf: url, encoding: .utf8) else { return false }
+            return codexServerIsEnabled(in: text)
+        case .claudeCode, .cursor, .claudeDesktop:
+            let urls = [url, client.legacyConfigFileURL(homeDirectory: homeDirectory)].compactMap { $0 }
+            return urls.contains { configURL in
+                guard let root = try? readJSON(at: configURL),
+                      let servers = root["mcpServers"] as? [String: Any] else { return false }
+                return servers["maceverything"] != nil
             }
-        } catch {
-            AppLogger.error("MCP", "Failed to update \(client.displayName) config: \(error)")
         }
     }
 
-    // MARK: - Private
-
-    private static func enable(for client: MCPClient) throws {
+    static func setEnabled(_ enabled: Bool, for client: MCPClient) throws {
         guard let binaryPath = mcpBinaryPath else {
             throw MCPError.binaryNotFound
         }
-        let url = client.configFileURL
-        var root = (try? readJSON(at: url)) ?? [:]
-        var servers = root["mcpServers"] as? [String: Any] ?? [:]
-        servers["maceverything"] = [
-            "command": binaryPath,
-            "args": [String]()
-        ] as [String: Any]
-        root["mcpServers"] = servers
-        try writeJSON(root, to: url)
+        try update(enabled: enabled,
+                   for: client,
+                   homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
+                   binaryPath: binaryPath,
+                   executableResolver: resolveExecutable,
+                   commandRunner: runCommand)
     }
 
-    private static func disable(for client: MCPClient) throws {
-        let url = client.configFileURL
-        var root = try readJSON(at: url)
-        guard var servers = root["mcpServers"] as? [String: Any] else { return }
-        servers.removeValue(forKey: "maceverything")
+    static func update(enabled: Bool,
+                       for client: MCPClient,
+                       homeDirectory: URL,
+                       binaryPath: String,
+                       executableResolver: ExecutableResolver,
+                       commandRunner: CommandRunner) throws {
+        if let cliName = client.cliName {
+            guard let executable = executableResolver(cliName, homeDirectory) else {
+                throw MCPError.clientCLINotFound(cliName)
+            }
+            let arguments = enabled ? client.enableArguments(binaryPath: binaryPath) : client.disableArguments
+            guard let arguments else { throw MCPError.invalidClientConfiguration }
+            let legacyURL = client.legacyConfigFileURL(homeDirectory: homeDirectory)
+            let legacyWasEnabled = legacyURL.map { serverIsEnabled(inJSONAt: $0) } ?? false
+            let currentConfigIsEnabled = serverIsEnabled(
+                inJSONAt: client.configFileURL(homeDirectory: homeDirectory))
+            let result = try commandRunner(executable, arguments)
+            guard result.exitCode == 0 || (!enabled && legacyWasEnabled && !currentConfigIsEnabled) else {
+                throw MCPError.commandFailed(result.output)
+            }
+            if !enabled, let legacyURL, legacyWasEnabled {
+                try updateJSON(enabled: false, for: client, at: legacyURL, binaryPath: binaryPath)
+            }
+            return
+        }
+
+        try updateJSON(enabled: enabled,
+                       for: client,
+                       at: client.configFileURL(homeDirectory: homeDirectory),
+                       binaryPath: binaryPath)
+    }
+
+    static func updateJSON(enabled: Bool,
+                           for client: MCPClient,
+                           at url: URL,
+                           binaryPath: String) throws {
+        let fileManager = FileManager.default
+        var root = fileManager.fileExists(atPath: url.path) ? try readJSON(at: url) : [:]
+        var servers = root["mcpServers"] as? [String: Any] ?? [:]
+
+        if enabled {
+            var entry: [String: Any] = [
+                "command": binaryPath,
+                "args": [String]()
+            ]
+            if client == .cursor {
+                entry["type"] = "stdio"
+            }
+            servers["maceverything"] = entry
+        } else {
+            servers.removeValue(forKey: "maceverything")
+        }
+
         if servers.isEmpty {
             root.removeValue(forKey: "mcpServers")
         } else {
@@ -82,12 +179,93 @@ struct MCPConfigManager {
         try writeJSON(root, to: url)
     }
 
+    static func codexServerIsEnabled(in text: String) -> Bool {
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false)
+        var inServerSection = false
+        var foundServerSection = false
+
+        for rawLine in lines {
+            let line = rawLine.split(separator: "#", maxSplits: 1,
+                                     omittingEmptySubsequences: false)[0]
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if line.hasPrefix("[") {
+                inServerSection = line == "[mcp_servers.maceverything]" ||
+                    line == "[mcp_servers.\"maceverything\"]"
+                foundServerSection = foundServerSection || inServerSection
+                continue
+            }
+            if inServerSection,
+               line.filter({ !$0.isWhitespace }) == "enabled=false" {
+                return false
+            }
+        }
+        return foundServerSection
+    }
+
+    private static func resolveExecutable(named name: String, homeDirectory: URL) -> URL? {
+        let fileManager = FileManager.default
+        var candidates: [URL] = []
+
+        if let path = ProcessInfo.processInfo.environment["PATH"] {
+            candidates.append(contentsOf: path.split(separator: ":").map {
+                URL(fileURLWithPath: String($0)).appendingPathComponent(name)
+            })
+        }
+
+        candidates.append(homeDirectory.appendingPathComponent(".local/bin/\(name)"))
+        candidates.append(URL(fileURLWithPath: "/usr/local/bin/\(name)"))
+        candidates.append(URL(fileURLWithPath: "/opt/homebrew/bin/\(name)"))
+
+        if name == "codex" {
+            candidates.append(URL(fileURLWithPath: "/Applications/ChatGPT.app/Contents/Resources/codex"))
+            candidates.append(URL(fileURLWithPath: "/Applications/Codex.app/Contents/Resources/codex"))
+        }
+
+        let nodeVersions = homeDirectory.appendingPathComponent(".nvm/versions/node")
+        if let versions = try? fileManager.contentsOfDirectory(at: nodeVersions,
+                                                                includingPropertiesForKeys: nil) {
+            candidates.append(contentsOf: versions.sorted {
+                $0.lastPathComponent.compare($1.lastPathComponent, options: .numeric) == .orderedDescending
+            }.map {
+                $0.appendingPathComponent("bin/\(name)")
+            })
+        }
+
+        return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
+    }
+
+    private static func runCommand(executable: URL, arguments: [String]) throws -> MCPCommandResult {
+        let process = Process()
+        let outputURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("mace-mcp-command-\(UUID().uuidString).log")
+        FileManager.default.createFile(atPath: outputURL.path, contents: nil)
+        defer { try? FileManager.default.removeItem(at: outputURL) }
+        let outputHandle = try FileHandle(forWritingTo: outputURL)
+        defer { try? outputHandle.close() }
+        process.executableURL = executable
+        process.arguments = arguments
+        process.standardOutput = outputHandle
+        process.standardError = outputHandle
+        try process.run()
+        process.waitUntilExit()
+        try outputHandle.synchronize()
+        let data = try Data(contentsOf: outputURL)
+        let output = String(data: data, encoding: .utf8) ?? ""
+        return MCPCommandResult(exitCode: process.terminationStatus, output: output)
+    }
+
     private static func readJSON(at url: URL) throws -> [String: Any] {
         let data = try Data(contentsOf: url)
         guard let dict = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw MCPError.invalidJSON
         }
         return dict
+    }
+
+    private static func serverIsEnabled(inJSONAt url: URL) -> Bool {
+        guard let root = try? readJSON(at: url),
+              let servers = root["mcpServers"] as? [String: Any] else { return false }
+        return servers["maceverything"] != nil
     }
 
     private static func writeJSON(_ dict: [String: Any], to url: URL) throws {
@@ -100,14 +278,73 @@ struct MCPConfigManager {
         try data.write(to: url, options: .atomic)
     }
 
-    private enum MCPError: LocalizedError {
+    enum MCPError: LocalizedError {
         case binaryNotFound
+        case clientCLINotFound(String)
+        case commandFailed(String)
+        case invalidClientConfiguration
         case invalidJSON
 
         var errorDescription: String? {
             switch self {
-            case .binaryNotFound: return "MCP binary not found in app bundle"
-            case .invalidJSON: return "Config file contains invalid JSON"
+            case .binaryNotFound:
+                return NSLocalizedString("MCP binary not found in app bundle", comment: "")
+            case .clientCLINotFound(let name):
+                return String(format: NSLocalizedString("%@ CLI not found", comment: ""), name)
+            case .commandFailed(let output):
+                return output.isEmpty
+                    ? NSLocalizedString("MCP client command failed", comment: "")
+                    : output
+            case .invalidClientConfiguration:
+                return NSLocalizedString("Invalid MCP client configuration", comment: "")
+            case .invalidJSON:
+                return NSLocalizedString("Config file contains invalid JSON", comment: "")
+            }
+        }
+    }
+}
+
+@MainActor
+final class MCPIntegrationModel: ObservableObject {
+    static let shared = MCPIntegrationModel()
+
+    @Published private(set) var enabled: [MCPClient: Bool] = [:]
+    @Published private(set) var updating: Set<MCPClient> = []
+    @Published private(set) var errors: [MCPClient: String] = [:]
+
+    private init() {
+        refresh()
+    }
+
+    func refresh() {
+        for client in MCPClient.allCases where !updating.contains(client) {
+            enabled[client] = MCPConfigManager.isEnabled(for: client)
+        }
+    }
+
+    func isEnabled(_ client: MCPClient) -> Bool {
+        enabled[client] ?? false
+    }
+
+    func setEnabled(_ desired: Bool, for client: MCPClient) {
+        guard !updating.contains(client) else { return }
+        let previous = isEnabled(client)
+        enabled[client] = desired
+        updating.insert(client)
+        errors[client] = nil
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = Result { try MCPConfigManager.setEnabled(desired, for: client) }
+            DispatchQueue.main.async {
+                self.updating.remove(client)
+                switch result {
+                case .success:
+                    self.enabled[client] = MCPConfigManager.isEnabled(for: client)
+                case .failure(let error):
+                    self.enabled[client] = previous
+                    self.errors[client] = error.localizedDescription
+                    AppLogger.error("MCP", "Failed to update \(client.displayName) config: \(error)")
+                }
             }
         }
     }

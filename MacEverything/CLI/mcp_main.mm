@@ -5,15 +5,17 @@
 /// Protocol: JSON-RPC 2.0 over stdio, newline-delimited.
 /// Spec version: 2025-03-26
 
+#import <Foundation/Foundation.h>
+
+#include "MaceClient.h"
+
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <vector>
 #include <cerrno>
-#include <climits>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -61,205 +63,27 @@ static std::string jsonEscape(const std::string& s) {
     return out;
 }
 
-static std::string urlEncode(const std::string& s) {
-    std::string out;
-    out.reserve(s.size() * 3);
-    for (unsigned char c : s) {
-        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-            (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.' || c == '~') {
-            out += static_cast<char>(c);
-        } else {
-            char buf[4];
-            snprintf(buf, sizeof(buf), "%%%02X", c);
-            out += buf;
-        }
-    }
-    return out;
+static std::string cppString(NSString* value) {
+    if (![value isKindOfClass:[NSString class]]) return "";
+    const char* utf8 = value.UTF8String;
+    return utf8 ? std::string(utf8) : std::string();
 }
 
-/// Extract a string value for a given key from a JSON object string.
-/// Returns empty string if not found.
-static std::string jsonGetString(const std::string& json, const std::string& key) {
-    std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return "";
-
-    // Find the colon after the key
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return "";
-
-    // Skip whitespace
-    pos = json.find_first_not_of(" \t\r\n", pos + 1);
-    if (pos == std::string::npos) return "";
-
-    if (json[pos] == '"') {
-        // String value — find the closing quote (handle escapes)
-        size_t start = pos + 1;
-        size_t end = start;
-        while (end < json.size()) {
-            if (json[end] == '\\') { end += 2; continue; }
-            if (json[end] == '"') break;
-            end++;
-        }
-        return json.substr(start, end - start);
-    }
-    return "";
+static id parseJSON(const std::string& json, NSError** error) {
+    NSData* data = [NSData dataWithBytes:json.data() length:json.size()];
+    return [NSJSONSerialization JSONObjectWithData:data
+                                           options:NSJSONReadingFragmentsAllowed
+                                             error:error];
 }
 
-static bool jsonTryGetString(const std::string& json, const std::string& key, std::string& out) {
-    std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return false;
-
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return false;
-
-    pos = json.find_first_not_of(" \t\r\n", pos + 1);
-    if (pos == std::string::npos || json[pos] != '"') return false;
-
-    size_t start = pos + 1;
-    size_t end = start;
-    while (end < json.size()) {
-        if (json[end] == '\\') { end += 2; continue; }
-        if (json[end] == '"') break;
-        end++;
-    }
-    if (end >= json.size()) return false;
-    out = json.substr(start, end - start);
-    return true;
-}
-
-/// Extract an integer or number value for a given key.
-/// Returns -1 if not found.
-static long jsonGetNumber(const std::string& json, const std::string& key) {
-    std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return -1;
-
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return -1;
-
-    pos = json.find_first_not_of(" \t\r\n", pos + 1);
-    if (pos == std::string::npos) return -1;
-
-    // Read digits (possibly with leading minus)
-    std::string numStr;
-    if (json[pos] == '-') { numStr += '-'; pos++; }
-    while (pos < json.size() && json[pos] >= '0' && json[pos] <= '9') {
-        numStr += json[pos++];
-    }
-    if (numStr.empty() || numStr == "-") return -1;
-    char* end = nullptr;
-    errno = 0;
-    long value = std::strtol(numStr.c_str(), &end, 10);
-    if (errno != 0 || end == numStr.c_str() || *end != '\0') return -1;
-    return value;
-}
-
-/// Extract the raw JSON value for a given key (object, array, string, number, bool, null).
-static std::string jsonGetRaw(const std::string& json, const std::string& key) {
-    std::string needle = "\"" + key + "\"";
-    auto pos = json.find(needle);
-    if (pos == std::string::npos) return "";
-
-    pos = json.find(':', pos + needle.size());
-    if (pos == std::string::npos) return "";
-
-    pos = json.find_first_not_of(" \t\r\n", pos + 1);
-    if (pos == std::string::npos) return "";
-
-    char ch = json[pos];
-
-    if (ch == '"') {
-        // String
-        size_t end = pos + 1;
-        while (end < json.size()) {
-            if (json[end] == '\\') { end += 2; continue; }
-            if (json[end] == '"') break;
-            end++;
-        }
-        return json.substr(pos, end - pos + 1);
-    }
-
-    if (ch == '{' || ch == '[') {
-        // Object or array — match braces
-        char open = ch, close = (ch == '{') ? '}' : ']';
-        int depth = 1;
-        size_t end = pos + 1;
-        bool inStr = false;
-        while (end < json.size() && depth > 0) {
-            if (json[end] == '\\' && inStr) { end += 2; continue; }
-            if (json[end] == '"') inStr = !inStr;
-            if (!inStr) {
-                if (json[end] == open) depth++;
-                else if (json[end] == close) depth--;
-            }
-            if (depth > 0) end++;
-        }
-        return json.substr(pos, end - pos + 1);
-    }
-
-    // Number, bool, null
-    size_t end = json.find_first_of(",}] \t\r\n", pos);
-    if (end == std::string::npos) end = json.size();
-    return json.substr(pos, end - pos);
-}
-
-/// Check if a JSON-RPC message has an "id" field (request vs notification).
-static bool jsonHasId(const std::string& json) {
-    // Look for "id" key at the top level
-    // Simple heuristic: find "id": outside of nested objects
-    auto pos = json.find("\"id\"");
-    if (pos == std::string::npos) return false;
-
-    // Make sure it's at top level (not nested deep)
-    int depth = 0;
-    for (size_t i = 0; i < pos; i++) {
-        if (json[i] == '{' || json[i] == '[') depth++;
-        else if (json[i] == '}' || json[i] == ']') depth--;
-    }
-    return depth <= 1;
-}
-
-/// Extract the "id" field as a raw JSON value (could be number or string).
-static std::string jsonGetId(const std::string& json) {
-    return jsonGetRaw(json, "id");
-}
-
-static std::vector<std::string> splitTopLevelArray(const std::string& json) {
-    std::vector<std::string> items;
-    size_t first = json.find_first_not_of(" \t\r\n");
-    if (first == std::string::npos || json[first] != '[') return items;
-
-    int depth = 0;
-    bool inStr = false;
-    size_t itemStart = std::string::npos;
-    for (size_t i = first; i < json.size(); ++i) {
-        char ch = json[i];
-        if (inStr) {
-            if (ch == '\\') {
-                ++i;
-            } else if (ch == '"') {
-                inStr = false;
-            }
-            continue;
-        }
-        if (ch == '"') {
-            inStr = true;
-        } else if (ch == '{' || ch == '[') {
-            if (depth == 1 && itemStart == std::string::npos) itemStart = i;
-            depth++;
-        } else if (ch == '}' || ch == ']') {
-            depth--;
-            if (depth == 1 && itemStart != std::string::npos) {
-                items.push_back(json.substr(itemStart, i - itemStart + 1));
-                itemStart = std::string::npos;
-            } else if (depth <= 0) {
-                break;
-            }
-        }
-    }
-    return items;
+static std::string serializeJSONValue(id value) {
+    if (!value) return "null";
+    NSError* error = nil;
+    NSData* data = [NSJSONSerialization dataWithJSONObject:value
+                                                   options:NSJSONWritingFragmentsAllowed
+                                                     error:&error];
+    if (!data || error) return "null";
+    return std::string(static_cast<const char*>(data.bytes), data.length);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -303,14 +127,36 @@ static HttpResponse httpGet(const std::string& path) {
                       "Host: 127.0.0.1:" + std::to_string(g_httpPort) + "\r\n"
                       "Connection: close\r\n"
                       "\r\n";
-    send(fd, req.c_str(), req.size(), 0);
+    size_t sent = 0;
+    while (sent < req.size()) {
+        ssize_t count = send(fd, req.data() + sent, req.size() - sent, MSG_NOSIGNAL);
+        if (count < 0 && errno == EINTR) continue;
+        if (count <= 0) {
+            close(fd);
+            resp.body = "Failed to send request to MacEverything";
+            return resp;
+        }
+        sent += static_cast<size_t>(count);
+    }
 
     // Read response
     std::string raw;
     char buf[4096];
-    ssize_t n;
-    while ((n = recv(fd, buf, sizeof(buf), 0)) > 0) {
-        raw.append(buf, n);
+    while (true) {
+        ssize_t count = recv(fd, buf, sizeof(buf), 0);
+        if (count > 0) {
+            raw.append(buf, static_cast<size_t>(count));
+        } else if (count == 0) {
+            break;
+        } else if (errno == EINTR) {
+            continue;
+        } else {
+            resp.body = (errno == EAGAIN || errno == EWOULDBLOCK)
+                ? "Timed out waiting for MacEverything response"
+                : "Failed to receive response from MacEverything";
+            close(fd);
+            return resp;
+        }
     }
     close(fd);
 
@@ -396,12 +242,20 @@ static std::string toolDefinitions() {
 //  Tool handlers
 // ═══════════════════════════════════════════════════════
 
-static std::string handleSearchFiles(const std::string& args) {
-    std::string query = jsonGetString(args, "query");
+static long argumentLimit(NSDictionary* args) {
+    id value = args[@"limit"];
+    if (![value isKindOfClass:[NSNumber class]]) return -1;
+    long limit = [static_cast<NSNumber*>(value) longValue];
+    if (limit <= 0) return -1;
+    return std::min(limit, 10000L);
+}
+
+static std::string handleSearchFiles(NSDictionary* args) {
+    std::string query = cppString(args[@"query"]);
     if (query.empty()) return "Error: missing required parameter 'query'";
 
-    long limit = jsonGetNumber(args, "limit");
-    std::string path = "/api/search?q=" + urlEncode(query);
+    long limit = argumentLimit(args);
+    std::string path = "/api/search?q=" + mace::urlEncode(query);
     if (limit > 0) path += "&limit=" + std::to_string(limit);
 
     auto resp = httpGet(path);
@@ -409,12 +263,12 @@ static std::string handleSearchFiles(const std::string& args) {
     return resp.body;
 }
 
-static std::string handleSearchContent(const std::string& args) {
-    std::string query = jsonGetString(args, "query");
+static std::string handleSearchContent(NSDictionary* args) {
+    std::string query = cppString(args[@"query"]);
     if (query.empty()) return "Error: missing required parameter 'query'";
 
-    long limit = jsonGetNumber(args, "limit");
-    std::string path = "/api/search/content?q=" + urlEncode(query);
+    long limit = argumentLimit(args);
+    std::string path = "/api/search/content?q=" + mace::urlEncode(query);
     if (limit > 0) path += "&limit=" + std::to_string(limit);
 
     auto resp = httpGet(path);
@@ -422,8 +276,8 @@ static std::string handleSearchContent(const std::string& args) {
     return resp.body;
 }
 
-static std::string handleRecentFiles(const std::string& args) {
-    long limit = jsonGetNumber(args, "limit");
+static std::string handleRecentFiles(NSDictionary* args) {
+    long limit = argumentLimit(args);
     std::string path = "/api/recent";
     if (limit > 0) path += "?limit=" + std::to_string(limit);
 
@@ -442,17 +296,26 @@ static std::string handleIndexStatus() {
 //  MCP method dispatch
 // ═══════════════════════════════════════════════════════
 
-static void handleRequest(const std::string& json) {
-    std::string method = jsonGetString(json, "method");
-    std::string id = jsonGetId(json);
-    bool isNotification = !jsonHasId(json);
+static void handleRequest(NSDictionary* request) {
+    id rawID = request[@"id"];
+    NSString* methodValue = request[@"method"];
+    NSString* jsonRPCVersion = request[@"jsonrpc"];
+    std::string method = cppString(methodValue);
+    std::string requestID = serializeJSONValue(rawID);
+    bool isNotification = rawID == nil;
 
-    // Notifications — no response needed
+    if (![jsonRPCVersion isKindOfClass:[NSString class]] ||
+        ![jsonRPCVersion isEqualToString:@"2.0"] ||
+        ![methodValue isKindOfClass:[NSString class]]) {
+        sendError(requestID, -32600, "Invalid Request: method must be a string");
+        return;
+    }
+
+    // Valid notifications never receive a response.
     if (isNotification) {
         if (method == "notifications/initialized") {
             fprintf(stderr, "[MCP] Client initialized\n");
         }
-        // Silently ignore other notifications
         return;
     }
 
@@ -466,31 +329,42 @@ static void handleRequest(const std::string& json) {
                << ",\"instructions\":\"MacEverything provides fast file search across your entire Mac. "
                << "Use search_files for filename search, search_content for full-text search.\""
                << "}";
-        sendResult(id, result.str());
+        sendResult(requestID, result.str());
         return;
     }
 
     if (method == "ping") {
-        sendResult(id, "{}");
+        sendResult(requestID, "{}");
         return;
     }
 
     if (method == "tools/list") {
-        sendResult(id, toolDefinitions());
+        sendResult(requestID, toolDefinitions());
         return;
     }
 
     if (method == "tools/call") {
-        std::string params = jsonGetRaw(json, "params");
-        std::string toolName;
-        if (params.empty() || !jsonTryGetString(params, "name", toolName)) {
-            sendError(id, -32602, "Invalid params: missing tool name");
+        id paramsValue = request[@"params"];
+        if (![paramsValue isKindOfClass:[NSDictionary class]]) {
+            sendError(requestID, -32602, "Invalid params: missing tool name");
             return;
         }
+        NSDictionary* params = static_cast<NSDictionary*>(paramsValue);
+        NSString* toolNameValue = params[@"name"];
+        if (![toolNameValue isKindOfClass:[NSString class]]) {
+            sendError(requestID, -32602, "Invalid params: missing tool name");
+            return;
+        }
+        std::string toolName = cppString(toolNameValue);
 
-        // Extract "arguments" from within "params"
-        std::string args = params.empty() ? "{}" : jsonGetRaw(params, "arguments");
-        if (args.empty()) args = "{}";
+        id argumentsValue = params[@"arguments"];
+        if (argumentsValue && argumentsValue != [NSNull null] &&
+            ![argumentsValue isKindOfClass:[NSDictionary class]]) {
+            sendError(requestID, -32602, "Invalid params: arguments must be an object");
+            return;
+        }
+        NSDictionary* args = [argumentsValue isKindOfClass:[NSDictionary class]]
+            ? static_cast<NSDictionary*>(argumentsValue) : @{};
 
         std::string resultText;
         bool isError = false;
@@ -511,16 +385,20 @@ static void handleRequest(const std::string& json) {
         // Check if result looks like an HTTP error
         if (resultText.find("Cannot connect") != std::string::npos ||
             resultText.find("Failed to create socket") != std::string::npos ||
-            resultText.find("Empty response") != std::string::npos) {
+            resultText.find("Failed to send request") != std::string::npos ||
+            resultText.find("Failed to receive response") != std::string::npos ||
+            resultText.find("Timed out waiting") != std::string::npos ||
+            resultText.find("Empty response") != std::string::npos ||
+            resultText.rfind("Error:", 0) == 0) {
             isError = true;
         }
 
-        sendToolResult(id, resultText, isError);
+        sendToolResult(requestID, resultText, isError);
         return;
     }
 
     // Unknown method
-    sendError(id, -32601, "Method not found: " + method);
+    sendError(requestID, -32601, "Method not found: " + method);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -538,6 +416,18 @@ static void printUsage(const char* prog) {
         prog, kDefaultHttpPort);
 }
 
+static bool parsePort(const char* text, uint16_t& port) {
+    if (!text || *text == '\0') return false;
+    char* end = nullptr;
+    errno = 0;
+    unsigned long value = std::strtoul(text, &end, 10);
+    if (errno != 0 || end == text || *end != '\0' || value == 0 || value > 65535) {
+        return false;
+    }
+    port = static_cast<uint16_t>(value);
+    return true;
+}
+
 // ═══════════════════════════════════════════════════════
 //  Main
 // ═══════════════════════════════════════════════════════
@@ -548,8 +438,12 @@ int main(int argc, char* argv[]) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
             printUsage(argv[0]);
             return 0;
-        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
-            g_httpPort = static_cast<uint16_t>(atoi(argv[++i]));
+        } else if (strcmp(argv[i], "--port") == 0) {
+            if (++i >= argc || !parsePort(argv[i], g_httpPort)) {
+                fprintf(stderr, "Invalid port; expected an integer from 1 to 65535\n");
+                printUsage(argv[0]);
+                return 1;
+            }
         } else {
             fprintf(stderr, "Unknown option: %s\n", argv[i]);
             printUsage(argv[0]);
@@ -574,32 +468,42 @@ int main(int argc, char* argv[]) {
             line.pop_back();
         }
 
-        // Validate it starts with '{' (single request) or '[' (batch)
-        size_t first = line.find_first_not_of(" \t");
-        if (first == std::string::npos) continue;
+        @autoreleasepool {
+            NSError* parseError = nil;
+            id message = parseJSON(line, &parseError);
+            if (!message || parseError) {
+                fprintf(stderr, "[MCP] Invalid JSON-RPC message: %s\n",
+                        parseError.localizedDescription.UTF8String ?: "parse error");
+                sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
+                             "\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}");
+                continue;
+            }
 
-        if (line[first] == '[') {
-            auto batch = splitTopLevelArray(line);
-            if (batch.empty()) {
+            if ([message isKindOfClass:[NSArray class]]) {
+                NSArray* batch = static_cast<NSArray*>(message);
+                if (batch.count == 0) {
+                    sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
+                                 "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
+                    continue;
+                }
+                for (id item in batch) {
+                    if ([item isKindOfClass:[NSDictionary class]]) {
+                        handleRequest(static_cast<NSDictionary*>(item));
+                    } else {
+                        sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
+                                     "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
+                    }
+                }
+                continue;
+            }
+
+            if (![message isKindOfClass:[NSDictionary class]]) {
                 sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
                             "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
                 continue;
             }
-            for (const auto& item : batch) {
-                handleRequest(item);
-            }
-            continue;
+            handleRequest(static_cast<NSDictionary*>(message));
         }
-
-        if (line[first] != '{') {
-            fprintf(stderr, "[MCP] Invalid JSON-RPC message (not an object)\n");
-            // Send parse error if there might be an id
-            sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
-                        "\"error\":{\"code\":-32700,\"message\":\"Parse error\"}}");
-            continue;
-        }
-
-        handleRequest(line);
     }
 
     fprintf(stderr, "[MCP] stdin closed, shutting down\n");

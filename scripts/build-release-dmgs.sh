@@ -123,14 +123,18 @@ verify_app_arch() {
   local app_path="$2"
   local main="$app_path/Contents/MacOS/MacEverything"
   local mcp="$app_path/Contents/MacOS/MacEverythingMCP"
+  local cli="$app_path/Contents/MacOS/mace"
 
   assert_dylib_arch "$arch" "$main"
   assert_dylib_arch "$arch" "$mcp"
+  assert_dylib_arch "$arch" "$cli"
 
   verify_no_homebrew_refs "$main"
   verify_no_homebrew_refs "$mcp"
+  verify_no_homebrew_refs "$cli"
   verify_rpath_dependencies "$app_path" "$main"
   verify_rpath_dependencies "$app_path" "$mcp"
+  verify_rpath_dependencies "$app_path" "$cli"
 
   if ! find "$app_path/Contents/Frameworks" -name 'libre2*.dylib' -print -quit | grep -q .; then
     echo "error: libre2 dylib was not embedded in the app bundle" >&2
@@ -159,6 +163,7 @@ build_arch() {
     -project "$root_dir/MacEverything.xcodeproj" \
     -scheme "$scheme" \
     -configuration "$configuration" \
+    -destination "platform=macOS,arch=$arch" \
     -derivedDataPath "$derived_data" \
     SYMROOT="$symroot" \
     ARCHS="$arch" \

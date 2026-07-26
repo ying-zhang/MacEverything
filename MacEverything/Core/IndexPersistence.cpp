@@ -48,11 +48,11 @@ IndexPersistence::IndexPersistence(std::shared_ptr<SearchEngine> engine,
                                    const std::string& ptablePath,
                                    const std::string& v6Path)
     : engine_(std::move(engine))
-    , basePath_(basePath)
-    , walPath_(walPath)
     , pagedWriter_(std::make_unique<PagedIndexWriter>(pagesPath, ptablePath))
     , flatWriter_(std::make_unique<FlatIndexWriter>(v6Path))
+    , basePath_(basePath)
     , v6Path_(v6Path)
+    , walPath_(walPath)
 {}
 
 IndexPersistence::~IndexPersistence() {

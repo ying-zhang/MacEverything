@@ -74,7 +74,7 @@ static void runCompactContentIndexTest() {
     newRec.type = 1;
     newRec.size = 50;
     newRec.modTime = time(nullptr);
-    uint32_t extraIdx = engine->addRecord(std::move(newRec));
+    engine->addRecord(std::move(newRec));
     engine->removeByPath(tmpDir + "/extra.txt");
 
     IndexMetadata meta;

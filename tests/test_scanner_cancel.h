@@ -18,10 +18,7 @@ static void runScannerCancelTest() {
     {
         DirectoryScanner scanner;
         scanner.cancel();
-        auto start = std::chrono::steady_clock::now();
         scanner.scan(tmpDir);
-        auto elapsed = std::chrono::duration_cast<std::chrono::milliseconds>(
-            std::chrono::steady_clock::now() - start).count();
         auto results = scanner.takeResults();
         // scan() resets cancelled_ at the start, so it should complete normally
         check(results.size() > 0, "C13: scan() resets cancelled_ flag and runs normally");
