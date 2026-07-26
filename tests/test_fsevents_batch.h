@@ -226,5 +226,28 @@ static void runFSEventsBatchTests() {
         std::remove(walPath.c_str());
     }
 
+    // ── Test 7: mutations remain correct across 300-op chunk boundaries ──
+    {
+        std::cout << "\n  Test 7: batchMutate chunk boundaries\n";
+        SearchEngine engine;
+        std::vector<SearchEngine::MutationOp> ops;
+        ops.reserve(650);
+        for (int i = 0; i < 650; ++i) {
+            FileRecord record;
+            record.name = "chunked_" + std::to_string(i) + ".txt";
+            record.path = "/chunks";
+            record.type = 1;
+            record.size = static_cast<uint64_t>(i);
+            record.modTime = 10'000 + i;
+            ops.push_back({SearchEngine::MutationOp::UPDATE,
+                           "/chunks/" + record.name, std::move(record)});
+        }
+        engine.batchMutate(std::move(ops));
+        check(engine.liveRecordCount() == 650u,
+              "650 updates survive multiple mutation chunks");
+        check(engine.query("chunked_649", 10, false).size() == 1,
+              "record after second chunk boundary is queryable");
+    }
+
     std::cout << "\n";
 }

@@ -18,6 +18,7 @@
 #include <re2/re2.h>
 #include <re2/filtered_re2.h>
 #include <functional>
+#include <memory>
 #include <thread>
 #include <dispatch/dispatch.h>
 
@@ -1006,7 +1007,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             if (numThreads > 32) numThreads = 32;
             size_t chunkSize = (candidateCount + numThreads - 1) / numThreads;
 
-            __block std::vector<std::vector<Match>> threadResults(numThreads);
+            auto threadResults = std::make_shared<std::vector<std::vector<Match>>>(numThreads);
             uint64_t capturedGen = myGen;
             const uint32_t* candidatesData = candidates.data();
             const auto* astPtr = ast.get();
@@ -1024,11 +1025,11 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             const auto& sTerms = scoringTerms;
 
             dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-            dispatch_apply(numThreads, queue, ^(size_t t) {
+            auto evaluateChunk = [&](size_t t) {
                 size_t start = t * chunkSize;
                 size_t end = std::min(start + chunkSize, candidateCount);
                 if (start >= end) return;
-                auto& local = threadResults[t];
+                auto& local = (*threadResults)[t];
                 std::vector<char> localPathBuf;
                 std::string lowerPathBuf;
                 const auto& regCache = ptcPtr[t];
@@ -1064,10 +1065,14 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                                         static_cast<uint32_t>(opl + 1 + nl));
                     local.push_back({idx, sc});
                 }
+            };
+            using EvaluateChunk = decltype(evaluateChunk);
+            dispatch_apply_f(numThreads, queue, &evaluateChunk, [](void* context, size_t t) {
+                (*static_cast<EvaluateChunk*>(context))(t);
             });
 
             if (genPtr->load(std::memory_order_relaxed) != myGen) return {};
-            for (auto& v : threadResults) {
+            for (auto& v : *threadResults) {
                 merged.insert(merged.end(), v.begin(), v.end());
             }
         } else {
@@ -1119,7 +1124,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         if (totalSize < 10000) numThreads = 1;
 
         size_t chunkSize = (totalSize + numThreads - 1) / numThreads;
-        __block std::vector<std::vector<Match>> threadResults(numThreads);
+        auto threadResults = std::make_shared<std::vector<std::vector<Match>>>(numThreads);
 
         uint64_t capturedGen = myGen;
         bool pureFilter = needs.isPureFilter();
@@ -1140,12 +1145,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         const auto& sTerms = scoringTerms;
 
         dispatch_queue_t queue = dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0);
-        dispatch_apply(numThreads, queue, ^(size_t t) {
+        auto evaluateChunk = [&](size_t t) {
             size_t start = t * chunkSize;
             size_t end = std::min(start + chunkSize, totalSize);
             if (start >= end) return;
 
-            auto& local = threadResults[t];
+            auto& local = (*threadResults)[t];
             std::vector<char> localPathBuf;
             std::string lowerPathBuf;
             const auto& regCache = ptcPtr[t];
@@ -1228,13 +1233,17 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     local.push_back({static_cast<uint32_t>(idx), sc});
                 }
             }
+        };
+        using EvaluateChunk = decltype(evaluateChunk);
+        dispatch_apply_f(numThreads, queue, &evaluateChunk, [](void* context, size_t t) {
+            (*static_cast<EvaluateChunk*>(context))(t);
         });
 
         // Check if superseded after dispatch_apply
         if (genPtr->load(std::memory_order_relaxed) != myGen) return {};
 
         // Merge thread-local results
-        for (auto& v : threadResults) {
+        for (auto& v : *threadResults) {
             merged.insert(merged.end(), v.begin(), v.end());
         }
     }

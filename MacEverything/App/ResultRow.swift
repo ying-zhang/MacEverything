@@ -247,12 +247,12 @@ struct ResultRow: View {
     }
 
     private func formatSize(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+        L10n.formatByteCount(bytes)
     }
 
     private func formatDate(_ modTime: time_t) -> String {
         let date = Date(timeIntervalSince1970: TimeInterval(modTime))
-        return date.formatted(date: .abbreviated, time: .shortened)
+        return L10n.formatDate(date)
     }
 
     private func handleClick(clickCount: Int, modifiers: NSEvent.ModifierFlags) {

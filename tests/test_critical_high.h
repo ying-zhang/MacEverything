@@ -1,6 +1,6 @@
 #pragma once
 // Regression tests for CRITICAL/HIGH fixes (C3, C4, H1, H4, H5, H6, H7)
-// Part 17: wired into test_all.cpp
+// Part 18: wired into test_all.cpp
 
 // All core headers and standard includes are provided by test_all.cpp
 
@@ -315,7 +315,7 @@ static void testQueryConcurrentRW() {
 
 static void runCriticalHighTests() {
     std::cout << "╔══════════════════════════════════════════╗\n";
-    std::cout << "║  Part 17: CRITICAL/HIGH Fix Regression   ║\n";
+    std::cout << "║  Part 18: CRITICAL/HIGH Fix Regression   ║\n";
     std::cout << "╚══════════════════════════════════════════╝\n\n";
 
     testCRC32ThreadSafe();

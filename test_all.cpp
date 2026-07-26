@@ -19,6 +19,7 @@
 #include "MacEverything/Core/QueryParser.h"
 #include "MacEverything/Core/QueryFilterParser.h"
 #include <chrono>
+#include <cstdio>
 #include <iostream>
 #include <iomanip>
 #include <cstring>
@@ -74,6 +75,8 @@ namespace fs = std::filesystem;
 #include "tests/test_p2_fixes.h"
 #include "tests/test_logger.h"
 #include "tests/test_instance_lock.h"
+#include "tests/test_instance_lock_enforcement.h"
+#include "tests/test_http_security.h"
 #include "tests/test_wal_batch_replay.h"
 #include "tests/test_wal_rename_chain.h"
 #include "tests/test_rescan_debounce.h"
@@ -87,7 +90,6 @@ namespace fs = std::filesystem;
 #include "tests/test_content_modtime.h"
 #include "tests/test_http_engine_swap.h"
 #include "tests/test_service_engine.h"
-#include "tests/test_daemon_startup.h"
 #include "tests/test_wal_inplace_replay.h"
 #include "tests/test_event_driven_compaction.h"
 #include "tests/test_query_perf.h"
@@ -136,6 +138,7 @@ static void printUsage(const char* prog) {
     std::cout << "  --slow             Run slow integration tests only (1, 4, 6)\n";
     std::cout << "  --bench            Run performance benchmarks only (44, 46)\n";
     std::cout << "  --part <id>        Run specific part (can be repeated)\n";
+    std::cout << "  --quiet            Suppress per-test success output\n";
     std::cout << "  --help             Show this help\n";
     std::cout << "  root_path          Root path for disk scan (default: /)\n";
     std::cout << "\nPart IDs: 1 (scan+query), 3 (mutation), 3b (path search),\n";
@@ -153,14 +156,13 @@ static void printUsage(const char* prog) {
     std::cout << "  27 (WAL batch replay), 28 (WAL rename chain),\n";
     std::cout << "  29 (rescan debounce), 30 (dirty compaction),\n";
     std::cout << "  31 (compact threshold), 32 (paged persistence),\n";
-    std::cout << "  33 (compaction timer), 34 (content WAL tracking),\n";
+    std::cout << "  34 (content WAL tracking),\n";
     std::cout << "  35 (content compact threshold),\n";
     std::cout << "  36 (content compaction guard),\n";
     std::cout << "  37 (FSWatcher eventId),\n";
     std::cout << "  38 (content modTime),\n";
     std::cout << "  39 (http engine swap),\n";
     std::cout << "  40 (service engine),\n";
-    std::cout << "  41 (daemon startup),\n";
     std::cout << "  42 (WAL in-place replay),\n";
     std::cout << "  43 (event-driven compaction),\n";
     std::cout << "  44 (query performance),\n";
@@ -192,13 +194,15 @@ static void printUsage(const char* prog) {
     std::cout << "  75 (RE2 integration),\n";
     std::cout << "  76 (FSEvents search latency),\n";
     std::cout << "  77 (scanner config overrides),\n";
-    std::cout << "  78 (review regressions), 79 (adaptive index kernels)\n";
+    std::cout << "  78 (review regressions), 79 (adaptive index kernels),\n";
+    std::cout << "  80 (instance lock enforcement), 81 (HTTP security regression)\n";
 }
 
 int main(int argc, char* argv[]) {
     std::string rootPath = "/";
     std::set<std::string> selectedParts;
     bool explicitSelection = false;
+    bool quiet = false;
 
     for (int i = 1; i < argc; i++) {
         std::string arg = argv[i];
@@ -208,7 +212,7 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--fast") {
             explicitSelection = true;
             gSkipPerformanceTests = true;
-            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77", "78", "79"});
+            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "25", "26", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "45", "48", "50", "52", "54", "55", "56", "57", "59", "62", "63", "64", "65", "66", "67", "70", "72", "73", "74", "75", "77", "78", "79", "80", "81"});
         } else if (arg == "--bench") {
             explicitSelection = true;
             selectedParts.insert({"44", "46"});
@@ -223,6 +227,8 @@ int main(int argc, char* argv[]) {
                 std::cerr << "Error: --part requires an argument\n";
                 return 1;
             }
+        } else if (arg == "--quiet") {
+            quiet = true;
         } else if (arg[0] != '-') {
             rootPath = arg;
         } else {
@@ -234,7 +240,7 @@ int main(int argc, char* argv[]) {
 
     // If no explicit selection, run all parts
     if (!explicitSelection) {
-        selectedParts = {"1", "3", "3b", "3c", "3d", "3e", "4", "5", "6", "7", "7b", "7c", "7d", "7e", "7f", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "34", "35", "36", "37", "38", "39", "40", "41", "42", "43", "44", "45", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "73", "74", "76", "77", "78", "79"};
+        selectedParts = {"1", "3", "3b", "3c", "3d", "3e", "4", "5", "6", "7", "7b", "7c", "7d", "7e", "7f", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "34", "35", "36", "37", "38", "39", "40", "42", "43", "44", "45", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81"};
     }
 
     // Validate root path if scan test is selected
@@ -256,6 +262,23 @@ int main(int argc, char* argv[]) {
         std::cout << "  Selected parts:";
         for (const auto& p : selectedParts) std::cout << " " << p;
         std::cout << "\n\n";
+    }
+
+    int savedStdout = -1;
+    FILE* quietLog = nullptr;
+    if (quiet) {
+        std::cout.flush();
+        std::fflush(stdout);
+        savedStdout = ::dup(STDOUT_FILENO);
+        quietLog = std::tmpfile();
+        if (savedStdout >= 0 && quietLog != nullptr) {
+            ::dup2(::fileno(quietLog), STDOUT_FILENO);
+        } else {
+            if (savedStdout >= 0) ::close(savedStdout);
+            if (quietLog != nullptr) std::fclose(quietLog);
+            savedStdout = -1;
+            quietLog = nullptr;
+        }
     }
 
     if (selectedParts.count("1"))  runScanAndQueryBenchmark(rootPath);
@@ -305,7 +328,6 @@ int main(int argc, char* argv[]) {
     if (selectedParts.count("38")) runContentModTimeTests();
     if (selectedParts.count("39")) runPart39();
     if (selectedParts.count("40")) runPart40();
-    if (selectedParts.count("41")) runPart41();
     if (selectedParts.count("42")) runWalInplaceReplayTests();
     if (selectedParts.count("43")) runEventDrivenCompactionTests();
     if (selectedParts.count("44")) runQueryPerfBenchmarks();
@@ -344,6 +366,25 @@ int main(int argc, char* argv[]) {
     if (selectedParts.count("77")) runScannerConfigTests();
     if (selectedParts.count("78")) runReviewRegressionTests();
     if (selectedParts.count("79")) runAdaptiveIndexKernelTests();
+    if (selectedParts.count("80")) runInstanceLockEnforcementTests();
+    if (selectedParts.count("81")) runHttpSecurityTests();
+
+    if (savedStdout >= 0) {
+        std::cout.flush();
+        std::fflush(stdout);
+        ::dup2(savedStdout, STDOUT_FILENO);
+        ::close(savedStdout);
+        std::cout.clear();
+
+        if (failed > 0 && quietLog != nullptr) {
+            std::rewind(quietLog);
+            char buffer[8192];
+            while (size_t count = std::fread(buffer, 1, sizeof(buffer), quietLog)) {
+                std::fwrite(buffer, 1, count, stdout);
+            }
+        }
+        if (quietLog != nullptr) std::fclose(quietLog);
+    }
 
     // ── Final Summary ──
     std::cout << "╔══════════════════════════════════════════╗\n";

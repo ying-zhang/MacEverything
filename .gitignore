@@ -4,7 +4,6 @@ artifacts/
 third_party/re2/
 test_all
 /benchmark
-maceverything-daemon
 /mace
 *.o
 *.dmg
@@ -24,7 +23,6 @@ test_all_master
 .claude/worktrees/
 
 # Compiled binaries
-mac_scanner
 string_search_bench
 test_runner
 

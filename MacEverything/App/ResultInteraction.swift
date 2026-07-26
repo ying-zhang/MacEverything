@@ -1,6 +1,13 @@
 import AppKit
 import SwiftUI
 
+enum ResultPagination {
+    static func nextEnd(currentCount: Int, totalCount: Int, pageSize: Int) -> Int {
+        guard currentCount >= 0, totalCount >= 0, pageSize > 0 else { return currentCount }
+        return min(currentCount + pageSize, totalCount)
+    }
+}
+
 enum AdvancedFileSizeFilter: String, CaseIterable, Identifiable {
     case any
     case underOneMB

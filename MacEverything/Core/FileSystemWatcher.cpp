@@ -19,6 +19,7 @@ void FileSystemWatcher::start(const std::string& rootPath, Callback callback) {
 }
 
 void FileSystemWatcher::start(const std::vector<std::string>& rootPaths, Callback callback) {
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (stream_) return;
     callback_ = std::move(callback);
     onReplayDone_ = nullptr;
@@ -36,6 +37,7 @@ void FileSystemWatcher::start(const std::vector<std::string>& rootPaths,
                                FSEventStreamEventId sinceEventId,
                                Callback callback,
                                ReplayDoneCallback onReplayDone) {
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (stream_) return;
     callback_ = std::move(callback);
     onReplayDone_ = std::move(onReplayDone);
@@ -56,7 +58,7 @@ FSEventStreamEventId FileSystemWatcher::getCurrentSystemEventId() {
 }
 
 void FileSystemWatcher::setEarlyAbortSemaphore(void* sem) {
-    earlyAbortSem_ = sem;
+    earlyAbortSem_.store(sem, std::memory_order_release);
 }
 
 void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
@@ -117,13 +119,27 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
     queueKey_ = this;
     dispatch_queue_set_specific(queue_, queueKey_, queueKey_, nullptr);
     FSEventStreamSetDispatchQueue(stream_, queue_);
-    FSEventStreamStart(stream_);
+    if (!FSEventStreamStart(stream_)) {
+        FSEventStreamInvalidate(stream_);
+        FSEventStreamRelease(stream_);
+        stream_ = nullptr;
+        dispatch_release(queue_);
+        queue_ = nullptr;
+        queueKey_ = nullptr;
+        callback_ = nullptr;
+        onReplayDone_ = nullptr;
+        return;
+    }
+    running_.store(true, std::memory_order_release);
     LOG_INFO("FSWatcher", "[" << label_ << "] Started watching "
              << rootPaths.size() << " root(s)");
 }
 
 void FileSystemWatcher::stop() {
+    std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
     if (!stream_ && !queue_) return;
+    running_.store(false, std::memory_order_release);
+    earlyAbortSem_.store(nullptr, std::memory_order_release);
     LOG_INFO("FSWatcher", "[" << label_ << "] Stopped");
     if (stream_) {
         FSEventStreamStop(stream_);
@@ -135,14 +151,14 @@ void FileSystemWatcher::stop() {
         // C3 fix: Drain any in-flight callback on the serial queue, then null
         // the std::function captures on the queue thread to avoid a data race
         // (fseventsCallback reads these fields on the same queue).
-        if (dispatch_get_specific(queueKey_) == queueKey_) {
-            callback_ = nullptr;
-            onReplayDone_ = nullptr;
-        } else {
+        if (dispatch_get_specific(queueKey_) != queueKey_) {
             dispatch_sync(queue_, ^{
                 callback_ = nullptr;
                 onReplayDone_ = nullptr;
             });
+        } else {
+            callback_ = nullptr;
+            onReplayDone_ = nullptr;
         }
         dispatch_release(queue_);
         queue_ = nullptr;
@@ -176,6 +192,11 @@ void FileSystemWatcher::fseventsCallback(
     events.reserve(numEvents);
 
     bool historyDone = false;
+    std::vector<std::string> exclusions;
+    {
+        std::lock_guard<std::mutex> lock(watcher->stateMutex_);
+        exclusions = watcher->exclusionPaths_;
+    }
 
     for (size_t i = 0; i < numEvents; i++) {
         FSEventStreamEventFlags flags = eventFlags[i];
@@ -205,12 +226,6 @@ void FileSystemWatcher::fseventsCallback(
         if (pathStr.find("/.Trashes/") != std::string::npos) continue;
         if (pathStr.find("/private/var/folders/") != std::string::npos &&
             pathStr.find("/com.apple.") != std::string::npos) continue;
-
-        std::vector<std::string> exclusions;
-        {
-            std::lock_guard<std::mutex> lock(watcher->stateMutex_);
-            exclusions = watcher->exclusionPaths_;
-        }
 
         // Skip events from app's own excluded directories
         // (path is inside an exclusion directory)
@@ -242,17 +257,18 @@ void FileSystemWatcher::fseventsCallback(
 
             watcher->journalTruncated_.store(true, std::memory_order_relaxed);
             // Signal early abort so replay waiter doesn't block for the full timeout
-            if (watcher->earlyAbortSem_) {
-                dispatch_semaphore_signal(static_cast<dispatch_semaphore_t>(watcher->earlyAbortSem_));
+            if (void* semaphore = watcher->earlyAbortSem_.load(std::memory_order_acquire)) {
+                dispatch_semaphore_signal(static_cast<dispatch_semaphore_t>(semaphore));
             }
         }
 
         events.push_back({std::move(pathStr), flags});
     }
 
-    if (!events.empty() && watcher->callback_) {
+    auto callback = watcher->callback_;
+    if (!events.empty() && callback) {
         LOG_DEBUG("FSWatcher", "Received " << events.size() << " events (from " << numEvents << " raw)");
-        watcher->callback_(std::move(events));
+        callback(std::move(events));
     }
 
     // Fire replay-done callback after delivering any final events

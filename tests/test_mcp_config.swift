@@ -120,6 +120,17 @@ struct MCPConfigTests {
                                         binaryPath: binaryPath)
         expect(!MCPConfigManager.isEnabled(for: .cursor, homeDirectory: home), "Cursor disable removes entry")
 
+        let timeoutStart = Date()
+        do {
+            _ = try MCPConfigManager.runCommand(executable: URL(fileURLWithPath: "/bin/sleep"),
+                                                arguments: ["5"],
+                                                timeout: 0.05)
+            expect(false, "hung MCP client command must time out")
+        } catch MCPConfigManager.MCPError.commandTimedOut {
+            expect(Date().timeIntervalSince(timeoutStart) < 2,
+                   "hung MCP client command is terminated promptly")
+        }
+
         if failures > 0 { exit(1) }
         print("MCP configuration tests passed")
     }

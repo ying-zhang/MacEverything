@@ -7,7 +7,7 @@ import os
 // from background search/indexing tasks throughout the app.
 extension MacSearchBridge: @unchecked Sendable {}
 
-struct FileItem: Identifiable {
+struct FileItem: Identifiable, Sendable {
     static let fileTypeRegular: UInt8 = 1
     static let fileTypeDirectory: UInt8 = 2
     static let fileTypeApplication: UInt8 = 5
@@ -75,7 +75,7 @@ enum QuickFilter: String, CaseIterable, Identifiable {
     }
 }
 
-struct ContentFileItem: Identifiable {
+struct ContentFileItem: Identifiable, Sendable {
     let id: String      // stable ID: filePath + ":" + matchOffset
     let fileName: String
     let filePath: String
@@ -107,6 +107,8 @@ final class SearchServiceModel: ObservableObject {
     @Published var contentIndexedCount: UInt32 = 0
     @Published var contentIndexStorageBytes: UInt64 = 0
     @Published var isSyncing: Bool = false
+    @Published var startupFailed: Bool = false
+    @Published var startupFailureReason: String = ""
 
     private let bridge = MacSearchBridge.shared()
     private let settings = AppSettings.shared
@@ -115,6 +117,16 @@ final class SearchServiceModel: ObservableObject {
     let refreshThrottle = IndexRefreshThrottle()
 
     private static let indexChangeThrottleNs: UInt64 = 5_000_000_000 // 5 seconds
+
+    private static func localizedStartupFailureReason(_ reason: String) -> String {
+        if reason.contains("another instance holds the index lock") {
+            return L10n.tr("Another MacEverything instance is using this index.")
+        }
+        if reason.contains("cache path changed while the index lock is held") {
+            return L10n.tr("The index location changed while MacEverything was running. Restart the app.")
+        }
+        return L10n.tr("MacEverything could not access the index. Check folder permissions and available disk space.")
+    }
 
     private init() {
         notificationObservers.append(NotificationCenter.default.addObserver(forName: .rebuildIndex, object: nil, queue: .main) { [weak self] _ in
@@ -162,6 +174,8 @@ final class SearchServiceModel: ObservableObject {
     func startIncremental() {
         isScanning = true
         scannedCount = 0
+        startupFailed = false
+        startupFailureReason = ""
 
         bridge.onScanProgress = { [weak self] fileCount, dirCount in
             Task { @MainActor in
@@ -195,6 +209,17 @@ final class SearchServiceModel: ObservableObject {
             }
         }
 
+        bridge.onStartupFailed = { [weak self] reason in
+            Task { @MainActor in
+                guard let self else { return }
+                self.startupFailed = true
+                self.startupFailureReason = Self.localizedStartupFailureReason(reason)
+                self.isScanning = false
+                self.scanComplete = false
+                AppLogger.error("SearchService", "Startup failed: \(reason)")
+            }
+        }
+
         isContentIndexing = false
         contentIndexProgress = nil
         applyRuntimeConfiguration()
@@ -205,6 +230,11 @@ final class SearchServiceModel: ObservableObject {
                                 walPath: SearchViewModel.walPath) { [weak self] count, _ in
             Task { @MainActor in
                 guard let self else { return }
+                // If startup was aborted (e.g. another instance holds the lock),
+                // do NOT treat 0 records as success — stay in the failed state.
+                if self.startupFailed {
+                    return
+                }
                 self.totalRecords = count
                 self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
                 self.isScanning = false
@@ -234,6 +264,7 @@ final class SearchServiceModel: ObservableObject {
             automaticMaintenanceEnabled: snapshot.automaticMaintenanceEnabled,
             enablePinyinInitials: snapshot.enablePinyinInitials,
             enablePathSearchAcceleration: snapshot.enablePathSearchAcceleration,
+            httpAuthenticationEnabled: snapshot.httpAuthenticationEnabled,
             httpPort: snapshot.httpServerEnabled ? UInt16(snapshot.httpPort) : UInt16(0)
         )
     }
@@ -461,6 +492,7 @@ class SearchViewModel: ObservableObject {
     private var windowRestoreRefreshTask: Task<Void, Never>?
     private var optionsSink: AnyCancellable?
     private var cachedResults: [MEFileResult] = []
+    private var cachedContentResults: [ContentFileItem] = []
     private var sourceItems: [FileItem] = []
     private var cachedItems: [FileItem] = []
     private var loadedCount: Int = 0
@@ -469,6 +501,7 @@ class SearchViewModel: ObservableObject {
     private var allowQuickFilterAutoResetForCurrentSearch = false
 
     private static let pageSize: Int = 100
+    private static let contentPageSize: Int = 200
 
     static var cacheDir: String {
         let base = NSSearchPathForDirectoriesInDomains(
@@ -613,6 +646,7 @@ class SearchViewModel: ObservableObject {
             isContentSearch = false
             contentSearchUnavailable = false
             contentResults = []
+            cachedContentResults = []
             contentKeyword = "" // H-9: reset cached keyword
             ghostSuggestion = nil
             settledTask?.cancel()
@@ -661,6 +695,7 @@ class SearchViewModel: ObservableObject {
             contentKeyword = keyword // H-9: cache computed keyword
             guard !keyword.isEmpty else {
                 contentResults = []
+                cachedContentResults = []
                 totalMatches = 0
                 resultLimitReached = false
                 queryTimeMs = 0
@@ -677,6 +712,7 @@ class SearchViewModel: ObservableObject {
             isContentSearch = true
             contentSearchUnavailable = true
             contentResults = []
+            cachedContentResults = []
             contentKeyword = currentContentSearchKeyword()
             totalMatches = 0
             resultLimitReached = false
@@ -686,11 +722,16 @@ class SearchViewModel: ObservableObject {
             isContentSearch = false
             contentSearchUnavailable = false
             contentResults = []
+            cachedContentResults = []
             contentKeyword = "" // H-9: reset cached keyword
 
             searchTask = Task { @MainActor in
-                // 80ms debounce
-                try? await Task.sleep(nanoseconds: 80_000_000)
+                let scalars = text.unicodeScalars
+                let isSingleEnglishLetter = scalars.count == 1 && scalars.allSatisfy {
+                    (65...90).contains(Int($0.value)) || (97...122).contains(Int($0.value))
+                }
+                let debounceNs: UInt64 = isSingleEnglishLetter ? 300_000_000 : 80_000_000
+                try? await Task.sleep(nanoseconds: debounceNs)
                 guard !Task.isCancelled else { return }
                 performSearch(text)
             }
@@ -710,14 +751,16 @@ class SearchViewModel: ObservableObject {
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
             // P-4: Use batch method — single engine lock, no NSNumber boxing
-            let results = bridge.queryResults(query, maxResults: maxResults, sessionId: sessionId)
+            let results = bridge.queryResults(query, maxResults: maxResults + 1, sessionId: sessionId)
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
             var items: [FileItem] = []
-            items.reserveCapacity(results.count)
-            for r in results {
+            items.reserveCapacity(min(results.count, Int(maxResults)))
+            for r in results.prefix(Int(maxResults)) {
                 items.append(fileItem(from: r))
             }
             let finalItems = items
+            let limitedResults = Array(results.prefix(Int(maxResults)))
+            let limitReached = results.count > Int(maxResults)
 
             await MainActor.run { [weak self] in
                 guard let self else { return }
@@ -736,34 +779,38 @@ class SearchViewModel: ObservableObject {
                     return
                 }
                 self.allowQuickFilterAutoResetForCurrentSearch = false
-                self.cachedResults = results
+                self.cachedResults = limitedResults
                 self.sourceItems = finalItems
                 self.applySortedResults(pageSize: pageSize)
                 self.totalMatches = self.cachedItems.count
-                self.resultLimitReached = results.count >= Int(maxResults)
+                self.resultLimitReached = limitReached
                 self.queryTimeMs = elapsed
                 AppLogger.info("Search", "Displaying \(self.totalMatches) results for '\(query)' (engine returned \(results.count), gen=\(gen))")
             }
         }
     }
 
-    nonisolated private static let contentDisplayLimit = 200
-
     var effectiveMaxResults: Int {
-        isContentSearch ? Self.contentDisplayLimit : Int(settings.snapshot.maxResults)
+        let snapshot = settings.snapshot
+        return isContentSearch ? snapshot.contentSearchMaxResults : snapshot.maxResults
     }
 
     private func performContentSearch(_ keyword: String) {
         let bridge = self.bridge
         let gen = searchGeneration
+        let maxResults = settings.snapshot.contentSearchMaxResults
+        contentResults = []
+        cachedContentResults = []
+        totalMatches = 0
+        resultLimitReached = false
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
-            let results = bridge.queryContent(keyword, maxResults: UInt32(Self.contentDisplayLimit + 1))
+            let results = bridge.queryContent(keyword, maxResults: UInt32(maxResults + 1))
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
 
             var items: [ContentFileItem] = []
-            items.reserveCapacity(min(results.count, Self.contentDisplayLimit))
-            for r in results.prefix(Self.contentDisplayLimit) {
+            items.reserveCapacity(min(results.count, maxResults))
+            for r in results.prefix(maxResults) {
                 items.append(ContentFileItem(
                     id: "\(r.filePath):\(r.matchOffset)",
                     fileName: r.fileName,
@@ -774,11 +821,12 @@ class SearchViewModel: ObservableObject {
                 ))
             }
             let finalItems = items
-            let limitReached = results.count > Self.contentDisplayLimit
+            let limitReached = results.count > maxResults
 
             await MainActor.run { [weak self] in
                 guard let self, self.searchGeneration == gen else { return }
-                self.contentResults = finalItems
+                self.cachedContentResults = finalItems
+                self.contentResults = Array(finalItems.prefix(Self.contentPageSize))
                 self.totalMatches = finalItems.count
                 self.resultLimitReached = limitReached
                 self.queryTimeMs = elapsed
@@ -800,6 +848,12 @@ class SearchViewModel: ObservableObject {
                 self?.isLoadingMore = false
                 return
             }
+            guard currentLoaded == self.loadedCount,
+                  currentLoaded == self.displayItems.count,
+                  currentLoaded < self.cachedItems.count else {
+                self.isLoadingMore = false
+                return
+            }
             let nextEnd = min(currentLoaded + pageSize, self.cachedItems.count)
             self.displayItems.append(contentsOf: self.cachedItems[currentLoaded..<nextEnd])
             self.loadedCount = nextEnd
@@ -807,8 +861,32 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    func loadMoreContent() {
+        guard !isLoadingMore, contentResults.count < cachedContentResults.count else { return }
+        isLoadingMore = true
+        let currentCount = contentResults.count
+        let generation = searchGeneration
+        Task { @MainActor [weak self] in
+            guard let self, self.searchGeneration == generation else {
+                self?.isLoadingMore = false
+                return
+            }
+            guard currentCount == self.contentResults.count,
+                  currentCount < self.cachedContentResults.count else {
+                self.isLoadingMore = false
+                return
+            }
+            let nextEnd = ResultPagination.nextEnd(currentCount: currentCount,
+                                                   totalCount: self.cachedContentResults.count,
+                                                   pageSize: Self.contentPageSize)
+            self.contentResults.append(contentsOf: self.cachedContentResults[currentCount..<nextEnd])
+            self.isLoadingMore = false
+        }
+    }
+
     func clearContentResults() {
         contentResults = []
+        cachedContentResults = []
         contentSearchUnavailable = false
         totalMatches = 0
         resultLimitReached = false
@@ -1041,6 +1119,7 @@ class SearchViewModel: ObservableObject {
 
     func removeContentItem(id: String) {
         contentResults.removeAll { $0.id == id }
+        cachedContentResults.removeAll { $0.id == id }
         totalMatches = max(0, totalMatches - 1)
     }
 
@@ -1082,6 +1161,9 @@ class SearchViewModel: ObservableObject {
         if selectionAnchorID == oldID {
             selectionAnchorID = newID
         }
+        if let newID {
+            bridge.refreshRenamedPath(from: oldID, to: newID)
+        }
     }
 
     func copySelectedFile() {
@@ -1093,6 +1175,17 @@ class SearchViewModel: ObservableObject {
 
     func selectedFileURLs() -> [URL] {
         selectedItemsInDisplayOrder().map { URL(fileURLWithPath: $0.fullPath) }
+    }
+
+    /// All results after quick/path/advanced filtering, including pages that
+    /// have not yet been appended to displayItems.
+    func fileItemsForExport() -> [FileItem] {
+        SearchExportSnapshot.completeResults(cached: cachedItems, visible: displayItems)
+    }
+
+    func contentItemsForExport() -> [ContentFileItem] {
+        SearchExportSnapshot.completeResults(cached: cachedContentResults,
+                                             visible: contentResults)
     }
 
     private func applySortedResults(pageSize: Int) {
@@ -1174,6 +1267,7 @@ class SearchViewModel: ObservableObject {
             sourceItems = []
             cachedItems = []
             displayItems = []
+            cachedContentResults = []
             contentResults = []
             loadedCount = 0
             totalMatches = 0
@@ -1411,12 +1505,15 @@ class SearchViewModel: ObservableObject {
             contentSearchUnavailable = true
             contentKeyword = currentContentSearchKeyword()
             contentResults = []
+            cachedContentResults = []
             totalMatches = 0
             resultLimitReached = false
             queryTimeMs = 0
         } else {
             isContentSearch = false
             contentSearchUnavailable = false
+            cachedContentResults = []
+            contentResults = []
             performSearch(searchText)
         }
         scheduleHistoryRecord()

@@ -10,7 +10,7 @@ RE2_CFLAGS = -I$(RE2_PREFIX)/include
 RE2_LDFLAGS = -L$(RE2_PREFIX)/lib -Wl,-rpath,$(RE2_PREFIX)/lib -lre2
 
 # === Build targets ===
-.PHONY: test test-fast test-mace-client test-swift-cli-install test-swift-interaction test-swift-mcp test-slow test-all test-asan test-tsan build clean app dmg daemon cli benchmark-trigram-simd benchmark-posting-simd help
+.PHONY: test test-fast lint-localizations lint-docs test-mace-client test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n test-slow test-all test-asan test-tsan build clean app dmg cli benchmark-trigram-simd benchmark-posting-simd help
 
 test_all: test_all.cpp $(CORE_SRCS) $(CORE_HEADERS) $(TEST_HEADERS)
 	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) \
@@ -29,13 +29,8 @@ benchmark-posting-simd: benchmarks/bench_posting_intersection.cpp
 	$(CXX) $(CXXFLAGS) -IMacEverything/Core $^ -o build/benchmark-posting-simd
 	./build/benchmark-posting-simd
 
-maceverything-daemon: MacEverything/CLI/daemon_main.cpp $(CORE_SRCS)
-	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o $@
-
-daemon: maceverything-daemon
-
 mace: MacEverything/CLI/mace_main.cpp MacEverything/CLI/MaceClient.h
-	$(CXX) $(CXXFLAGS) MacEverything/CLI/mace_main.cpp -o $@
+	$(CXX) $(CXXFLAGS) -framework CoreFoundation MacEverything/CLI/mace_main.cpp -o $@
 
 cli: mace
 
@@ -46,20 +41,28 @@ lint-bridge:
 		MacEverything/Bridge/MacSearchBridge.mm \
 		MacEverything/Bridge/MacSearchBridge+Content.mm
 
+lint-localizations:
+	bash scripts/check-localizations.sh
+
+lint-docs:
+	bash scripts/check-docs.sh
+
 # === Sanitizer targets ===
 test-asan: test_all.cpp $(CORE_SRCS)
-	$(CXX) -std=c++20 -O1 -g -fsanitize=address -fno-omit-frame-pointer $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o test_all_asan
-	./test_all_asan --fast
+	mkdir -p build/tests
+	$(CXX) -std=c++20 -O1 -g -fsanitize=address -fno-omit-frame-pointer $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o build/tests/test_all_asan
+	./build/tests/test_all_asan --fast --quiet
 
 test-tsan: test_all.cpp $(CORE_SRCS)
-	$(CXX) -std=c++20 -O1 -g -fsanitize=thread $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o test_all_tsan
-	./test_all_tsan --fast
+	mkdir -p build/tests
+	$(CXX) -std=c++20 -O1 -g -fsanitize=thread $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o build/tests/test_all_tsan
+	./build/tests/test_all_tsan --fast --quiet
 
 # === Test targets ===
 test: test-fast
 
-test-fast: test_all lint-bridge test-mace-client test-swift-cli-install test-swift-interaction test-swift-mcp
-	./test_all --fast
+test-fast: test_all lint-bridge lint-localizations lint-docs test-mace-client test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n
+	./test_all --fast --quiet
 
 test-mace-client:
 	mkdir -p build/tests
@@ -85,6 +88,31 @@ test-swift-mcp:
 		-o build/tests/test_mcp_config
 	./build/tests/test_mcp_config
 
+test-swift-export:
+	mkdir -p build/tests
+	xcrun swiftc MacEverything/App/SearchExportSerializer.swift tests/test_search_export.swift \
+		-o build/tests/test_search_export
+	./build/tests/test_search_export
+
+test-swift-highlight:
+	mkdir -p build/tests
+	xcrun swiftc -DTESTING -framework SwiftUI \
+		MacEverything/App/HighlightHint.swift MacEverything/App/TextHighlight.swift tests/test_highlight_ranges.swift \
+		-o build/tests/test_highlight_ranges
+	./build/tests/test_highlight_ranges
+
+test-swift-throttle:
+	mkdir -p build/tests
+	xcrun swiftc MacEverything/App/IndexRefreshThrottle.swift tests/test_index_refresh_throttle.swift \
+		-o build/tests/test_index_refresh_throttle
+	./build/tests/test_index_refresh_throttle
+
+test-swift-l10n:
+	mkdir -p build/tests
+	xcrun swiftc MacEverything/App/L10n.swift tests/test_l10n_formatting.swift \
+		-o build/tests/test_l10n_formatting
+	./build/tests/test_l10n_formatting
+
 test-slow: test_all
 	./test_all --slow
 
@@ -101,7 +129,7 @@ dmg:
 
 # === Cleanup ===
 clean:
-	rm -f test_all test_all_asan test_all_tsan benchmark maceverything-daemon mace
+	rm -f test_all test_all_asan test_all_tsan benchmark mace
 	rm -rf build/
 
 # === Help ===
@@ -111,9 +139,10 @@ help:
 	@echo "  make test-fast  - Run local fast tests, skipping benchmarks/stress tests"
 	@echo "  make test-slow  - Run slow integration tests (Part 1, 4, 6)"
 	@echo "  make test-all   - Run all tests"
+	@echo "  make test-asan  - Run fast tests with AddressSanitizer"
+	@echo "  make test-tsan  - Run fast tests with ThreadSanitizer"
 	@echo "  make app        - Build MacEverything.app via Xcode (requires prepared RE2 dependencies)"
 	@echo "  make dmg        - Build + package into DMG"
-	@echo "  make daemon     - Build CLI daemon (maceverything-daemon)"
 	@echo "  make cli        - Build the short query client (mace)"
 	@echo "  make benchmark  - Build benchmark binary"
 	@echo "  make benchmark-trigram-simd - Compare scalar, auto-vectorized, and NEON trigram packing"

@@ -5,9 +5,12 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  schedule:
+    - cron: "20 18 * * 0"
 
 jobs:
   build-arm64:
+    if: github.event_name != 'schedule'
     name: Build arm64
     runs-on: macos-15
 
@@ -41,11 +44,11 @@ jobs:
         with:
           name: MacEverything-macOS-arm64
           path: |
-            third_party/re2
             build/arm64/Release/MacEverything.app
             artifacts/MacEverything-arm64.dmg
 
   build-intel:
+    if: github.event_name != 'schedule'
     name: Build x86_64
     runs-on: macos-15-intel
 
@@ -79,6 +82,33 @@ jobs:
         with:
           name: MacEverything-macOS-x86_64
           path: |
-            third_party/re2
             build/x86_64/Release/MacEverything.app
             artifacts/MacEverything-x86_64.dmg
+
+  address-sanitizer:
+    if: github.event_name == 'schedule'
+    name: Weekly AddressSanitizer
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+      - name: Install dependencies
+        run: brew install re2 abseil
+      - name: Prepare local RE2 dependencies
+        run: scripts/prepare-re2-deps.sh third_party/re2
+      - name: Run fast tests with AddressSanitizer
+        run: make test-asan
+
+  thread-sanitizer:
+    if: github.event_name == 'schedule'
+    name: Weekly ThreadSanitizer
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+      - name: Install dependencies
+        run: brew install re2 abseil
+      - name: Prepare local RE2 dependencies
+        run: scripts/prepare-re2-deps.sh third_party/re2
+      - name: Run fast tests with ThreadSanitizer
+        run: make test-tsan

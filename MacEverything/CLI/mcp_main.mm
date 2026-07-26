@@ -15,6 +15,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <vector>
 #include <cerrno>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -32,6 +33,22 @@ static constexpr const char* kHttpHost = "127.0.0.1";
 static constexpr uint16_t kDefaultHttpPort = 19860;
 
 static uint16_t g_httpPort = kDefaultHttpPort;
+
+static uint16_t configuredHttpPort() {
+    constexpr int kMinimumPort = 1024;
+    constexpr int kMaximumPort = 65535;
+    CFStringRef domain = CFSTR("com.maceverything.app");
+    CFPreferencesAppSynchronize(domain);
+    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("settings.httpPort"), domain);
+    if (!value) return kDefaultHttpPort;
+
+    int port = 0;
+    bool valid = CFGetTypeID(value) == CFNumberGetTypeID() &&
+        CFNumberGetValue(static_cast<CFNumberRef>(value), kCFNumberIntType, &port) &&
+        port >= kMinimumPort && port <= kMaximumPort;
+    CFRelease(value);
+    return valid ? static_cast<uint16_t>(port) : kDefaultHttpPort;
+}
 
 // ═══════════════════════════════════════════════════════
 //  JSON helpers
@@ -125,8 +142,13 @@ static HttpResponse httpGet(const std::string& path) {
     // Send request
     std::string req = "GET " + path + " HTTP/1.1\r\n"
                       "Host: 127.0.0.1:" + std::to_string(g_httpPort) + "\r\n"
-                      "Connection: close\r\n"
-                      "\r\n";
+                      "Accept: application/json\r\n";
+    // Attach the local HTTP token (non-/api/health only).
+    std::string token = mace::readAuthToken();
+    if (!token.empty() && path != "/api/health") {
+        req += "Authorization: Bearer " + token + "\r\n";
+    }
+    req += "Connection: close\r\n\r\n";
     size_t sent = 0;
     while (sent < req.size()) {
         ssize_t count = send(fd, req.data() + sent, req.size() - sent, MSG_NOSIGNAL);
@@ -196,7 +218,16 @@ static HttpResponse httpGet(const std::string& path) {
 //  MCP response builders
 // ═══════════════════════════════════════════════════════
 
+static std::vector<std::string>*& activeResponseCollector() {
+    static std::vector<std::string>* collector = nullptr;
+    return collector;
+}
+
 static void sendResponse(const std::string& json) {
+    if (activeResponseCollector()) {
+        activeResponseCollector()->push_back(json);
+        return;
+    }
     std::cout << json << "\n";
     std::cout.flush();
 }
@@ -411,7 +442,8 @@ static void printUsage(const char* prog) {
         "MCP (Model Context Protocol) server for MacEverything.\n"
         "Reads JSON-RPC from stdin, writes to stdout.\n\n"
         "Options:\n"
-        "  --port PORT  MacEverything HTTP port (default: %u)\n"
+        "  --port PORT  Override the port from MacEverything settings"
+        " (fallback %u)\n"
         "  --help       Show this help\n",
         prog, kDefaultHttpPort);
 }
@@ -433,6 +465,8 @@ static bool parsePort(const char* text, uint16_t& port) {
 // ═══════════════════════════════════════════════════════
 
 int main(int argc, char* argv[]) {
+    g_httpPort = configuredHttpPort();
+
     // Parse arguments
     for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0 || strcmp(argv[i], "-h") == 0) {
@@ -486,6 +520,9 @@ int main(int argc, char* argv[]) {
                                  "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
                     continue;
                 }
+
+                std::vector<std::string> responses;
+                activeResponseCollector() = &responses;
                 for (id item in batch) {
                     if ([item isKindOfClass:[NSDictionary class]]) {
                         handleRequest(static_cast<NSDictionary*>(item));
@@ -493,6 +530,17 @@ int main(int argc, char* argv[]) {
                         sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
                                      "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
                     }
+                }
+                activeResponseCollector() = nullptr;
+                if (!responses.empty()) {
+                    std::ostringstream batchResponse;
+                    batchResponse << '[';
+                    for (size_t i = 0; i < responses.size(); ++i) {
+                        if (i > 0) batchResponse << ',';
+                        batchResponse << responses[i];
+                    }
+                    batchResponse << ']';
+                    sendResponse(batchResponse.str());
                 }
                 continue;
             }

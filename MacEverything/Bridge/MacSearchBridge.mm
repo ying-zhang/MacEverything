@@ -3,6 +3,7 @@
 #include "PathUtils.h"
 #include "Logger.h"
 #include "HighlightHintExtractor.h"
+#include "HttpToken.h"
 
 static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array) {
     std::vector<std::string> result;
@@ -12,6 +13,11 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
         result.emplace_back([item UTF8String]);
     }
     return result;
+}
+
+static std::string AppBundleVersion() {
+    NSString *version = [[NSBundle mainBundle] objectForInfoDictionaryKey:@"CFBundleShortVersionString"];
+    return version.length > 0 ? std::string(version.UTF8String) : std::string("unknown");
 }
 
 @implementation MEFileResult
@@ -114,6 +120,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     self = [super init];
     if (self) {
         ServiceConfig config;
+        config.appVersion = AppBundleVersion();
         config.scanRoot = "/";
         config.cachePath = PathUtils::getDefaultCachePath();
         config.logPath = PathUtils::getDefaultLogPath();
@@ -139,8 +146,10 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
               automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
                      enablePinyinInitials:(BOOL)enablePinyinInitials
              enablePathSearchAcceleration:(BOOL)enablePathSearchAcceleration
+                httpAuthenticationEnabled:(BOOL)httpAuthenticationEnabled
                                  httpPort:(uint16_t)httpPort {
     ServiceConfig config;
+    config.appVersion = AppBundleVersion();
     config.scanRoots = NSStringArrayToVector(scanRoots);
     config.scanRoot = config.scanRoots.empty() ? "/" : config.scanRoots.front();
     config.excludedPaths = NSStringArrayToVector(excludedPaths);
@@ -150,6 +159,7 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     config.cachePath = PathUtils::getDefaultCachePath();
     config.logPath = PathUtils::getDefaultLogPath();
     config.httpPort = httpPort;
+    config.httpAuthenticationEnabled = httpAuthenticationEnabled;
     config.includeHidden = includeHidden;
     config.includeSystem = includeSystem;
     config.includeAppBundleContents = includeAppBundleContents;
@@ -159,6 +169,29 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     config.enablePinyinInitials = enablePinyinInitials;
     config.enablePathTrigramIndex = enablePathSearchAcceleration;
     _serviceEngine->updateConfig(config);
+}
+
+- (NSString *)httpAuthToken {
+    const auto token = HttpToken::readToken();
+    return [NSString stringWithUTF8String:token.c_str()];
+}
+
+- (NSString *)ensureHttpAuthToken {
+    const auto token = HttpToken::ensureTokenFile();
+    return [NSString stringWithUTF8String:token.c_str()];
+}
+
+- (NSString *)regenerateHttpAuthToken {
+    const auto token = HttpToken::regenerateTokenFile();
+    if (!token.empty()) _serviceEngine->refreshHttpAuthentication();
+    return [NSString stringWithUTF8String:token.c_str()];
+}
+
+- (BOOL)setHttpAuthToken:(NSString *)token {
+    const char *utf8 = token.UTF8String;
+    if (!utf8 || !HttpToken::writeToken(std::string(utf8))) return NO;
+    _serviceEngine->refreshHttpAuthentication();
+    return YES;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -212,13 +245,25 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
             if (s.onContentIndexComplete) s.onContentIndexComplete(totalIndexed);
         });
     };
+    _serviceEngine->onStartupFailed = [weakSelf](const std::string& reason) {
+        MacSearchBridge *s = weakSelf;
+        if (!s) return;
+        const std::string reasonCopy = reason;
+        NSString *nsReason = [[NSString stringWithUTF8String:reason.c_str()] copy];
+        dispatch_async(dispatch_get_main_queue(), ^{
+            LOG_ERROR("MacSearchBridge", "startup fatal: " << reasonCopy);
+            if (s.onStartupFailed) s.onStartupFailed(nsReason);
+        });
+    };
 }
 
 - (void)startScanFrom:(NSString *)rootPath
            completion:(void (^)(uint32_t totalRecords))completion {
     [self _installCallbacks];
 
-    _serviceEngine->startFullScan([completion](uint32_t count, bool) {
+    auto engine = _serviceEngine;
+    _serviceEngine->startFullScan([completion, engine](uint32_t count, bool) {
+        if (engine->isStartupFatal()) return;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(count);
         });
@@ -231,7 +276,9 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
                   completion:(void (^)(uint32_t totalRecords, BOOL didFullScan))completion {
     [self _installCallbacks];
 
-    _serviceEngine->startIncremental([completion](uint32_t count, bool didFullScan) {
+    auto engine = _serviceEngine;
+    _serviceEngine->startIncremental([completion, engine](uint32_t count, bool didFullScan) {
+        if (engine->isStartupFatal()) return;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(count, didFullScan ? YES : NO);
         });
@@ -240,7 +287,9 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
 
 - (void)rebuildIndexWithCompletion:(void (^)(uint32_t totalRecords))completion {
     [self _installCallbacks];
-    _serviceEngine->rebuildIndex([completion](uint32_t count, bool) {
+    auto engine = _serviceEngine;
+    _serviceEngine->rebuildIndex([completion, engine](uint32_t count, bool) {
+        if (engine->isStartupFatal()) return;
         dispatch_async(dispatch_get_main_queue(), ^{
             if (completion) completion(count);
         });
@@ -332,6 +381,11 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     } else {
         _serviceEngine->rescanSubtree(std::string([dirPath UTF8String]));
     }
+}
+
+- (void)refreshRenamedPathFrom:(NSString *)oldPath to:(NSString *)newPath {
+    _serviceEngine->refreshRenamedPath(std::string([oldPath UTF8String]),
+                                       std::string([newPath UTF8String]));
 }
 
 - (void)removeSubtree:(NSString *)pathPrefix {
@@ -522,23 +576,6 @@ static std::vector<std::string> NSStringArrayToVector(NSArray<NSString *> *array
     auto engine = _serviceEngine->safeEngine();
     if (!engine) return 0;
     return static_cast<uint64_t>(engine->memoryBreakdown().totalApproxBytes);
-}
-
-- (BOOL)saveIndexToFile:(NSString *)path {
-    auto engine = _serviceEngine->safeEngine();
-    if (!engine) return NO;
-    IndexMetadata meta;
-    meta.lastEventId = 0;
-    meta.extra[IndexMetadata::kAppVersion] = "1.1.0";
-    meta.extra[IndexMetadata::kOSVersion] = PathUtils::getOSVersionString();
-    meta.extra[IndexMetadata::kRecordFormat] = "v3_inode";
-    return engine->saveToFile(std::string([path UTF8String]), meta) ? YES : NO;
-}
-
-- (BOOL)loadIndexFromFile:(NSString *)path {
-    auto engine = _serviceEngine->safeEngine();
-    if (!engine) return NO;
-    return engine->loadFromFile(std::string([path UTF8String])) ? YES : NO;
 }
 
 @end

@@ -3,6 +3,10 @@ import ServiceManagement
 import AppKit
 
 struct GeneralSettingsView: View {
+    private enum SettingsTab: String {
+        case indexScope, exclusions, content, indexFiles, search, appearance, general
+    }
+
     private enum ColorEditorMode: String, CaseIterable, Identifiable {
         case light
         case dark
@@ -41,9 +45,14 @@ struct GeneralSettingsView: View {
     @State private var contentIndexedCount: UInt32 = 0
     @State private var cliInstallStatus: CLIInstallStatus = .notInstalled
     @State private var cliInstallError = ""
+    @State private var httpToken = ""
+    @State private var showHttpToken = false
+    @State private var httpTokenMessage = ""
+    @State private var httpTokenMessageIsError = false
+    @State private var selectedTab: SettingsTab = .indexScope
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     indexingSection
@@ -51,6 +60,8 @@ struct GeneralSettingsView: View {
                 .padding()
             }
             .tabItem { Text(L10n.tr("Index Scope")) }
+            .tag(SettingsTab.indexScope)
+            .id("indexScope-\(settings.language.rawValue)")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -59,6 +70,8 @@ struct GeneralSettingsView: View {
                 .padding()
             }
             .tabItem { Text(L10n.tr("Exclusions")) }
+            .tag(SettingsTab.exclusions)
+            .id("exclusions-\(settings.language.rawValue)")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -67,6 +80,8 @@ struct GeneralSettingsView: View {
                 .padding()
             }
             .tabItem { Text(L10n.tr("Search Text Content")) }
+            .tag(SettingsTab.content)
+            .id("content-\(settings.language.rawValue)")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -75,16 +90,19 @@ struct GeneralSettingsView: View {
                 .padding()
             }
             .tabItem { Text(L10n.tr("Index File Info")) }
+            .tag(SettingsTab.indexFiles)
+            .id("indexFiles-\(settings.language.rawValue)")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     searchSection
                     historySection
-                    resultsSection
                 }
                 .padding()
             }
             .tabItem { Text(L10n.tr("Search & Results")) }
+            .tag(SettingsTab.search)
+            .id("search-\(settings.language.rawValue)")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -93,6 +111,8 @@ struct GeneralSettingsView: View {
                 .padding()
             }
             .tabItem { Text(L10n.tr("Appearance")) }
+            .tag(SettingsTab.appearance)
+            .id("appearance-\(settings.language.rawValue)")
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
@@ -106,6 +126,8 @@ struct GeneralSettingsView: View {
                 .padding()
             }
             .tabItem { Text(L10n.tr("General")) }
+            .tag(SettingsTab.general)
+            .id("general-\(settings.language.rawValue)")
         }
         .frame(width: 720, height: 660)
         .alert(L10n.tr("Reset Index Defaults?"), isPresented: $showingResetIndexDefaultsConfirmation) {
@@ -137,6 +159,7 @@ struct GeneralSettingsView: View {
             refreshContentIndexInfo()
             selectActiveColorMode()
             refreshCLIInstallStatus()
+            loadHttpToken()
         }
         .onChange(of: settings.appearanceMode) { selectActiveColorMode() }
         .onChange(of: colorScheme) {
@@ -170,6 +193,7 @@ struct GeneralSettingsView: View {
                         Text(mode.title).tag(mode)
                     }
                 }
+                .id(settings.language)
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
             }
@@ -333,7 +357,7 @@ struct GeneralSettingsView: View {
     private func refreshContentIndexInfo() {
         let fileManager = FileManager.default
         mainIndexBaseBytes = fileSize(atPath: SearchViewModel.v6Path, fileManager: fileManager)
-        mainIndexWalBytes = fileSize(atPath: SearchViewModel.walPath, fileManager: fileManager)
+        mainIndexWalBytes = walStorageBytes(atPath: SearchViewModel.walPath, fileManager: fileManager)
         mainIndexLegacyBytes =
             fileSize(atPath: SearchViewModel.cachePath, fileManager: fileManager) +
             fileSize(atPath: SearchViewModel.pagesPath, fileManager: fileManager) +
@@ -341,7 +365,7 @@ struct GeneralSettingsView: View {
         mainIndexStorageBytes = mainIndexBaseBytes + mainIndexWalBytes + mainIndexLegacyBytes
 
         let baseBytes = fileSize(atPath: SearchViewModel.contentIndexPath, fileManager: fileManager)
-        let walBytes = fileSize(atPath: SearchViewModel.contentWalPath, fileManager: fileManager)
+        let walBytes = walStorageBytes(atPath: SearchViewModel.contentWalPath, fileManager: fileManager)
         contentIndexedCount = bridge.contentIndexedFileCount()
         contentIndexBaseBytes = baseBytes
         contentIndexWalBytes = walBytes
@@ -358,9 +382,24 @@ struct GeneralSettingsView: View {
         return size.uint64Value
     }
 
+    private func walStorageBytes(atPath path: String, fileManager: FileManager) -> UInt64 {
+        let url = URL(fileURLWithPath: path)
+        let segmentPrefix = url.lastPathComponent + ".seg."
+        let segmentBytes = (try? fileManager.contentsOfDirectory(
+            at: url.deletingLastPathComponent(),
+            includingPropertiesForKeys: [.fileSizeKey],
+            options: [.skipsHiddenFiles]
+        ))?.reduce(into: UInt64(0)) { total, candidate in
+            guard candidate.lastPathComponent.hasPrefix(segmentPrefix) else { return }
+            let size = try? candidate.resourceValues(forKeys: [.fileSizeKey]).fileSize
+            total += UInt64(size ?? 0)
+        } ?? 0
+        return fileSize(atPath: path, fileManager: fileManager) + segmentBytes
+    }
+
 
     private func formattedBytes(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .file)
+        L10n.formatByteCount(bytes)
     }
 
     private func scheduleContentIndexInfoRefresh() {
@@ -377,6 +416,7 @@ struct GeneralSettingsView: View {
                     Text(mode.title).tag(mode)
                 }
             }
+            .id(settings.language)
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Reset quick filter when no results are found"), isOn: $settings.autoResetQuickFilterOnEmptyResults)
@@ -388,6 +428,7 @@ struct GeneralSettingsView: View {
                     Text(action.title).tag(action)
                 }
             }
+            .id(settings.language)
             .pickerStyle(.segmented)
 
             Toggle(L10n.tr("Pinyin Initials Search"), isOn: $settings.enablePinyinInitials)
@@ -416,10 +457,17 @@ struct GeneralSettingsView: View {
             Toggle(L10n.tr("Match Filename"), isOn: $settings.defaultMatchFilename)
 
             BoundedIntegerControl(
-                title: L10n.tr("Maximum Results"),
+                title: L10n.tr("Maximum Filename Results"),
                 value: $settings.maxResults,
-                range: 100...10_000,
+                range: 100...100_000,
                 step: 100
+            )
+
+            BoundedIntegerControl(
+                title: L10n.tr("Maximum Content Results"),
+                value: $settings.contentSearchMaxResults,
+                range: 50...200,
+                step: 50
             )
 
             Picker(L10n.tr("Sort Results By"), selection: $settings.sortField) {
@@ -427,6 +475,7 @@ struct GeneralSettingsView: View {
                     Text(field.title).tag(field)
                 }
             }
+            .id(settings.language)
             Toggle(L10n.tr("Sort Ascending"), isOn: $settings.sortAscending)
                 .disabled(settings.sortField == .relevance)
         }
@@ -447,7 +496,7 @@ struct GeneralSettingsView: View {
     private var historySection: some View {
         SettingsSection(title: L10n.tr("History")) {
             Toggle(L10n.tr("Enable search history"), isOn: $settings.searchHistoryEnabled)
-            Stepper(value: $settings.searchHistoryLimit, in: 0...5000, step: 50) {
+            Stepper(value: $settings.searchHistoryLimit, in: 10...200, step: 10) {
                 Text(L10n.tr("History Limit: %d", settings.searchHistoryLimit))
             }
             .disabled(!settings.searchHistoryEnabled)
@@ -455,16 +504,6 @@ struct GeneralSettingsView: View {
             Button(L10n.tr("Clear Search History")) {
                 settings.clearSearchHistory()
             }
-        }
-    }
-
-    private var resultsSection: some View {
-        SettingsSection(title: L10n.tr("Results View")) {
-            Toggle(L10n.tr("Show path"), isOn: $settings.showPath)
-            Toggle(L10n.tr("Show extension"), isOn: $settings.showExtension)
-            Toggle(L10n.tr("Show size"), isOn: $settings.showSize)
-            Toggle(L10n.tr("Show modified date"), isOn: $settings.showModifiedDate)
-            Toggle(L10n.tr("Show content snippets"), isOn: $settings.showContentSnippets)
         }
     }
 
@@ -477,11 +516,28 @@ struct GeneralSettingsView: View {
 
     private var appearanceSection: some View {
         SettingsSection(title: L10n.tr("Appearance")) {
+            Picker(L10n.tr("Language"), selection: $settings.language) {
+                ForEach(AppLanguage.allCases) { language in
+                    Text(language.title).tag(language)
+                }
+            }
+            .id(settings.language)
+            .pickerStyle(.segmented)
+
             Picker(L10n.tr("Theme"), selection: $settings.appearanceMode) {
                 ForEach(AppearanceMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
             }
+            .id(settings.language)
+            .pickerStyle(.segmented)
+
+            Picker(L10n.tr("Information Panel"), selection: $settings.inspectorDisplayMode) {
+                ForEach(InspectorDisplayMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .id(settings.language)
             .pickerStyle(.segmented)
 
             GroupBox(L10n.tr("Colors")) {
@@ -491,6 +547,7 @@ struct GeneralSettingsView: View {
                             Text(mode.title).tag(mode)
                         }
                     }
+                    .id(settings.language)
                     .pickerStyle(.segmented)
 
                     HStack {
@@ -514,6 +571,7 @@ struct GeneralSettingsView: View {
                         Text(family).tag(family)
                     }
                 }
+                .id(settings.language)
                 .labelsHidden()
                 TextField(L10n.tr("Search"), text: $fontSearchText)
                     .textFieldStyle(.roundedBorder)
@@ -695,15 +753,104 @@ struct GeneralSettingsView: View {
                 guard settings.httpServerEnabled else { return }
                 SearchServiceModel.shared.applyRuntimeConfiguration()
             }
+            Toggle(L10n.tr("Require access token"), isOn: $settings.httpAuthenticationEnabled)
+                .disabled(!settings.httpServerEnabled)
+                .onChange(of: settings.httpAuthenticationEnabled) {
+                    if settings.httpAuthenticationEnabled && httpToken.isEmpty {
+                        httpToken = MacSearchBridge.shared().ensureHttpAuthToken()
+                    }
+                    httpTokenMessage = ""
+                    SearchServiceModel.shared.applyRuntimeConfiguration()
+                }
+            HStack(spacing: 8) {
+                Group {
+                    if showHttpToken {
+                        TextField(L10n.tr("64 lowercase hexadecimal characters"), text: $httpToken)
+                    } else {
+                        SecureField(L10n.tr("64 lowercase hexadecimal characters"), text: $httpToken)
+                    }
+                }
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
+
+                Button {
+                    showHttpToken.toggle()
+                } label: {
+                    Image(systemName: showHttpToken ? "eye.slash" : "eye")
+                }
+                .help(L10n.tr(showHttpToken ? "Hide token" : "Show token"))
+
+                Button {
+                    regenerateHttpToken()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help(L10n.tr("Generate a new token"))
+
+                Button(L10n.tr("Save Token")) {
+                    saveHttpToken()
+                }
+                .disabled(!isHttpTokenValid)
+            }
+            .disabled(!settings.httpServerEnabled || !settings.httpAuthenticationEnabled)
+            if !httpTokenMessage.isEmpty {
+                Text(httpTokenMessage)
+                    .font(.caption)
+                    .foregroundColor(httpTokenMessageIsError ? .red : .secondary)
+            }
             VStack(alignment: .leading, spacing: 4) {
                 Text(L10n.tr("HTTP API listens on local loopback only: %@", "http://127.0.0.1:\(settings.httpPort)"))
-                Text(L10n.tr("Example: curl \"%@/api/search?q=readme&limit=10\"", "http://127.0.0.1:\(settings.httpPort)"))
+                if settings.httpAuthenticationEnabled {
+                    Text(L10n.tr("For CLI/API clients, send Authorization: Bearer <token> from %@", "~/Library/Application Support/com.maceverything.app/.http_token"))
+                } else {
+                    Text(L10n.tr("Access token is disabled; any process running as this user can call the API."))
+                }
                 Text(L10n.tr("Useful endpoints: /api/search, /api/search/content, /api/recent, /api/status, /api/memory"))
             }
             .font(.caption)
             .foregroundColor(.secondary)
             .textSelection(.enabled)
             .disabled(!settings.httpServerEnabled)
+        }
+    }
+
+    private var isHttpTokenValid: Bool {
+        httpToken.count == 64 && httpToken.allSatisfy { $0.isHexDigit && !$0.isUppercase }
+    }
+
+    private func loadHttpToken() {
+        httpToken = MacSearchBridge.shared().httpAuthToken()
+        if settings.httpAuthenticationEnabled && httpToken.isEmpty {
+            httpToken = MacSearchBridge.shared().ensureHttpAuthToken()
+        }
+    }
+
+    private func saveHttpToken() {
+        let normalized = httpToken.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        httpToken = normalized
+        guard isHttpTokenValid else {
+            httpTokenMessage = L10n.tr("Token must contain exactly 64 lowercase hexadecimal characters.")
+            httpTokenMessageIsError = true
+            return
+        }
+        if MacSearchBridge.shared().setHttpAuthToken(normalized) {
+            httpTokenMessage = L10n.tr("Token saved.")
+            httpTokenMessageIsError = false
+        } else {
+            httpTokenMessage = L10n.tr("Failed to save token.")
+            httpTokenMessageIsError = true
+        }
+    }
+
+    private func regenerateHttpToken() {
+        let generated = MacSearchBridge.shared().regenerateHttpAuthToken()
+        if generated.isEmpty {
+            httpTokenMessage = L10n.tr("Failed to save token.")
+            httpTokenMessageIsError = true
+        } else {
+            httpToken = generated
+            httpTokenMessage = L10n.tr("A new token was generated and saved.")
+            httpTokenMessageIsError = false
         }
     }
 

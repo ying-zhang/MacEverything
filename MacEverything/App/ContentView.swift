@@ -13,8 +13,11 @@ struct ContentView: View {
     @FocusState private var isSearchFieldFocused: Bool
     @State private var resultListFocused = false
     @State private var showPathFilter = false
+    @State private var showingExport = false
     @State private var searchFieldFocusRequest = 0
     @State private var gridWidth: CGFloat = 800
+    @State private var resultAreaWidth: CGFloat = 800
+    @State private var inspectorVisibilityOverride: Bool?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -69,7 +72,7 @@ struct ContentView: View {
                     },
                     focusRequest: searchFieldFocusRequest
                 )
-                .frame(height: 36)
+                .frame(height: 34)
                 .onChange(of: viewModel.searchText) {
                     viewModel.onSearchTextChanged()
                     updateSearchWindowTitle()
@@ -100,7 +103,7 @@ struct ContentView: View {
                 }
             }
             .padding(.horizontal, 16)
-            .padding(.vertical, 16)
+            .padding(.vertical, 12)
             .background(.ultraThinMaterial)
             .cornerRadius(10)
             .overlay(
@@ -115,7 +118,9 @@ struct ContentView: View {
                     quickFilter: $viewModel.quickFilter,
                     pathFilter: $viewModel.pathFilter,
                     showPathFilter: $showPathFilter,
-                    displayControlsDisabled: service.isScanning || viewModel.displayItems.isEmpty
+                    displayControlsDisabled: service.isScanning || viewModel.displayItems.isEmpty,
+                    inspectorVisible: inspectorIsVisible(for: resultAreaWidth),
+                    toggleInspector: toggleInspector
                 )
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
@@ -123,8 +128,35 @@ struct ContentView: View {
 
             Divider()
 
+            GeometryReader { proxy in
+                HStack(spacing: 0) {
+                    VStack(spacing: 0) {
             // Results list
-            if service.isScanning {
+            if service.startupFailed {
+                VStack(spacing: 12) {
+                    Spacer()
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .font(.system(size: 40))
+                        .foregroundColor(.red)
+                    Text(L10n.tr("Search Service Unavailable"))
+                        .font(.headline)
+                    Text(service.startupFailureReason)
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                    Text(L10n.tr("This usually means another copy of MacEverything is already running with the same index. Quit the other instance and restart, or restart your Mac."))
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                    Button(L10n.tr("Retry")) {
+                        SearchServiceModel.shared.startIncremental()
+                    }
+                    .padding(.top, 8)
+                    Spacer()
+                }
+            } else if service.isScanning {
                 VStack(spacing: 12) {
                     Spacer()
                     ProgressView()
@@ -199,6 +231,11 @@ struct ContentView: View {
                                     })
                                     .padding(.horizontal, 8)
                                     .padding(.vertical, 2)
+                            }
+                            if viewModel.contentResults.count < viewModel.totalMatches {
+                                ProgressView()
+                                    .padding()
+                                    .onAppear { viewModel.loadMoreContent() }
                             }
                         }
                     }
@@ -350,12 +387,39 @@ struct ContentView: View {
                     }
                 }
             }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    if inspectorIsVisible(for: proxy.size.width) {
+                        Divider()
+                        FileInspectorPanel(
+                            items: selectedInspectorItems,
+                            onRename: viewModel.updateItemName,
+                            onRemoveItems: { ids in
+                                for id in ids {
+                                    viewModel.removeItemFromResults(id: id)
+                                }
+                            }
+                        )
+                        .transition(.move(edge: .trailing).combined(with: .opacity))
+                    }
+                }
+                .onAppear { resultAreaWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { resultAreaWidth = proxy.size.width }
+                .animation(.easeInOut(duration: 0.18), value: inspectorIsVisible(for: proxy.size.width))
+            }
 
             Divider()
-            SearchStatusBar(viewModel: viewModel)
+            SearchStatusBar(viewModel: viewModel, showingExport: $showingExport)
         }
         .frame(minWidth: 600, minHeight: 400)
         .background(theme.resolvedBackgroundColor)
+        .focusedSceneValue(\.exportSearchResults) {
+            showingExport = true
+        }
+        .focusedSceneValue(\.canExportSearchResults, viewModel.totalMatches > 0)
+        .focusedSceneValue(\.toggleInformationPanel, toggleInspector)
+        .focusedSceneValue(\.informationPanelVisible, inspectorIsVisible(for: resultAreaWidth))
         .onAppear {
             updateSearchWindowTitle()
         }
@@ -381,6 +445,9 @@ struct ContentView: View {
         .onChange(of: viewModel.pathFilter) {
             viewModel.onPathFilterChanged()
         }
+        .onChange(of: settings.inspectorDisplayMode) {
+            inspectorVisibilityOverride = nil
+        }
         .onChange(of: viewModel.advancedFilters) { oldValue, newValue in
             viewModel.onAdvancedFiltersChanged(from: oldValue, to: newValue)
         }
@@ -399,6 +466,23 @@ struct ContentView: View {
                   hostWindow === window else { return }
             restoreSearchFocus()
         }
+    }
+
+    private var selectedInspectorItems: [FileItem] {
+        viewModel.selectedItemsInDisplayOrder()
+    }
+
+    private func inspectorIsVisible(for width: CGFloat) -> Bool {
+        if let inspectorVisibilityOverride { return inspectorVisibilityOverride }
+        switch settings.inspectorDisplayMode {
+        case .adaptive: return width >= 1_080
+        case .hidden: return false
+        case .always: return true
+        }
+    }
+
+    private func toggleInspector() {
+        inspectorVisibilityOverride = !inspectorIsVisible(for: resultAreaWidth)
     }
 
     private func restoreSearchInteraction() {
@@ -444,6 +528,7 @@ struct ContentView: View {
 
 private struct SearchStatusBar: View {
     @ObservedObject var viewModel: SearchViewModel
+    @Binding var showingExport: Bool
     @ObservedObject private var service = SearchServiceModel.shared
     @State private var showingAdvancedFilters = false
 
@@ -452,7 +537,13 @@ private struct SearchStatusBar: View {
 
         HStack(spacing: 8) {
             HStack(spacing: 8) {
-                if service.isScanning {
+                if service.startupFailed {
+                    Image(systemName: "exclamationmark.shield.fill")
+                        .foregroundColor(.red)
+                    Text(L10n.tr("Service unavailable — another instance holds the index lock"))
+                        .foregroundColor(.red)
+                        .fontWeight(.medium)
+                } else if service.isScanning {
                     ProgressView()
                         .controlSize(.small)
                     Text(L10n.tr("Scanning... %d items scanned", Int(service.scannedCount)))
@@ -503,6 +594,23 @@ private struct SearchStatusBar: View {
             Spacer(minLength: 8)
 
             HStack(spacing: 4) {
+                Button {
+                    showingExport.toggle()
+                } label: {
+                    Label(L10n.tr("Export"), systemImage: "square.and.arrow.down")
+                        .frame(height: 22)
+                }
+                .buttonStyle(.borderless)
+                .help(L10n.tr("Export Search Results"))
+                .disabled(viewModel.totalMatches == 0)
+                .popover(isPresented: $showingExport, arrowEdge: .bottom) {
+                    SearchResultExportPopover(viewModel: viewModel)
+                }
+
+                Divider()
+                    .frame(height: 16)
+                    .padding(.horizontal, 4)
+
                 Text(L10n.tr("Advanced Filters"))
                     .foregroundColor(advancedFiltersDisabled
                                      ? Color.secondary.opacity(0.5)
@@ -549,8 +657,10 @@ private struct SearchStatusBar: View {
     private var resultSummary: some View {
         if viewModel.isContentSearch {
             Text(viewModel.resultLimitReached
-                 ? L10n.tr("More than %d results", viewModel.effectiveMaxResults)
-                 : L10n.tr("%d content matches", viewModel.contentResults.count))
+                 ? L10n.tr("Result %d, total results limited to %d; add search terms.",
+                           viewModel.contentResults.count, viewModel.effectiveMaxResults)
+                 : L10n.tr("Showing %d of %d results",
+                           viewModel.contentResults.count, viewModel.totalMatches))
         } else {
             Text(viewModel.resultLimitReached
                  ? L10n.tr("Result %d, total results limited to %d; add search terms.",
@@ -564,12 +674,13 @@ private struct SearchStatusBar: View {
     }
 
     private func formattedIndexMemory(_ bytes: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: bytes), countStyle: .memory)
+        L10n.formatByteCount(bytes, style: .memory)
     }
 }
 
 private struct AdvancedFilterPopover: View {
     @ObservedObject var viewModel: SearchViewModel
+    @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -612,9 +723,11 @@ private struct AdvancedFilterPopover: View {
                     DatePicker(L10n.tr("From"),
                                selection: $viewModel.advancedFilters.customModifiedFrom,
                                displayedComponents: .date)
+                        .environment(\.locale, L10n.formattingLocale)
                     DatePicker(L10n.tr("To"),
                                selection: $viewModel.advancedFilters.customModifiedTo,
                                displayedComponents: .date)
+                        .environment(\.locale, L10n.formattingLocale)
                 }
             }
 
@@ -645,6 +758,7 @@ private struct AdvancedFilterPopover: View {
                     Text(optionTitle(option)).tag(option)
                 }
             }
+            .id(settings.language)
             .labelsHidden()
             .pickerStyle(.menu)
             .frame(width: 160)
@@ -734,6 +848,7 @@ private struct ResultDisplayControls: View {
     var body: some View {
         HStack(spacing: 8) {
             ResultDisplayModeSwitcher()
+                .disabled(isDisabled)
 
             Divider()
                 .frame(height: 18)
@@ -751,12 +866,11 @@ private struct ResultDisplayControls: View {
                 .accessibilityLabel(L10n.tr("Thumbnail Size"))
                 .accessibilityValue(Text("\(Int(settings.gridIconSize)) pt"))
                 .accessibilityIdentifier("gridIconSizeSlider")
-                .disabled(settings.resultDisplayMode != .grid)
+                .disabled(isDisabled || settings.resultDisplayMode != .grid)
             Image(systemName: "square.grid.2x2")
                 .foregroundColor(.secondary)
                 .accessibilityHidden(true)
         }
-        .disabled(isDisabled)
     }
 }
 
@@ -879,15 +993,18 @@ private struct ResultHeaderView: View {
 }
 
 private struct QuickFilterBar: View {
+    @ObservedObject private var settings = AppSettings.shared
     @Binding var quickFilter: QuickFilter
     @Binding var pathFilter: String
     @Binding var showPathFilter: Bool
     let displayControlsDisabled: Bool
+    let inspectorVisible: Bool
+    let toggleInspector: () -> Void
 
     var body: some View {
         GeometryReader { proxy in
             let showExpandedPathFilter = proxy.size.width >= 980 || showPathFilter || !pathFilter.isEmpty
-            let quickFilterWidth = min(270, max(200, proxy.size.width - 600))
+            let quickFilterWidth = min(360, max(280, proxy.size.width - 620))
 
             HStack(spacing: 8) {
                 Text(L10n.tr("Quick filter"))
@@ -900,6 +1017,7 @@ private struct QuickFilterBar: View {
                         Text(filter.title).tag(filter)
                     }
                 }
+                .id(settings.language)
                 .pickerStyle(.segmented)
                 .labelsHidden()
                 .controlSize(.small)
@@ -922,6 +1040,32 @@ private struct QuickFilterBar: View {
                             .foregroundColor(.secondary)
                         TextField(L10n.tr("Filter by path..."), text: $pathFilter)
                             .textFieldStyle(.plain)
+                        Menu {
+                            Button {
+                                choosePathFilterFolder()
+                            } label: {
+                                Label(L10n.tr("Choose Folder..."), systemImage: "folder.badge.plus")
+                            }
+                            if !settings.recentPathFilters.isEmpty {
+                                Divider()
+                                ForEach(settings.recentPathFilters, id: \.self) { path in
+                                    Menu(path) {
+                                        Button(L10n.tr("Use This Folder")) {
+                                            pathFilter = path
+                                            settings.recordRecentPathFilter(path)
+                                        }
+                                        Button(L10n.tr("Remove from Recent"), role: .destructive) {
+                                            settings.removeRecentPathFilter(path)
+                                        }
+                                    }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: "folder.badge.plus")
+                        }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help(L10n.tr("Choose a folder or use a recent folder"))
                         if !pathFilter.isEmpty {
                             Button {
                                 pathFilter = ""
@@ -948,18 +1092,47 @@ private struct QuickFilterBar: View {
 
                 Spacer(minLength: 8)
 
-                Text(L10n.tr("Display Style"))
-                    .font(.callout)
-                    .foregroundColor(.secondary)
-                    .lineLimit(1)
+                if proxy.size.width >= 1_100 {
+                    Text(L10n.tr("Display Style"))
+                        .font(.callout)
+                        .foregroundColor(.secondary)
+                        .lineLimit(1)
+                }
 
                 ResultDisplayControls(isDisabled: displayControlsDisabled)
                     .fixedSize(horizontal: true, vertical: false)
                     .layoutPriority(2)
+
+                Divider()
+                    .frame(height: 18)
+                    .padding(.horizontal, 3)
+
+                Button(action: toggleInspector) {
+                    Image(systemName: "sidebar.right")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundColor(inspectorVisible ? .accentColor : .secondary)
+                        .frame(width: 24, height: 24)
+                }
+                .buttonStyle(.borderless)
+                .fixedSize()
+                .layoutPriority(4)
+                .help(L10n.tr(inspectorVisible ? "Hide Information Panel" : "Show Information Panel"))
+                .accessibilityLabel(L10n.tr(inspectorVisible ? "Hide Information Panel" : "Show Information Panel"))
             }
             .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
         }
         .frame(height: 32)
+    }
+
+    private func choosePathFilterFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = L10n.tr("Use This Folder")
+        guard panel.runModal() == .OK, let path = panel.url?.standardizedFileURL.path else { return }
+        pathFilter = path
+        settings.recordRecentPathFilter(path)
     }
 }
 

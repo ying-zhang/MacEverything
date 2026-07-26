@@ -92,8 +92,44 @@ static void testCompactForceIgnoresThreshold() {
     fs::remove_all(tmpDir);
 }
 
+static void testInitialSnapshotWritesWithHeaderOnlyWal() {
+    std::cout << "\n--- Initial snapshot writes with header-only WAL ---\n";
+
+    std::string tmpDir = "/tmp/test_initial_snapshot_" + std::to_string(getpid());
+    fs::create_directories(tmpDir);
+    std::string basePath = tmpDir + "/index.bin";
+    std::string walPath = tmpDir + "/index.wal";
+    std::string v6Path = basePath + ".v6";
+
+    auto engine = std::make_shared<SearchEngine>();
+    FileRecord rec;
+    rec.name = "scanned-before-wal.txt";
+    rec.path = tmpDir;
+    rec.type = 1;
+    rec.size = 42;
+    rec.modTime = time(nullptr);
+    engine->addRecord(std::move(rec));
+
+    // Full scans populate the engine first and attach the WAL afterwards.
+    IndexPersistence persistence(
+        engine, basePath, walPath, pagesPathFor(basePath), ptablePathFor(basePath), v6Path);
+    persistence.attachWAL();
+    persistence.compact(1, /*force=*/true);
+
+    check(fs::exists(v6Path), "initial force flush SHOULD write v6 with a header-only WAL");
+
+    auto loaded = std::make_shared<SearchEngine>();
+    FlatIndexWriter reader(v6Path);
+    IndexMetadata metadata;
+    check(reader.load(*loaded, &metadata), "initial v6 snapshot should load");
+    check(loaded->liveRecordCount() == 1, "initial v6 snapshot should contain scanned records");
+
+    fs::remove_all(tmpDir);
+}
+
 static void runCompactThresholdTests() {
     testCompactSkipsBelowThreshold();
     testCompactProceedsAtThreshold();
     testCompactForceIgnoresThreshold();
+    testInitialSnapshotWritesWithHeaderOnlyWal();
 }

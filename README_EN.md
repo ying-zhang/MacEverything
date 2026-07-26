@@ -4,6 +4,8 @@
 
 <h1 align="center">MacEverything</h1>
 
+<p align="center">Current version: 1.7.25 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+
 <p align="center">
   <b>Instant file search for macOS</b> — find any file among millions in milliseconds.<br/>
   Inspired by <a href="https://www.voidtools.com/">Everything</a> on Windows. Nothing else comes close on Mac.
@@ -16,26 +18,26 @@
 <p align="center">
   <a href="#installation"><img src="https://img.shields.io/badge/macOS-15%2B-blue?logo=apple" alt="macOS 15+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" /></a>
-  <a href="#testing"><img src="https://img.shields.io/badge/tests-79%20modules-brightgreen" alt="79 test modules" /></a>
+  <a href="#testing"><img src="https://img.shields.io/badge/tests-87%20modules-brightgreen" alt="87 test modules" /></a>
   <a href="#ai-tool-integration-mcp"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet" alt="MCP Compatible" /></a>
 </p>
 
 ---
 
 <p align="center">
-  <img src="assets/screen-shot.png" alt="MacEverything Screenshot" width="720" />
+  <img src="assets/screen-shot-en.png" alt="MacEverything Screenshot" width="720" />
 </p>
 
 ## Feature Highlights
 
 ### Blazing Fast Search
 
-Index an entire disk — **5 million+ files in just 14 seconds** — then get results in **under 5ms** for every search. Two orders of magnitude faster than Spotlight.
+On the reference machine, indexing **5 million+ files takes about 14 seconds**. Common trigram queries usually return in **0.1–5ms**; short terms, complex regexes, structured paths, and cold-cache queries can take tens of milliseconds or longer. See the [benchmark history](docs/benchmark/README.md).
 
 | Comparison | MacEverything | Spotlight | `find` |
 |------------|:---:|:---:|:---:|
 | Index 5M files | ~14s | Minutes+ | No index |
-| Search latency | **< 5ms** | 200ms–2s | 5–30s |
+| Common filename query | **0.1–5ms** | 200ms–2s | 5–30s |
 | Real-time monitoring | FSEvents | FSEvents | None |
 | Content search | Trigram index | Metadata-heavy | `grep` |
 | AI tool integration | Built-in MCP | No | No |
@@ -61,7 +63,7 @@ Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and r
 | `*.swift` | All Swift source files |
 | `ext:py size:>1mb` | Python files larger than 1MB |
 | `dm:today` | Files modified today |
-| `ying pdf` | Match path/name fragments together, such as `/Users/ying/xx/xx.pdf` |
+| `report pdf` | Match path/name fragments together, such as `/Users/username/reports/xx.pdf` |
 | `config path:/usr` | Files containing "config" under `/usr` |
 | `"exact phrase"` | Exact phrase matching |
 | `foo OR bar` | Boolean OR operation |
@@ -73,7 +75,7 @@ Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and r
 
 #### Filename and Path Fragment Matching
 
-Default search targets both filenames and full paths: multiple plain terms separated by spaces are combined with AND, and each term may match anywhere in the filename or path. For example, `ying pdf` can match `/Users/ying/xx/xx.pdf`, preserving the [Everything](https://www.voidtools.com/)-style experience where casual fragments still find files.
+Default search targets both filenames and full paths: multiple plain terms separated by spaces are combined with AND, and each term may match anywhere in the filename or path. For example, `report pdf` can match `/Users/username/reports/xx.pdf`, preserving the [Everything](https://www.voidtools.com/)-style experience where casual fragments still find files.
 
 Queries containing `/` enable structured path matching while keeping substring semantics. For example, `src/main` means the filename contains `main` and the parent path contains `src`; `/project/*/target` can match non-adjacent path segments; `/local/bin/*` lists direct children of a directory. For non-ASCII queries, MacEverything tries common macOS Unicode NFC/NFD normalization variants at query time, without growing the persistent index.
 
@@ -118,12 +120,14 @@ Type `infile:keyword` to search file contents — results include highlighted co
 - **Smart highlighting** — matches highlighted in search results, AST-aware: correctly handles glob wildcards, regex, case sensitivity, NOT exclusions, and other complex patterns
 - **Quick filters** — filter the current result set by files, folders, documents, images, code, or archives; if a selected filter makes the current query empty, MacEverything falls back to all results so the search does not look broken
 - **Path filter** — narrow the current result set by a path fragment, useful when a broad query spans many directories
+- **Recent folders** — choose a folder directly from the path filter and reuse or remove any of the five most recent folders
+- **Result export** — export every result within the configured query limit as CSV or TXT, independent of GUI pagination; filename search defaults to 10,000 and supports up to 100,000, while content search has a separate configurable limit capped at 200
 - **Advanced filters** — a labeled entry on the right side of the bottom status bar filters by file size and modified date, with common presets and custom ranges
 - **Configurable result columns** — sort by name, extension, path, size, or modified date; extension/path/size/date columns can be shown or hidden, and column widths are resizable
 - **List and icon modes** — the labeled view controls sit on the right side of the vertically centered quick-filter bar; the five-level aspect-preserving thumbnail slider stays visible and is disabled in list mode or when there are no results
 - **Adjustable result appearance** — list thumbnails are enabled by default, results can be made more compact or spacious, and the color editor automatically selects the active light or dark appearance
 - **Drag & drop** — drag files directly from search results to Finder, VS Code, Xcode, or any application
-- **Keyboard and context actions** — Enter can open or rename the selected result; supports arrow-key selection, result-list focus, and context actions for Open / Reveal in Finder / Copy Path
+- **Keyboard and context actions** — Enter can open or rename the selected result; supports arrow-key selection, result-list focus, and context actions for Open / Reveal in Finder / Copy Full Path
 - **Cmd+Click** — quickly locate files in Finder
 - **Recent files** — automatically shows recently modified files when the search bar is empty
 
@@ -155,14 +159,14 @@ MacEverything registers with each client's current global configuration mechanis
 Local REST API on `localhost:19860` for scripting and automation:
 
 ```bash
-curl "http://localhost:19860/api/search?q=readme&limit=10"       # Search files
-curl "http://localhost:19860/api/search/content?q=TODO"           # Content search
-curl "http://localhost:19860/api/recent?limit=20"                 # Recent files
-curl "http://localhost:19860/api/status"                          # Index status
-curl "http://localhost:19860/api/memory"                          # Memory breakdown
+curl "http://localhost:19860/api/search?q=readme&limit=10" # Search files
+curl "http://localhost:19860/api/search/content?q=TODO"    # Content search
+curl "http://localhost:19860/api/recent?limit=20"          # Recent files
+curl "http://localhost:19860/api/status"                   # Index status
+curl "http://localhost:19860/api/memory"                   # Memory breakdown
 ```
 
-The HTTP server binds to loopback only, supports concurrent connections, retries short-lived port conflicts during startup, and validates request body size so slow or malformed clients do not block the service.
+Access-token authentication is off by default for convenient local scripting. Settings can enable it and edit or regenerate the token; once enabled, every endpoint except `/api/health` requires `Authorization: Bearer <token>` using the mode-0600 token file under Application Support. The server always binds to loopback, validates Host, and rejects browser Origin headers.
 
 ### Command-Line Client
 
@@ -177,6 +181,8 @@ mace -j readme             # Preserve the complete JSON response
 mace -0 readme | xargs -0  # NUL-delimited paths for safe piping
 ```
 
+`mace` reads the HTTP port from MacEverything settings by default. Use `--port` only to temporarily connect to another port.
+
 Without Homebrew, link the bundled executable into your personal command directory:
 
 ```bash
@@ -188,11 +194,23 @@ Make sure `~/.local/bin` is in `PATH`, or invoke `/Applications/MacEverything.ap
 
 ### Installation
 
-#### Download DMG (Recommended)
+#### Release Status and Downloads
 
-1. Download `MacEverything.dmg` from [Releases](../../releases) (built by GitHub Actions)
+The current stable version is **1.7.25**.
+
+Install or upgrade with Homebrew Cask:
+
+```bash
+brew tap ying-zhang/maceverything
+brew install --cask maceverything
+# Later upgrades: brew upgrade --cask maceverything
+```
+
+Alternatively, download the appropriate DMG from [Releases](https://github.com/ying-zhang/MacEverything/releases):
+
+1. Choose `MacEverything-arm64.dmg` for Apple Silicon or `MacEverything-x86_64.dmg` for Intel
 2. Drag `MacEverything.app` to Applications
-3. Launch and grant **Full Disk Access** when prompted
+3. On first launch choose **Quick Start** (selected folders only) or **Full Disk Search** (requires Full Disk Access)
 4. Wait for initial scan (~14 seconds)
 5. Press `Option+Space` to start searching
 
@@ -215,24 +233,13 @@ scripts/prepare-re2-deps-from-app.sh /Applications/MacEverything.app third_party
 For dependencies prepared another way, call `scripts/prepare-re2-deps.sh` with `RE2_SOURCE_DIR`, `ABSEIL_SOURCE_DIR`, `RE2_LIB_DIR`, and `ABSEIL_LIB_DIR`. Homebrew remains an optional source, but is not part of the default local build workflow.
 
 ```bash
-git clone https://github.com/user/MacEverything.git && cd MacEverything
+git clone https://github.com/ying-zhang/MacEverything.git && cd MacEverything
 scripts/prepare-re2-deps-from-app.sh
 make test-fast
 scripts/build-release-dmgs.sh arm64
 ```
 
 Release builds and GitHub Actions artifacts embed `libre2` and the Abseil dependency closure it actually uses into `.app/Contents/Frameworks`, so the distributed app does not depend on the development machine. The release script verifies the app, MCP, `mace`, and embedded dylib architectures and dependency paths; the final arm64 DMG is written to `artifacts/MacEverything-arm64.dmg`.
-
-#### CLI Daemon
-
-Headless mode for servers or automation environments:
-
-```bash
-make daemon
-./maceverything-daemon --port 19860 --root /
-```
-
----
 
 <h2 align="center">For Developers: Technical Deep Dive</h2>
 
@@ -252,13 +259,12 @@ make daemon
 └─────────────────────────────────────┘
 ```
 
-The same C++20 core engine supports four usage modes:
+The same C++20 core engine supports three usage modes:
 
 | Mode | Description |
 |------|-------------|
 | **GUI App** | SwiftUI menu-bar app, `Option+Space` global hotkey |
 | **CLI Client** | Short `mace` command for querying the running GUI app |
-| **CLI Daemon** | Headless `maceverything-daemon` — same engine, no UI |
 | **MCP Server** | `MacEverythingMCP` — stdio JSON-RPC proxy for AI tools |
 
 ### Core Engine
@@ -333,7 +339,7 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 
 ### Testing
 
-79 test modules covering the full stack, with AddressSanitizer and ThreadSanitizer support:
+87 C++ test modules plus Swift tests cover the full stack, with AddressSanitizer and ThreadSanitizer support:
 
 ```bash
 make test          # Fast unit tests + bridge lint
@@ -375,10 +381,9 @@ MacEverything/
 │   ├── HotkeyManager      # Global hotkey registration
 │   └── MCPConfigManager   # One-click MCP setup
 ├── CLI/                   # Command-line tools
-│   ├── daemon_main        # Headless daemon
 │   ├── mace_main          # Short query client
 │   └── mcp_main           # MCP server (stdio JSON-RPC)
-└── tests/                 # 79 test modules
+└── tests/                 # 87 C++ test modules plus Swift tests
 ```
 
 ## Contributing

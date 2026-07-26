@@ -185,8 +185,9 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
 
     // Skip logic:
     //   - No WAL → skip.
-    //   - force=true: skip only if WAL file is header-only (no entries at all,
-    //     including stale entries from a previous session).
+    //   - force=true: an empty WAL can skip only when a v6 base already exists.
+    //     A first full scan populates the engine before the WAL is attached, so
+    //     it still needs an initial base rewrite.
     //   - Otherwise: skip if not dirty or below threshold.
     static constexpr size_t kWALHeaderSize = 2 * sizeof(uint32_t); // magic + version
     {
@@ -197,7 +198,7 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
             return;
         }
         if (force) {
-            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments) {
+            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments && flatWriter_->exists()) {
                 LOG_INFO("IndexPersistence", "Skipping flush — WAL is empty");
                 return;
             }

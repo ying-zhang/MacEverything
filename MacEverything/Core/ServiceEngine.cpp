@@ -1,6 +1,7 @@
 #include "ServiceEngine.h"
 #include "PathUtils.h"
 #include "Logger.h"
+#include "HttpToken.h"
 #include <sys/stat.h>
 #include <filesystem>
 #include <fnmatch.h>
@@ -133,7 +134,8 @@ void ServiceEngine::updateConfig(const ServiceConfig& config) {
     bool rootsChanged;
     {
         std::unique_lock lock(configMutex_);
-        restartHttp = config_.httpPort != config.httpPort;
+        restartHttp = config_.httpPort != config.httpPort ||
+                      config_.httpAuthenticationEnabled != config.httpAuthenticationEnabled;
         rootsChanged = config_.scanRoots != config.scanRoots ||
                        config_.scanRoot != config.scanRoot;
         config_ = config;
@@ -227,6 +229,42 @@ void ServiceEngine::removeIndexFiles(const ServiceConfig& config) {
     }
 }
 
+bool ServiceEngine::ensureInstanceLock(const ServiceConfig& config) {
+    const std::string cacheDir = config.cachePath;
+    const std::string lockPath = cacheDir + "/.instance.lock";
+    if (instanceLock_.isLocked()) {
+        if (instanceLock_.path() == lockPath) return true;
+        startupFatal_.store(true, std::memory_order_release);
+        const std::string reason =
+            "cache path changed while the index lock is held; refusing to access " + lockPath;
+        LOG_ERROR("ServiceEngine", reason);
+        if (onStartupFailed) onStartupFailed(reason);
+        return false;
+    }
+
+    std::error_code dirEc;
+    fs::create_directories(cacheDir, dirEc);
+
+    InstanceLockError lockErr = InstanceLockError::None;
+    if (instanceLock_.tryLock(lockPath, config.appVersion, &lockErr)) {
+        startupFatal_.store(false, std::memory_order_release);
+        return true;
+    }
+
+    startupFatal_.store(true, std::memory_order_release);
+    std::string reason;
+    if (lockErr == InstanceLockError::AlreadyLocked) {
+        reason = "another instance holds the index lock at " + lockPath +
+                 "; refusing to load or modify shared index state";
+    } else {
+        reason = "failed to open or lock " + lockPath +
+                 "; check directory permissions and disk space";
+    }
+    LOG_ERROR("ServiceEngine", reason);
+    if (onStartupFailed) onStartupFailed(reason);
+    return false;
+}
+
 // ═══════════════════════════════════════════════════════
 //  Thread-safe accessors
 // ═══════════════════════════════════════════════════════
@@ -295,7 +333,7 @@ IndexMetadata ServiceEngine::buildMetadata() {
         joinedRoots += roots[i];
     }
     meta.extra[IndexMetadata::kScanRoot] = joinedRoots.empty() ? cfg.scanRoot : joinedRoots;
-    meta.extra[IndexMetadata::kAppVersion] = kAppVersion;
+    meta.extra[IndexMetadata::kAppVersion] = cfg.appVersion;
     meta.extra[IndexMetadata::kRecordFormat] = "v6_flat";
     meta.extra[IndexMetadata::kOSVersion] = PathUtils::getOSVersionString();
     meta.extra["config_signature"] = configSignature();
@@ -338,6 +376,12 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
     const ServiceConfig config = safeConfig();
     isScanning_.store(true, std::memory_order_relaxed);
     stopMonitoring();
+
+    if (!ensureInstanceLock(config)) {
+        isScanning_.store(false, std::memory_order_relaxed);
+        if (completion) completion(0, false);
+        return;
+    }
 
     auto roots = effectiveScanRoots();
     auto scannerConfig = scanConfigForRoots(roots);
@@ -417,14 +461,10 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
     isSyncing_.store(false, std::memory_order_relaxed);
     stopMonitoring();
 
-    // Acquire single-instance lock
-    {
-        std::string cacheDir = config.cachePath;
-        fs::create_directories(cacheDir);
-        std::string lockPath = cacheDir + "/.instance.lock";
-        if (!instanceLock_.tryLock(lockPath)) {
-            LOG_WARN("ServiceEngine", "Another instance may be running — proceeding with caution");
-        }
+    if (!ensureInstanceLock(config)) {
+        isScanning_.store(false, std::memory_order_relaxed);
+        if (completion) completion(0, false);
+        return;
     }
 
     LOG_INFO("ServiceEngine", "startIncremental from " << effectiveScanRoots().size() << " root(s)");
@@ -543,6 +583,14 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
     }
 
     auto config = safeConfig();
+
+    // Acquire lock before touching index files (removeIndexFiles runs later).
+    if (!ensureInstanceLock(config)) {
+        rebuilding_.store(false, std::memory_order_release);
+        if (completion) completion(0, false);
+        return;
+    }
+
     auto oldContent = safeContentIndex();
     auto newContent = std::make_shared<ContentIndex>();
     if (oldContent) {
@@ -950,6 +998,17 @@ void ServiceEngine::startHttpServer(uint16_t port) {
         httpServer_ = std::make_shared<HttpServer>();
     }
     httpServer_->setAdminCallbacks(adminCallbacks_);
+    auto curConfig = safeConfig();
+    httpServer_->setServerMetadata(
+        {curConfig.processType, 1, curConfig.appVersion});
+
+    std::string token = curConfig.httpAuthenticationEnabled
+        ? HttpToken::ensureTokenFile() : std::string();
+    httpServer_->setAuthenticationRequired(curConfig.httpAuthenticationEnabled);
+    httpServer_->setAuthToken(token);
+    if (curConfig.httpAuthenticationEnabled && token.empty())
+        LOG_ERROR("ServiceEngine", "HTTP token unavailable — protected API endpoints will return 503");
+
     bool ok = httpServer_->start(port,
         [this]() -> std::shared_ptr<SearchEngine> { return this->safeEngine(); },
         [this]() -> std::shared_ptr<ContentIndex> { return this->safeContentIndex(); });
@@ -957,6 +1016,16 @@ void ServiceEngine::startHttpServer(uint16_t port) {
         LOG_ERROR("ServiceEngine", "HTTP server failed to start on port " << port);
         return;
     }
+}
+
+void ServiceEngine::refreshHttpAuthentication() {
+    std::lock_guard<std::mutex> lock(httpMutex_);
+    if (!httpServer_) return;
+    auto config = safeConfig();
+    std::string token = config.httpAuthenticationEnabled
+        ? HttpToken::ensureTokenFile() : std::string();
+    httpServer_->setAuthenticationRequired(config.httpAuthenticationEnabled);
+    httpServer_->setAuthToken(token);
 }
 
 void ServiceEngine::stopHttpServer() {
@@ -986,13 +1055,13 @@ void ServiceEngine::shutdown() {
     cancelActiveScanners();
 
     if (lifecycleQueue_) dispatch_sync(lifecycleQueue_, ^{});
+    if (backgroundGroup_) {
+        dispatch_group_wait(backgroundGroup_, DISPATCH_TIME_FOREVER);
+    }
     stopMonitoring();
     if (mutationQueue_) dispatch_sync(mutationQueue_, ^{});
     if (contentIndexingGroup_) {
         dispatch_group_wait(contentIndexingGroup_, DISPATCH_TIME_FOREVER);
-    }
-    if (backgroundGroup_) {
-        dispatch_group_wait(backgroundGroup_, DISPATCH_TIME_FOREVER);
     }
     isScanning_.store(false, std::memory_order_relaxed);
     isSyncing_.store(false, std::memory_order_relaxed);

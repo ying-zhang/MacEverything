@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SearchSyntaxHelpView: View {
+    @ObservedObject private var settings = AppSettings.shared
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
@@ -167,6 +168,8 @@ struct SearchSyntaxHelpView: View {
 }
 
 struct RegexHelpView: View {
+    @ObservedObject private var settings = AppSettings.shared
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {

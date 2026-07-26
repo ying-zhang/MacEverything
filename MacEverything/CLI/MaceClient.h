@@ -1,5 +1,7 @@
 #pragma once
 
+#include "../Core/HttpToken.h"
+
 #include <arpa/inet.h>
 #include <cerrno>
 #include <cstdint>
@@ -13,6 +15,15 @@
 #include <vector>
 
 namespace mace {
+
+/// Read the HTTP API token from the standard location.
+/// Returns empty string if the file cannot be read.
+/// Token location: ~/Library/Application Support/com.maceverything.app/.http_token
+inline std::string readAuthToken() { return HttpToken::readToken(); }
+
+/// Return the token file path for display to the user (e.g. for curl usage).
+inline std::string authTokenFilePath() { return HttpToken::tokenFilePath(); }
+
 
 struct HttpResponse {
     int status = 0;
@@ -221,8 +232,18 @@ inline bool httpGet(uint16_t port, const std::string& target,
         return false;
     }
 
-    std::string request = "GET " + target + " HTTP/1.1\r\nHost: 127.0.0.1\r\n";
-    request += "Accept: application/json\r\nConnection: close\r\n\r\n";
+    std::string request = "GET " + target + " HTTP/1.1\r\n";
+    request += "Host: 127.0.0.1:" + std::to_string(port) + "\r\n";
+    request += "Accept: application/json\r\n";
+    // Attach the local HTTP token if available (non-/api/health only).
+    // Health endpoint is exempt from auth — no token needed.
+    if (target != "/api/health") {
+        std::string token = readAuthToken();
+        if (!token.empty()) {
+            request += "Authorization: Bearer " + token + "\r\n";
+        }
+    }
+    request += "Connection: close\r\n\r\n";
     size_t sent = 0;
     while (sent < request.size()) {
         ssize_t count = ::send(socketFD, request.data() + sent, request.size() - sent, MSG_NOSIGNAL);

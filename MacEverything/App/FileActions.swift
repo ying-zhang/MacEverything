@@ -7,6 +7,12 @@ enum FileActions {
         open(URL(fileURLWithPath: item.fullPath), isApplication: item.isApplication)
     }
 
+    static func open(_ items: [FileItem]) {
+        for item in items {
+            open(item)
+        }
+    }
+
     static func open(_ url: URL, isApplication: Bool = false) {
         let configuration = NSWorkspace.OpenConfiguration()
         let completion: @Sendable (NSRunningApplication?, Error?) -> Void = { _, error in
@@ -34,6 +40,13 @@ enum FileActions {
 
     static func revealInFinder(_ item: FileItem) {
         NSWorkspace.shared.selectFile(item.fullPath, inFileViewerRootedAtPath: "")
+    }
+
+    static func revealInFinder(_ items: [FileItem]) {
+        guard !items.isEmpty else { return }
+        NSWorkspace.shared.activateFileViewerSelecting(
+            items.map { URL(fileURLWithPath: $0.fullPath) }
+        )
     }
 
     static func openFolder(_ item: FileItem) {
@@ -96,26 +109,39 @@ struct FileItemContextMenu: View {
     var onDeleteItems: ((_ ids: [String]) -> Void)?
 
     var body: some View {
-        Button(L10n.tr("Open")) { FileActions.open(item) }
-        Button(L10n.tr("Reveal in Finder")) { FileActions.revealInFinder(item) }
-        if item.isFolder {
+        Button(fileActionTitle("Open", multi: "Open %d Items", count: actionItems.count)) {
+            FileActions.open(actionItems)
+        }
+        Button(fileActionTitle("Reveal in Finder", multi: "Reveal %d Items in Finder", count: actionItems.count)) {
+            FileActions.revealInFinder(actionItems)
+        }
+        if item.isFolder && actionItems.count == 1 {
             Button(L10n.tr("Open Folder")) { FileActions.openFolder(item) }
         }
-        Button(L10n.tr("Quick Look")) { FileActions.quickLook(actionItems) }
-        if let onRename {
-            Button(L10n.tr("Rename"), action: onRename)
-                .disabled(actionItems.count != 1)
+        Button(fileActionTitle("Quick Look", multi: "Quick Look %d Items", count: actionItems.count)) {
+            FileActions.quickLook(actionItems)
+        }
+        Button(L10n.tr("Rename")) { onRename?() }
+            .disabled(onRename == nil || actionItems.count != 1)
+        Divider()
+        Button(fileActionTitle("Copy Path", multi: "Copy %d Full Paths", count: actionItems.count)) {
+            FileActions.copyFiles(actionItems)
+        }
+        Button(fileActionTitle("Copy Filename", multi: "Copy %d Filenames", count: actionItems.count)) {
+            FileActions.copyFilenames(actionItems)
         }
         Divider()
-        Button(L10n.tr("Copy Path")) { FileActions.copyFiles(actionItems) }
-        Button(L10n.tr("Copy Filename")) { FileActions.copyFilenames(actionItems) }
-        Divider()
         Button(L10n.tr("Open in Terminal")) { FileActions.openInTerminal(item) }
+            .disabled(actionItems.count != 1)
         Button(role: .destructive) {
             let removed = FileActions.moveToTrash(actionItems)
             if !removed.isEmpty { onDeleteItems?(removed) }
         } label: {
-            Text(L10n.tr("Move to Trash"))
+            Text(fileActionTitle("Move to Trash", multi: "Move %d Items to Trash", count: actionItems.count))
         }
     }
+}
+
+func fileActionTitle(_ single: String, multi: String, count: Int) -> String {
+    count > 1 ? L10n.tr(multi, count) : L10n.tr(single)
 }

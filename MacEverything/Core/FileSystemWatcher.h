@@ -38,7 +38,9 @@ public:
     /// Stop monitoring.
     void stop();
 
-    bool isRunning() const { return stream_ != nullptr; }
+    bool isRunning() const {
+        return running_.load(std::memory_order_acquire);
+    }
 
     /// Get the latest event ID seen by the watcher (for persistence).
     FSEventStreamEventId getLastEventId() const {
@@ -78,9 +80,11 @@ private:
     std::atomic<FSEventStreamEventId> lastEventId_{0};
     std::atomic<bool> journalTruncated_{false};
     std::atomic<uint64_t> totalEventsReceived_{0};
-    void* earlyAbortSem_ = nullptr;  // Actually dispatch_semaphore_t; void* for ABI compat
+    std::atomic<bool> running_{false};
+    std::atomic<void*> earlyAbortSem_{nullptr}; // dispatch_semaphore_t; void* for ABI compat
     std::vector<std::string> exclusionPaths_;
     std::mutex stateMutex_;
+    mutable std::mutex lifecycleMutex_;
 
     void startInternal(const std::vector<std::string>& rootPaths, FSEventStreamEventId sinceEventId);
 

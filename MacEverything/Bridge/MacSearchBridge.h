@@ -77,7 +77,15 @@ NS_ASSUME_NONNULL_BEGIN
                  automaticMaintenanceEnabled:(BOOL)automaticMaintenanceEnabled
                        enablePinyinInitials:(BOOL)enablePinyinInitials
                enablePathSearchAcceleration:(BOOL)enablePathSearchAcceleration
+                  httpAuthenticationEnabled:(BOOL)httpAuthenticationEnabled
                                   httpPort:(uint16_t)httpPort;
+
+/// HTTP token management. The token is stored in the mode-0600 token file,
+/// never in UserDefaults. Tokens are exactly 64 lowercase hexadecimal chars.
+- (NSString *)httpAuthToken;
+- (NSString *)ensureHttpAuthToken;
+- (NSString *)regenerateHttpAuthToken;
+- (BOOL)setHttpAuthToken:(NSString *)token;
 
 /// Compact the index: write new base snapshot, clear WAL.
 - (void)compactIndex;
@@ -125,18 +133,15 @@ NS_ASSUME_NONNULL_BEGIN
 /// Call this from applicationWillTerminate instead of compactIndex directly.
 - (void)prepareForTermination;
 
-/// Save the current index to a binary file.
-- (BOOL)saveIndexToFile:(NSString *)path;
-
-/// Load index from a binary file. Returns YES if successful.
-- (BOOL)loadIndexFromFile:(NSString *)path;
-
 /// Rescan a directory subtree and update the index incrementally.
 - (void)rescanSubtree:(NSString *)dirPath;
 
 /// Rescan a directory subtree with completion callback (called on main queue).
 - (void)rescanSubtree:(NSString *)dirPath
            completion:(nullable void (^)(void))completion;
+
+/// Update the core index after a rename already performed by the GUI.
+- (void)refreshRenamedPathFrom:(NSString *)oldPath to:(NSString *)newPath;
 
 /// Remove all index entries under the given path prefix (e.g. unmounted volume).
 - (void)removeSubtree:(NSString *)pathPrefix;
@@ -191,6 +196,10 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Called on the main queue when content indexing completes.
 @property (nonatomic, copy, nullable) void (^onContentIndexComplete)(uint32_t totalIndexed);
+
+/// Called on the main queue when startup is aborted because another instance
+/// holds the index lock. The engine must not be used when this fires.
+@property (nonatomic, copy, nullable) void (^onStartupFailed)(NSString *reason);
 
 @end
 

@@ -4,6 +4,8 @@
 
 <h1 align="center">MacEverything</h1>
 
+<p align="center">当前版本：1.7.25 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+
 <p align="center">
   <b>macOS 极速文件搜索工具</b> — 在数百万文件中毫秒级定位任意文件。<br/>
   灵感源自 Windows 上的 <a href="https://www.voidtools.com/">Everything</a>，Mac 上无出其右。
@@ -16,7 +18,7 @@
 <p align="center">
   <a href="#安装"><img src="https://img.shields.io/badge/macOS-15%2B-blue?logo=apple" alt="macOS 15+" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="MIT License" /></a>
-  <a href="#测试体系"><img src="https://img.shields.io/badge/tests-79%20modules-brightgreen" alt="79 test modules" /></a>
+  <a href="#测试体系"><img src="https://img.shields.io/badge/tests-87%20modules-brightgreen" alt="87 test modules" /></a>
   <a href="#ai-工具集成-mcp"><img src="https://img.shields.io/badge/MCP-compatible-blueviolet" alt="MCP Compatible" /></a>
 </p>
 
@@ -30,12 +32,12 @@
 
 ### 极速搜索
 
-索引整块磁盘 **500 万+ 文件只需 14 秒**，之后每次搜索 **不到 5ms** 返回结果。比 Spotlight 快两个数量级。
+在测试机上索引 **500 万+ 文件约需 14 秒**。常见 Trigram 查询通常在 **0.1–5ms** 内返回；短关键词、复杂正则、结构化路径和冷缓存查询可能需要数十毫秒或更久，详见[基准测试记录](docs/benchmark/README.md)。
 
 | 对比项 | MacEverything | Spotlight | `find` |
 |--------|:---:|:---:|:---:|
 | 索引 500 万文件 | ~14 秒 | 数分钟以上 | 无索引 |
-| 搜索延迟 | **< 5ms** | 200ms–2s | 5–30s |
+| 常见文件名查询 | **0.1–5ms** | 200ms–2s | 5–30s |
 | 实时文件监控 | FSEvents | FSEvents | 无 |
 | 内容搜索 | Trigram 索引 | 侧重元数据 | `grep` |
 | AI 工具集成 | 内置 MCP | 不支持 | 不支持 |
@@ -61,7 +63,7 @@
 | `*.swift` | 所有 Swift 源文件 |
 | `ext:py size:>1mb` | 大于 1MB 的 Python 文件 |
 | `dm:today` | 今天修改过的文件 |
-| `ying pdf` | 同时匹配路径/文件名片段，如 `/Users/ying/xx/xx.pdf` |
+| `report pdf` | 同时匹配路径/文件名片段，如 `/Users/username/reports/xx.pdf` |
 | `config path:/usr` | `/usr` 下包含 "config" 的文件 |
 | `"exact phrase"` | 精确短语匹配 |
 | `foo OR bar` | 布尔 OR 运算 |
@@ -73,7 +75,7 @@
 
 #### 文件名与路径片段匹配
 
-默认搜索面向文件名和完整路径：空格分隔的多个普通词按 AND 组合，每个词可以命中文件名或路径任意位置。因此 `ying pdf` 可以匹配 `/Users/ying/xx/xx.pdf`，也保留 [Everything](https://www.voidtools.com/) 式“随手输入片段即可命中”的体验。
+默认搜索面向文件名和完整路径：空格分隔的多个普通词按 AND 组合，每个词可以命中文件名或路径任意位置。因此 `report pdf` 可以匹配 `/Users/username/reports/xx.pdf`，也保留 [Everything](https://www.voidtools.com/) 式“随手输入片段即可命中”的体验。
 
 带 `/` 的查询会启用结构化路径匹配，并继续保持子串匹配语义。比如 `src/main` 表示文件名包含 `main` 且父路径包含 `src`；`/project/*/target` 可匹配非相邻路径段；`/local/bin/*` 用于列出目录的直接子项。非 ASCII 查询会在查询阶段自动尝试 macOS 常见的 Unicode NFC/NFD 归一化，不额外扩大持久索引。
 
@@ -118,12 +120,14 @@
 - **智能高亮** — 搜索结果中匹配部分高亮标记，基于 AST 感知：正确处理 glob 通配符、正则、大小写、NOT 排除等复杂场景
 - **快速过滤器** — 结果列表上方可一键筛选文件、文件夹、文档、图片、代码和压缩包；当过滤器导致当前查询无结果时自动回到全部结果，避免误以为搜索失败
 - **路径过滤器** — 可在当前搜索结果内继续按路径片段过滤，适合在大结果集中快速缩小目录范围
+- **常用目录切换** — 路径过滤器可直接选择文件夹，并保留最近使用的 5 个目录
+- **结果导出** — 将查询结果上限内的完整结果集导出为 CSV 或 TXT，不受 GUI 分页影响；文件名搜索上限默认为 10,000、最多 100,000，内容搜索默认且最多 200（可单独调低）
 - **高级筛选** — 窗口底部状态栏右侧提供带文字标识的高级筛选入口，可按文件大小和修改日期筛选，支持常用预设与自定义范围
 - **可配置结果列** — 支持按名称、扩展名、路径、大小、修改日期排序，扩展名/路径/大小/日期列可显示或隐藏，列宽可拖拽调整
 - **列表与图标模式** — 快速筛选栏右侧以“显示方式”明确标识布局控件；5 档等比缩略图滑块始终保持显示，在列表模式或无结果时置灰
 - **可调结果外观** — 列表缩略图默认开启，可将列表结果调整得更紧凑或更舒展；颜色编辑器会自动选中当前生效的浅色或深色模式
 - **拖放** — 直接从搜索结果拖放文件到 Finder、VS Code、Xcode 等任意应用
-- **键盘与右键操作** — Enter 可配置为打开文件或重命名；支持方向键选择、结果列表聚焦、右键打开 / 在 Finder 中显示 / 复制路径
+- **键盘与右键操作** — Enter 可配置为打开文件或重命名；支持方向键选择、结果列表聚焦、右键打开 / 在 Finder 中显示 / 复制完整路径
 - **Cmd+Click** — 快速在 Finder 中定位文件
 - **最近文件** — 搜索栏为空时自动展示最近修改的文件
 
@@ -155,14 +159,14 @@ MacEverything 按各客户端当前的全局配置方式进行注册：Codex 使
 本地 REST API 监听 `localhost:19860`，方便脚本调用和自动化：
 
 ```bash
-curl "http://localhost:19860/api/search?q=readme&limit=10"       # 搜索文件
-curl "http://localhost:19860/api/search/content?q=TODO"           # 内容搜索
-curl "http://localhost:19860/api/recent?limit=20"                 # 最近文件
-curl "http://localhost:19860/api/status"                          # 索引状态
-curl "http://localhost:19860/api/memory"                          # 内存拆分
+curl "http://localhost:19860/api/search?q=readme&limit=10" # 搜索文件
+curl "http://localhost:19860/api/search/content?q=TODO"    # 内容搜索
+curl "http://localhost:19860/api/recent?limit=20"          # 最近文件
+curl "http://localhost:19860/api/status"                   # 索引状态
+curl "http://localhost:19860/api/memory"                   # 内存拆分
 ```
 
-HTTP 服务仅绑定本机回环地址，支持并发连接；启动时会对短暂端口占用进行重试，请求体大小也会做上限校验，避免慢连接或异常请求阻塞服务。
+访问 token 默认关闭，方便本机脚本直接调用。可在设置中开启并编辑或重新生成 token；开启后，除 `/api/health` 外均需从 `~/Library/Application Support/com.maceverything.app/.http_token` 读取 token 并发送 `Authorization: Bearer <token>`。HTTP 服务始终只绑定本机回环地址，并校验 Host、拒绝浏览器 Origin 请求。
 
 ### 命令行客户端
 
@@ -177,6 +181,8 @@ mace -j readme             # 保留完整 JSON 响应
 mace -0 readme | xargs -0  # NUL 分隔，安全处理带空格的路径
 ```
 
+`mace` 默认读取 MacEverything 设置中的 HTTP 端口；只有需要临时连接其他端口时才需使用 `--port`。
+
 不安装 Homebrew 也可以把应用内的可执行文件链接到个人命令目录：
 
 ```bash
@@ -188,11 +194,23 @@ ln -sf /Applications/MacEverything.app/Contents/MacOS/mace ~/.local/bin/mace
 
 ### 安装
 
-#### 下载 DMG（推荐）
+#### 发布状态与下载
 
-1. 从 [Releases](../../releases) 下载 `MacEverything.dmg`（由 GitHub Actions 构建）
+当前稳定版本为 **1.7.25**。
+
+使用 Homebrew Cask 安装或升级：
+
+```bash
+brew tap ying-zhang/maceverything
+brew install --cask maceverything
+# 后续升级：brew upgrade --cask maceverything
+```
+
+也可以从 [Releases](https://github.com/ying-zhang/MacEverything/releases) 下载对应架构的 DMG：
+
+1. Apple Silicon 选择 `MacEverything-arm64.dmg`，Intel 选择 `MacEverything-x86_64.dmg`
 2. 将 `MacEverything.app` 拖入「应用程序」文件夹
-3. 启动后按提示授予 **完全磁盘访问权限**
+3. 首次启动选择 **快速开始**（仅所选文件夹）或 **全盘搜索**（需要完全磁盘访问权限）
 4. 等待初始扫描完成（约 14 秒）
 5. 按 `Option+Space` 开始搜索
 
@@ -215,24 +233,13 @@ scripts/prepare-re2-deps-from-app.sh /Applications/MacEverything.app third_party
 如已通过其他方式准备 RE2/Abseil，可使用 `RE2_SOURCE_DIR`、`ABSEIL_SOURCE_DIR`、`RE2_LIB_DIR` 和 `ABSEIL_LIB_DIR` 调用 `scripts/prepare-re2-deps.sh`。Homebrew 仍可作为可选的依赖来源，但不参与默认本地构建流程。
 
 ```bash
-git clone https://github.com/user/MacEverything.git && cd MacEverything
+git clone https://github.com/ying-zhang/MacEverything.git && cd MacEverything
 scripts/prepare-re2-deps-from-app.sh
 make test-fast
 scripts/build-release-dmgs.sh arm64
 ```
 
 Release 构建和 GitHub Actions 发布包会自动把 `libre2` 及其实际使用的 Abseil 依赖闭包嵌入 `.app/Contents/Frameworks`，避免发布包依赖开发机环境。发布脚本会验证主应用、MCP、`mace` 和内嵌 dylib 的架构与依赖路径；最终 arm64 DMG 位于 `artifacts/MacEverything-arm64.dmg`。
-
-#### CLI 守护进程
-
-无头模式，适用于服务器或自动化环境：
-
-```bash
-make daemon
-./maceverything-daemon --port 19860 --root /
-```
-
----
 
 <h2 align="center">开发者篇：技术深度</h2>
 
@@ -252,13 +259,12 @@ make daemon
 └─────────────────────────────────────┘
 ```
 
-同一套 C++20 核心引擎支持四种使用模式：
+同一套 C++20 核心引擎支持三种使用模式：
 
 | 模式 | 说明 |
 |------|------|
 | **GUI 应用** | SwiftUI 菜单栏应用，`Option+Space` 全局快捷键 |
 | **CLI 客户端** | 短命令 `mace` — 查询正在运行的 GUI 应用 |
-| **CLI 守护进程** | 无头 `maceverything-daemon` — 相同引擎，无 UI |
 | **MCP 服务器** | `MacEverythingMCP` — stdio JSON-RPC 代理，供 AI 工具调用 |
 
 ### 核心引擎
@@ -333,7 +339,7 @@ make daemon
 
 ### 测试体系
 
-79 个测试模块覆盖完整技术栈，支持 AddressSanitizer 和 ThreadSanitizer：
+87 个 C++ 测试模块覆盖完整技术栈，另有 Swift 测试，支持 AddressSanitizer 和 ThreadSanitizer：
 
 ```bash
 make test          # 快速单元测试 + 桥接层 lint
@@ -375,10 +381,9 @@ MacEverything/
 │   ├── HotkeyManager      # 全局快捷键注册
 │   └── MCPConfigManager   # MCP 一键配置
 ├── CLI/                   # 命令行工具
-│   ├── daemon_main        # 无头守护进程
 │   ├── mace_main          # 短命令查询客户端
 │   └── mcp_main           # MCP 服务器（stdio JSON-RPC）
-└── tests/                 # 79 个测试模块
+└── tests/                 # 87 个 C++ 测试模块及 Swift 测试
 ```
 
 ## 参与贡献

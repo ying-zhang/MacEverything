@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct ContentSettingsView: View {
+    @ObservedObject private var settings = AppSettings.shared
     @State private var extensions: [String] = []
     @State private var newExtension: String = ""
     @State private var maxFileSizeMB: Double = 1.0

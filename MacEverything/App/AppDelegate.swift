@@ -13,6 +13,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private(set) var activeSearchWindow: NSWindow?
     private var auxiliarySearchWindows: [NSWindow] = []
     private var settingsSink: AnyCancellable?
+    private var languageSink: AnyCancellable?
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSWindow.allowsAutomaticWindowTabbing = true
@@ -25,6 +26,18 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
             .removeDuplicates()
             .sink { [weak self] _ in
                 self?.applyDockVisibility()
+            }
+        languageSink = AppSettings.shared.$language
+            .removeDuplicates()
+            .dropFirst()
+            .sink { [weak self] language in
+                L10n.setLanguage(language)
+                self?.setupStatusBar()
+                GeneralSettingsWindowController.shared.refreshLocalization()
+                ShortcutSettingsWindowController.shared.refreshLocalization()
+                ContentSettingsWindowController.shared.refreshLocalization()
+                SearchSyntaxHelpWindowController.shared.refreshLocalization()
+                RegexHelpWindowController.shared.refreshLocalization()
             }
 
         let shouldMinimize = Self.shouldStartMinimized()
@@ -68,7 +81,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     // MARK: - Status Bar
 
     private func setupStatusBar() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        }
         if let button = statusItem?.button {
             button.image = Self.makeStatusBarIcon()
         }
@@ -91,6 +106,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         menu.addItem(NSMenuItem(title: L10n.tr("Search Syntax Help..."), action: #selector(openSearchSyntaxHelp), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Regular Expression Help..."), action: #selector(openRegexHelp), keyEquivalent: ""))
 
+        mcpMenuItems.removeAll()
         let mcpSubmenu = NSMenu(title: L10n.tr("MCP Integration"))
         for client in MCPClient.allCases {
             let item = NSMenuItem(title: client.displayName, action: #selector(toggleMCPClient(_:)), keyEquivalent: "")

@@ -247,8 +247,8 @@ static void runQuerySimplificationTests() {
     {
         SearchEngine engine;
         std::vector<FileRecord> records;
-        FileRecord target; target.name = "xx.pdf"; target.path = "/Users/ying/xx"; target.type = 1;
-        FileRecord distractor; distractor.name = "ying-note.txt"; distractor.path = "/tmp"; distractor.type = 1;
+        FileRecord target; target.name = "xx.pdf"; target.path = "/Users/username/xx"; target.type = 1;
+        FileRecord distractor; distractor.name = "username-note.txt"; distractor.path = "/tmp"; distractor.type = 1;
         records.push_back(std::move(target));
         records.push_back(std::move(distractor));
         for (int i = 0; i < 20; i++) {
@@ -261,13 +261,13 @@ static void runQuerySimplificationTests() {
         engine.loadRecords(std::move(records));
 
         QueryTimingInfo timing;
-        auto results = engine.query("ying pdf", 100, true, timing);
+        auto results = engine.query("username pdf", 100, true, timing);
         bool foundTarget = false;
         for (uint32_t idx : results) {
             auto rec = engine.getRecord(idx);
-            if (rec.name == "xx.pdf" && rec.path == "/Users/ying/xx") foundTarget = true;
+            if (rec.name == "xx.pdf" && rec.path == "/Users/username/xx") foundTarget = true;
         }
-        check(foundTarget, "66.20 'ying pdf' matches path term + filename term");
+        check(foundTarget, "66.20 'username pdf' matches path term + filename term");
     }
 
     // ── 66.21 Unicode fallback still runs when primary fills maxResults ──

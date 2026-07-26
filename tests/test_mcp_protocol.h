@@ -32,14 +32,28 @@ static std::string mcpExec(const std::string& input) {
     if (binary.empty()) return "";
     int stdinPipe[2];
     int stdoutPipe[2];
-    if (pipe(stdinPipe) != 0 || pipe(stdoutPipe) != 0) return "";
+    if (pipe(stdinPipe) != 0) return "";
+    if (pipe(stdoutPipe) != 0) {
+        close(stdinPipe[0]);
+        close(stdinPipe[1]);
+        return "";
+    }
     pid_t pid = fork();
-    if (pid < 0) return "";
+    if (pid < 0) {
+        close(stdinPipe[0]);
+        close(stdinPipe[1]);
+        close(stdoutPipe[0]);
+        close(stdoutPipe[1]);
+        return "";
+    }
     if (pid == 0) {
         dup2(stdinPipe[0], STDIN_FILENO);
         dup2(stdoutPipe[1], STDOUT_FILENO);
         int devNull = open("/dev/null", O_WRONLY);
-        if (devNull >= 0) dup2(devNull, STDERR_FILENO);
+        if (devNull >= 0) {
+            dup2(devNull, STDERR_FILENO);
+            if (devNull != STDERR_FILENO) close(devNull);
+        }
         close(stdinPipe[0]);
         close(stdinPipe[1]);
         close(stdoutPipe[0]);
@@ -261,10 +275,12 @@ static void runMcpProtocolTests() {
         std::string input =
             R"([{"jsonrpc":"2.0","id":31,"method":"ping"},42,{"jsonrpc":"2.0","id":32,"method":"tools/list"}])";
         auto lines = splitLines(mcpExec(input));
-        check(lines.size() == 3, "mixed batch: three responses");
+        check(lines.size() == 1, "mixed batch: one JSON array response");
+        check(!lines[0].empty() && lines[0].front() == '[' && lines[0].back() == ']',
+              "mixed batch: response is an array");
         check(jsonContains(lines[0], "\"id\":31"), "mixed batch: first request");
-        check(jsonContains(lines[1], "-32600"), "mixed batch: primitive rejected");
-        check(jsonContains(lines[2], "\"id\":32"), "mixed batch: final request");
+        check(jsonContains(lines[0], "-32600"), "mixed batch: primitive rejected");
+        check(jsonContains(lines[0], "\"id\":32"), "mixed batch: final request");
     }
 
     // -- Test 13: Explicit null arguments are treated as an empty object --
@@ -276,6 +292,15 @@ static void runMcpProtocolTests() {
         check(lines.size() == 1, "null arguments: one response");
         check(!jsonContains(lines[0], "-32602"), "null arguments: accepted as empty object");
         check(jsonContains(lines[0], "\"id\":41"), "null arguments: id preserved");
+    }
+
+    // -- Test 14: A notification-only batch produces no response --
+    std::cout << "\n  --- Test 14: Notification-only batch ---\n";
+    {
+        std::string input =
+            R"([{"jsonrpc":"2.0","method":"notifications/initialized"},{"jsonrpc":"2.0","method":"notifications/initialized","params":{}}])";
+        auto lines = splitLines(mcpExec(input));
+        check(lines.empty(), "notification-only batch: no response");
     }
 
     std::cout << "\n  Part 49 complete.\n\n";

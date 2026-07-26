@@ -17,6 +17,13 @@ class ContentIndex;
 
 class HttpServer {
 public:
+    /// Identity metadata exposed via /api/health. Set before start().
+    struct ServerMetadata {
+        std::string processType = "unknown";
+        uint32_t protocolVersion = 1;
+        std::string appVersion;
+    };
+
     /// Callbacks for management operations. Injected by the Bridge layer.
     struct AdminCallbacks {
         std::function<void()> onRebuildIndex;
@@ -42,18 +49,29 @@ public:
     uint16_t port() const;
 
     void setAdminCallbacks(AdminCallbacks callbacks);
+    void setServerMetadata(ServerMetadata metadata);
+
+    /// Set the configured Authorization: Bearer token. It is enforced only
+    /// while setAuthenticationRequired(true) is active.
+    void setAuthToken(const std::string& token);
+    void setAuthenticationRequired(bool required);
 
 private:
     void acceptLoop();
     void workerLoop();
     void handleConnection(int clientFd);
     AdminCallbacks adminCallbacksSnapshot();
+    std::string authTokenSnapshot();
 
     struct HttpRequest {
         std::string method;
         std::string path;
         std::unordered_map<std::string, std::string> query;
         std::string body;
+        std::string host;    // from Host: header (lowercased, may include port)
+        std::string origin;  // from Origin: header (lowercased)
+        bool originPresent = false;
+        std::string authorization;  // from Authorization: header (raw)
     };
 
     HttpRequest parseRequest(const std::string& raw);
@@ -79,6 +97,11 @@ private:
     ContentIndexGetter getContentIndex_;
     AdminCallbacks adminCallbacks_;
     std::mutex adminCallbacksMutex_;
+    ServerMetadata serverMetadata_;
+    std::mutex metadataMutex_;
+    std::string authToken_;
+    bool authenticationRequired_ = false;
+    std::mutex authTokenMutex_;
     std::atomic<bool> running_{false};
     std::atomic<int> serverFd_{-1};
     uint16_t port_{0};

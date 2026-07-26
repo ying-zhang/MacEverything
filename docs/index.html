@@ -9,9 +9,10 @@
 
 <div class="title">
   <h1>MacEverything：macOS 快速文件搜索工具（fork自joshua-wu）</h1>
-  <p><time>2026-05-21</time><span id="url">https://ying-zhang.cn/misc/2026-maceverything/</span></p>
+  <p><time>2026-07-25</time><span id="url">https://ying-zhang.cn/misc/2026-maceverything/</span></p>
 </div>
 <p>MacEverything 是 macOS 的极速文件搜索工具，灵感来自 Windows 上的 <a href="https://www.voidtools.com/">Everything</a>。Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a>，在搜索速度、查询语法、中文体验、实时索引、AI 工具集成和应用可用性上做了系统改进。</p>
+<p><strong>当前版本：</strong>1.7.25，提供 Apple Silicon 与 Intel 安装包，并支持 Homebrew Cask 安装。</p>
 
 <h2>完整功能列表</h2>
 
@@ -28,6 +29,8 @@
 <li><strong>搜索取消与防抖</strong> — 快速输入时取消过期查询，避免旧结果覆盖新结果。</li>
 <li><strong>快速过滤器</strong> — 在当前结果中筛选文件、文件夹、文档、图片、代码和压缩包；过滤后无结果时可自动恢复全部结果。</li>
 <li><strong>路径过滤器</strong> — 在结果集内按路径片段继续缩小范围，适合大目录或多项目工作区。</li>
+<li><strong>最近目录</strong> — 可直接选择文件夹作为路径过滤条件，并管理最近使用的 5 个目录。</li>
+<li><strong>结果导出</strong> — 支持将查询上限内的完整过滤结果导出为 CSV 或 TXT；GUI 分页不截断导出。文件名搜索默认 10,000、最多 100,000，内容搜索独立设置、默认且最多 200。</li>
 </ul>
 
 <h3>查询语法</h3>
@@ -77,19 +80,18 @@
 <li><strong>高级筛选</strong> — 底部状态栏右侧以文字标识文件大小与修改日期筛选入口，支持常用预设和自定义范围，启用数量以紧凑徽标显示。</li>
 <li><strong>键盘工作流</strong> — Enter 可配置为打开或重命名，方向键可移动选中项，选择结果后焦点可进入列表继续操作。</li>
 <li><strong>拖放文件</strong> — 可将搜索结果直接拖到 Finder、VS Code、Xcode 或其他应用。</li>
-<li><strong>右键菜单</strong> — 支持打开、在 Finder 中显示、复制路径等常用操作。</li>
+<li><strong>右键菜单</strong> — 支持打开、在 Finder 中显示、复制完整路径等常用操作。</li>
 <li><strong>Cmd+Click 定位</strong> — 快速在 Finder 中显示目标文件。</li>
 <li><strong>中英文界面</strong> — 应用界面、菜单、设置和帮助支持简体中文与英文。</li>
 </ul>
 
 <h3>设置与部署</h3>
 <ul>
-<li><strong>完整磁盘访问提示</strong> — 首次启动引导授予 macOS 权限。</li>
+<li><strong>分级权限引导</strong> — 首次启动可选择无需完全磁盘访问的快速开始，或授权后的全盘搜索。</li>
 <li><strong>开机启动</strong> — 支持登录后自动启动，并可最小化后台运行。</li>
 <li><strong>快捷键设置</strong> — 可自定义全局唤出快捷键。</li>
 <li><strong>内容搜索设置</strong> — 管理全文索引范围和资源限制。</li>
 <li><strong>GUI 应用</strong> — SwiftUI 菜单栏应用，面向日常桌面使用。</li>
-<li><strong>CLI daemon</strong> — 无界面后台服务，适合服务器或自动化环境。</li>
 <li><strong>本地构建与 DMG 发布</strong> — 支持 Xcode 本地构建与 DMG 打包；发布脚本可分别产出 arm64 和 Intel DMG。</li>
 <li><strong>RE2 依赖嵌入</strong> — 构建流程会准备并嵌入 RE2/Abseil dylib，验证主应用、MCP 程序和依赖库不再引用 Homebrew 绝对路径。</li>
 </ul>
@@ -98,6 +100,7 @@
 <ul>
 <li><strong>本地 HTTP API</strong> — 默认监听 `localhost:19860`，支持文件搜索、内容搜索、最近文件、状态和内存信息接口。</li>
 <li><strong>HTTP 服务健壮性</strong> — 仅绑定回环地址，支持并发连接，启动端口短暂占用时自动重试，并限制异常请求体大小。</li>
+<li><strong>HTTP API 鉴权</strong> — 可选启用当前用户专属的本地 Bearer token；无论是否启用，始终拒绝非回环 Host 和浏览器 Origin 请求。</li>
 <li><strong>MCP Server</strong> — 内置 Model Context Protocol 支持，可供 Claude Code、Cursor、Claude Desktop 等 AI 工具调用。</li>
 <li><strong>一键配置 MCP</strong> — 应用菜单中提供 MCP 集成入口。</li>
 <li><strong>AI 可用工具</strong> — 提供 `search_files`、`search_content`、`recent_files`、`index_status` 等能力。</li>
@@ -105,7 +108,7 @@
 
 <h3>性能与可靠性</h3>
 <ul>
-<li><strong>C++20 核心引擎</strong> — 搜索、扫描、索引、持久化由同一套核心驱动 GUI、daemon 和 MCP。</li>
+<li><strong>C++20 核心引擎</strong> — 搜索、扫描、索引、持久化由 GUI 中的唯一引擎驱动，CLI 和 MCP 通过本机 API 查询。</li>
 <li><strong>SoA 列式数据布局</strong> — 提升大规模候选过滤时的缓存局部性。</li>
 <li><strong>路径字符串驻留</strong> — 目录路径使用表索引复用，降低百万文件规模下的内存占用。</li>
 <li><strong>v6 Flat SoA 两阶段索引</strong> — 启动先加载基础记录，后台再构建 Trigram、拼音、路径、扩展名、CJK bigram 和最近文件索引。</li>

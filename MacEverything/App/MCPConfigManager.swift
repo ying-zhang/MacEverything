@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import Darwin
 
 enum MCPClient: String, CaseIterable, Sendable {
     case codex
@@ -115,7 +116,9 @@ struct MCPConfigManager {
                    homeDirectory: FileManager.default.homeDirectoryForCurrentUser,
                    binaryPath: binaryPath,
                    executableResolver: resolveExecutable,
-                   commandRunner: runCommand)
+                   commandRunner: { executable, arguments in
+                       try runCommand(executable: executable, arguments: arguments)
+                   })
     }
 
     static func update(enabled: Bool,
@@ -234,7 +237,9 @@ struct MCPConfigManager {
         return candidates.first { fileManager.isExecutableFile(atPath: $0.path) }
     }
 
-    private static func runCommand(executable: URL, arguments: [String]) throws -> MCPCommandResult {
+    static func runCommand(executable: URL,
+                           arguments: [String],
+                           timeout: TimeInterval = 30) throws -> MCPCommandResult {
         let process = Process()
         let outputURL = FileManager.default.temporaryDirectory
             .appendingPathComponent("mace-mcp-command-\(UUID().uuidString).log")
@@ -244,9 +249,27 @@ struct MCPConfigManager {
         defer { try? outputHandle.close() }
         process.executableURL = executable
         process.arguments = arguments
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = outputHandle
         process.standardError = outputHandle
         try process.run()
+
+        let deadline = Date().addingTimeInterval(timeout)
+        while process.isRunning && Date() < deadline {
+            Thread.sleep(forTimeInterval: 0.02)
+        }
+        if process.isRunning {
+            process.terminate()
+            let terminationDeadline = Date().addingTimeInterval(1)
+            while process.isRunning && Date() < terminationDeadline {
+                Thread.sleep(forTimeInterval: 0.02)
+            }
+            if process.isRunning {
+                Darwin.kill(process.processIdentifier, SIGKILL)
+            }
+            process.waitUntilExit()
+            throw MCPError.commandTimedOut
+        }
         process.waitUntilExit()
         try outputHandle.synchronize()
         let data = try Data(contentsOf: outputURL)
@@ -282,6 +305,7 @@ struct MCPConfigManager {
         case binaryNotFound
         case clientCLINotFound(String)
         case commandFailed(String)
+        case commandTimedOut
         case invalidClientConfiguration
         case invalidJSON
 
@@ -295,6 +319,8 @@ struct MCPConfigManager {
                 return output.isEmpty
                     ? NSLocalizedString("MCP client command failed", comment: "")
                     : output
+            case .commandTimedOut:
+                return NSLocalizedString("MCP client command timed out", comment: "")
             case .invalidClientConfiguration:
                 return NSLocalizedString("Invalid MCP client configuration", comment: "")
             case .invalidJSON:

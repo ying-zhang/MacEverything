@@ -6,6 +6,10 @@ struct MacEverythingApp: App {
     @StateObject private var appSettings = AppSettings.shared
     @StateObject private var searchOptions = SearchOptions.shared
     @StateObject private var mcpIntegration = MCPIntegrationModel.shared
+    @FocusedValue(\.exportSearchResults) private var exportSearchResults
+    @FocusedValue(\.canExportSearchResults) private var canExportSearchResults
+    @FocusedValue(\.toggleInformationPanel) private var toggleInformationPanel
+    @FocusedValue(\.informationPanelVisible) private var informationPanelVisible
 
     var body: some Scene {
         WindowGroup("MacEverything", id: "search") {
@@ -55,9 +59,29 @@ struct MacEverythingApp: App {
                     SearchViewModel.copySelectedPathsInActiveWindow()
                 }
                 .keyboardShortcut("c", modifiers: [.command, .option])
+
+                Divider()
+
+                Button {
+                    exportSearchResults?()
+                } label: {
+                    Label(L10n.tr("Export..."), systemImage: "square.and.arrow.down")
+                }
+                .disabled(canExportSearchResults != true)
             }
 
             CommandGroup(after: .toolbar) {
+                Toggle(isOn: Binding(
+                    get: { informationPanelVisible ?? false },
+                    set: { _ in toggleInformationPanel?() }
+                )) {
+                    Label(L10n.tr("Information Panel"), systemImage: "sidebar.right")
+                }
+                .disabled(toggleInformationPanel == nil)
+                .keyboardShortcut("i", modifiers: [.command, .option])
+
+                Divider()
+
                 Toggle(L10n.tr("Hide Dock Icon"), isOn: $appSettings.hideDockIcon)
             }
 
@@ -103,6 +127,44 @@ struct MacEverythingApp: App {
     }
 }
 
+private struct ExportSearchResultsKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+private struct CanExportSearchResultsKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
+struct ToggleInformationPanelKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct InformationPanelVisibleKey: FocusedValueKey {
+    typealias Value = Bool
+}
+
+extension FocusedValues {
+    var exportSearchResults: (() -> Void)? {
+        get { self[ExportSearchResultsKey.self] }
+        set { self[ExportSearchResultsKey.self] = newValue }
+    }
+
+    var canExportSearchResults: Bool? {
+        get { self[CanExportSearchResultsKey.self] }
+        set { self[CanExportSearchResultsKey.self] = newValue }
+    }
+
+    var toggleInformationPanel: (() -> Void)? {
+        get { self[ToggleInformationPanelKey.self] }
+        set { self[ToggleInformationPanelKey.self] = newValue }
+    }
+
+    var informationPanelVisible: Bool? {
+        get { self[InformationPanelVisibleKey.self] }
+        set { self[InformationPanelVisibleKey.self] = newValue }
+    }
+}
+
 extension Notification.Name {
     static let rebuildIndex = Notification.Name("rebuildIndex")
     static let rebuildContentIndex = Notification.Name("rebuildContentIndex")
@@ -137,6 +199,10 @@ class GeneralSettingsWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         window = nil
     }
+
+    func refreshLocalization() {
+        window?.title = L10n.tr("Settings")
+    }
 }
 
 @MainActor
@@ -163,6 +229,10 @@ class ShortcutSettingsWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+    }
+
+    func refreshLocalization() {
+        window?.title = L10n.tr("Shortcut Settings")
     }
 }
 
@@ -192,6 +262,10 @@ class ContentSettingsWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         window = nil
     }
+
+    func refreshLocalization() {
+        window?.title = L10n.tr("Content Settings")
+    }
 }
 
 @MainActor
@@ -220,6 +294,10 @@ class SearchSyntaxHelpWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+    }
+
+    func refreshLocalization() {
+        window?.title = L10n.tr("Search Syntax Help")
     }
 }
 
@@ -256,5 +334,9 @@ class RegexHelpWindowController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         window = nil
+    }
+
+    func refreshLocalization() {
+        window?.title = L10n.tr("Regular Expression Help")
     }
 }

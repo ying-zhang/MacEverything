@@ -27,7 +27,10 @@ struct ServiceConfig {
     std::vector<std::string> contentExcludedPaths;
     std::string cachePath;   // e.g. ~/Library/Caches/com.maceverything.app
     std::string logPath;     // e.g. ~/Library/Logs/MacEverything
+    std::string appVersion = "unknown"; // injected by the production app bundle
     uint16_t httpPort = 0;   // 0 = no HTTP server; >0 = auto-start after index is ready
+    bool httpAuthenticationEnabled = false;
+    std::string processType = "gui";  // exposed in /api/health for diagnostics
     bool includeHidden = false;
     bool includeSystem = false;
     bool includeAppBundleContents = false;
@@ -39,7 +42,7 @@ struct ServiceConfig {
 };
 
 /// Pure C++ orchestration engine — owns all core objects and lifecycle.
-/// Bridge (GUI) and CLI daemon both instantiate this class.
+/// The GUI bridge owns the production instance of this class.
 class ServiceEngine {
 public:
     // ── Callbacks set by caller ──
@@ -48,6 +51,7 @@ public:
     using ContentProgressCallback = std::function<void(uint64_t indexed, uint64_t total)>;
     using ContentCompleteCallback = std::function<void(uint32_t totalIndexed)>;
     using StartupCallback = std::function<void(uint32_t totalRecords, bool didFullScan)>;
+    using StartupFailedCallback = std::function<void(const std::string& reason)>;
 
     explicit ServiceEngine(const ServiceConfig& config);
     ~ServiceEngine();
@@ -64,12 +68,14 @@ public:
     // ── HTTP ──
     void startHttpServer(uint16_t port);
     void stopHttpServer();
+    void refreshHttpAuthentication();
     void updateConfig(const ServiceConfig& config);
     void setAdminCallbacks(HttpServer::AdminCallbacks callbacks);
 
     // ── Public operations ──
     void rescanSubtree(const std::string& dir,
                        std::function<void()> completion = nullptr);
+    void refreshRenamedPath(const std::string& oldPath, const std::string& newPath);
     void removeSubtree(const std::string& pathPrefix,
                        std::function<void(uint32_t)> completion = nullptr);
     void rebuildContentIndex();
@@ -91,6 +97,10 @@ public:
     bool isScanning() const  { return isScanning_.load(std::memory_order_relaxed); }
     bool isMonitoring() const { return isMonitoring_.load(std::memory_order_relaxed); }
     bool isSyncing() const   { return isSyncing_.load(std::memory_order_relaxed); }
+    /// True once startup was aborted (e.g. another instance holds the index
+    /// lock). Callers must treat the engine as unusable; the success completion
+    /// is not a reliable signal of a usable index when this is set.
+    bool isStartupFatal() const { return startupFatal_.load(std::memory_order_acquire); }
 
     uint32_t recordCount();
     uint32_t liveRecordCount();
@@ -103,6 +113,10 @@ public:
     ScanProgressCallback onScanProgress;
     ContentProgressCallback onContentIndexProgress;
     ContentCompleteCallback onContentIndexComplete;
+    /// Fired when startup is aborted for a fatal, non-recoverable reason
+    /// (currently: another process holds the index lock). Invoked synchronously
+    /// from the startup entry point before any index file is opened.
+    StartupFailedCallback onStartupFailed;
 
 private:
     // ── Internal methods (ServiceEngine.cpp) ──
@@ -153,6 +167,10 @@ private:
     void unregisterScanner(const std::shared_ptr<DirectoryScanner>& scanner);
     void cancelActiveScanners();
     void removeIndexFiles(const ServiceConfig& config);
+    /// Acquire the single-instance lock if not already held. On failure sets
+    /// startupFatal_, fires onStartupFailed and returns false; the caller must
+    /// then abort startup without loading, replaying or writing any index file.
+    bool ensureInstanceLock(const ServiceConfig& config);
 
     // ── Config (protected by configMutex_) ──
     ServiceConfig config_;
@@ -191,6 +209,7 @@ private:
     std::atomic<uint64_t> contentIndexingActiveGeneration_{0};
     std::atomic<bool> shuttingDown_{false};
     std::atomic<bool> startupCompleted_{false};
+    std::atomic<bool> startupFatal_{false};
     std::atomic<bool> isSyncing_{false};
     std::atomic<bool> cancelContentIndexing_{false};
     std::atomic<uint64_t> contentIndexGeneration_{0};
@@ -210,5 +229,4 @@ private:
     // ── Constants ──
     static constexpr double kRescanDebounceDelaySec = 5.0;
     static constexpr double kRescanThrottleIntervalSec = 300.0;
-    static constexpr const char* kAppVersion = "1.1.0";
 };

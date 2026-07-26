@@ -399,6 +399,25 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
     });
 }
 
+void ServiceEngine::refreshRenamedPath(const std::string& oldPath,
+                                       const std::string& newPath) {
+    auto engine = safeEngine();
+    if (!engine || oldPath.empty() || newPath.empty() || oldPath == newPath) return;
+
+    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+    const std::string oldPathCopy = oldPath;
+    const std::string newPathCopy = newPath;
+    dispatch_async(mutationQueue_, ^{
+        if (!this->isGenerationCurrent(generation)) return;
+        std::vector<FileSystemWatcher::Event> events{
+            {oldPathCopy, kFSEventStreamEventFlagItemRemoved},
+            {newPathCopy, kFSEventStreamEventFlagItemRenamed}
+        };
+        this->applyFSEvents(events, engine);
+        if (this->onIndexChanged) this->onIndexChanged();
+    });
+}
+
 void ServiceEngine::removeSubtree(const std::string& pathPrefix,
                                    std::function<void(uint32_t)> completion) {
     auto engine = safeEngine();

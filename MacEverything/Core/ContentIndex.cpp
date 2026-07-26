@@ -7,6 +7,7 @@
 #include <algorithm>
 #include <fstream>
 #include <iostream>
+#include <memory>
 #include <cctype>
 #include <cstring>
 #include <atomic>
@@ -528,9 +529,13 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
         if (maxResults > 0 && results.size() >= maxResults) break;
 
         const size_t count = std::min(kVerificationBatchSize, candidates.size() - base);
-        __block std::vector<ContentMatch> batch(count);
-        __block std::vector<uint8_t> valid(count, 0);
-        dispatch_apply(count, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
+        struct VerificationBatch {
+            explicit VerificationBatch(size_t size) : matches(size), valid(size, 0) {}
+            std::vector<ContentMatch> matches;
+            std::vector<uint8_t> valid;
+        };
+        auto batch = std::make_shared<VerificationBatch>(count);
+        auto verifyCandidate = [&](size_t i) {
             const uint32_t fileIdx = candidates[base + i];
             std::string fullPath;
             if (!resolvePath || !resolvePath(fileIdx, fullPath)) return;
@@ -540,15 +545,20 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
                 fullPath, keyword, offset, 80, maxVerificationBytes);
             if (snippet.empty()) return;
 
-            batch[i].fileIndex = fileIdx;
-            batch[i].snippet = std::move(snippet);
-            batch[i].matchOffset = offset;
-            valid[i] = 1;
+            batch->matches[i].fileIndex = fileIdx;
+            batch->matches[i].snippet = std::move(snippet);
+            batch->matches[i].matchOffset = offset;
+            batch->valid[i] = 1;
+        };
+        using VerifyCandidate = decltype(verifyCandidate);
+        dispatch_apply_f(count, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0),
+                         &verifyCandidate, [](void* context, size_t i) {
+            (*static_cast<VerifyCandidate*>(context))(i);
         });
 
         for (size_t i = 0; i < count; ++i) {
-            if (!valid[i]) continue;
-            results.push_back(std::move(batch[i]));
+            if (!batch->valid[i]) continue;
+            results.push_back(std::move(batch->matches[i]));
             if (maxResults > 0 && results.size() >= maxResults) break;
         }
     }

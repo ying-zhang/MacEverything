@@ -68,6 +68,12 @@ final class SearchHistoryStore {
         guard let data = UserDefaults.standard.data(forKey: Self.defaultsKey) else { return }
         do {
             entries = try JSONDecoder().decode([Entry].self, from: data)
+            let limit = AppSettings.shared.snapshot.searchHistoryLimit
+            if entries.count > limit {
+                entries.sort { $0.lastUsed > $1.lastUsed }
+                entries = Array(entries.prefix(limit))
+                save()
+            }
         } catch {
             AppLogger.warn("SearchHistory", "Failed to decode search history: \(error)")
             entries = []

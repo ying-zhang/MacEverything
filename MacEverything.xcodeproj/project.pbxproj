@@ -71,6 +71,9 @@
 		A100003D /* ThumbnailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000059; };
 		A10000AB /* ResultGridCell.swift in Sources */ = {isa = PBXBuildFile; fileRef = A20000AB; };
 		A100003E /* QuickLookThumbnailing.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = A200005A; };
+		A100003F /* SearchResultExport.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200005B; };
+		A1000040 /* SearchExportSerializer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200005C; };
+		A1000041 /* FileInspectorPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A200005D; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -183,6 +186,9 @@
 		A2000059 /* ThumbnailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailService.swift; sourceTree = "<group>"; };
 		A20000AB /* ResultGridCell.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ResultGridCell.swift; sourceTree = "<group>"; };
 		A200005A /* QuickLookThumbnailing.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuickLookThumbnailing.framework; path = System/Library/Frameworks/QuickLookThumbnailing.framework; sourceTree = SDKROOT; };
+		A200005B /* SearchResultExport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultExport.swift; sourceTree = "<group>"; };
+		A200005C /* SearchExportSerializer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchExportSerializer.swift; sourceTree = "<group>"; };
+		A200005D /* FileInspectorPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileInspectorPanel.swift; sourceTree = "<group>"; };
 		B2000001 /* MacEverythingUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingUITests.swift; sourceTree = "<group>"; };
 		B2000002 /* MacEverythingUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = MacEverythingUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		C2000001 /* mcp_main.mm */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.objcpp; path = mcp_main.mm; sourceTree = "<group>"; };
@@ -359,6 +365,9 @@
 				A2000050 /* L10n.swift */,
 				A2000053 /* AppSettings.swift */,
 				A2000054 /* GeneralSettingsView.swift */,
+				A200005B /* SearchResultExport.swift */,
+				A200005C /* SearchExportSerializer.swift */,
+				A200005D /* FileInspectorPanel.swift */,
 				A2000055 /* ResultListKeyHandler.swift */,
 				A2000056 /* ResultInteraction.swift */,
 				A2000057 /* FileActions.swift */,
@@ -611,6 +620,9 @@
 				A1000035 /* L10n.swift in Sources */,
 				A1000037 /* AppSettings.swift in Sources */,
 				A1000038 /* GeneralSettingsView.swift in Sources */,
+				A100003F /* SearchResultExport.swift in Sources */,
+				A1000040 /* SearchExportSerializer.swift in Sources */,
+				A1000041 /* FileInspectorPanel.swift in Sources */,
 				A1000039 /* ResultListKeyHandler.swift in Sources */,
 				A100003A /* ResultInteraction.swift in Sources */,
 				A100003B /* FileActions.swift in Sources */,
@@ -841,6 +853,10 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
 				GCC_OPTIMIZATION_LEVEL = 0;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					CoreFoundation,
+				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Debug;
@@ -852,6 +868,10 @@
 				CLANG_CXX_LANGUAGE_STANDARD = "c++20";
 				GCC_OPTIMIZATION_LEVEL = 2;
 				MACOSX_DEPLOYMENT_TARGET = 15.0;
+				OTHER_LDFLAGS = (
+					"-framework",
+					CoreFoundation,
+				);
 				PRODUCT_NAME = "$(TARGET_NAME)";
 			};
 			name = Release;

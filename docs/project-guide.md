@@ -35,6 +35,8 @@ MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Wind
 
 ## 2. 架构总览
 
+当前发布架构由 GUI 进程持有唯一的 `ServiceEngine`。关闭搜索窗口不会退出应用；应用继续在菜单栏运行并维护索引、FSEvents、HTTP API、CLI 和 MCP 服务。只有用户明确退出应用时才停止引擎。
+
 ```
 ┌─────────────────────────────────────────────────────┐
 │                  SwiftUI App Layer                   │
@@ -67,8 +69,7 @@ MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Wind
 - Bridge → Core：C++ 直接调用（`ServiceEngine` 的 `shared_ptr`）
 - Core 内部：GCD 队列调度 + `shared_mutex` 保护共享状态
 
-**另有三个独立可执行程序**：
-- **daemon**（`MacEverything/CLI/daemon_main.cpp`）：无头后台服务，用于服务器部署
+**另有两个客户端可执行程序**：
 - **mace**（`MacEverything/CLI/mace_main.cpp`）：短命令客户端，通过本机 HTTP API 查询正在运行的 GUI 应用
 - **MCP Server**（`MacEverything/CLI/mcp_main.mm`）：Model Context Protocol 服务，使用 Foundation 结构化解析 JSON-RPC，供 Codex、Claude Code、Cursor 等工具调用
 
@@ -101,7 +102,7 @@ MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Wind
 
 ### 3.2 SearchEngine — 搜索引擎
 
-**文件**：`MacEverything/Core/SearchEngine.h/.cpp`（约 1527 行，项目最大文件）
+**文件**：`MacEverything/Core/SearchEngine*.cpp` 及相关查询模块；核心查询逻辑已拆分为多个职责明确的文件。
 
 **职责**：管理所有文件记录，提供高速搜索。
 
@@ -651,26 +652,29 @@ Phase 2 是最耗时的部分（可能数秒），但不持有任何锁，查询
 
 **绑定**：`127.0.0.1:19860`（仅本地访问）
 
-**线程模型**：单线程 `poll()` 循环，每次处理一个连接。查询内部通过 GCD 并行化。
+**线程模型**：一个 `poll()` 接收线程将连接分发给 8 个工作线程，等待队列最多保留 64 个连接；查询内部继续通过 GCD 并行化。
 
 | 端点 | 方法 | 参数 | 说明 |
 |------|------|------|------|
-| `/search` | GET | `q`(关键词), `max`(数量) | 文件名搜索 |
-| `/search/content` | GET | `q`(关键词), `max`(数量) | 内容搜索 |
-| `/recent` | GET | `count`(数量) | 最近修改的文件 |
-| `/status` | GET | — | 扫描/同步/监控状态 |
-| `/health` | GET | — | 健康检查 |
-| `/admin/rebuild-index` | POST | — | 重建文件名索引 |
-| `/admin/rebuild-content-index` | POST | — | 重建内容索引 |
-| `/admin/content-config` | GET/POST | JSON body | 内容索引配置 |
+| `/api/search` | GET | `q`(关键词), `limit`(数量) | 文件名搜索 |
+| `/api/search/content` | GET | `q`(关键词), `limit`(数量) | 内容搜索 |
+| `/api/recent` | GET | `limit`(数量) | 最近修改的文件 |
+| `/api/status` | GET | — | 扫描/同步/监控状态 |
+| `/api/memory` | GET | — | 内存占用拆分 |
+| `/api/health` | GET | — | 粗粒度健康状态，免认证 |
+| `/api/index/rebuild` | POST | — | 重建文件名索引 |
+| `/api/content/rebuild` | POST | — | 重建内容索引 |
+| `/api/content/config` | GET/POST | JSON body | 内容索引配置 |
 
 **响应格式**：JSON，包含 `queryTimeMs` 字段显示查询耗时。
 
 **安全**：
 - 仅绑定 127.0.0.1
+- Bearer token 鉴权可在设置中启用，默认关闭；启用时除 `/api/health` 外均要求 token，文件权限为 `0600`
+- 严格校验 Host，并拒绝所有带 Origin 的浏览器请求
 - 5 秒 `SO_RCVTIMEO` 超时
 - 64KB 请求体上限
-- 10,000 结果上限
+- API 单次请求上限 10,000；GUI 文件名查询上限默认为 10,000、可配置到 100,000；内容查询默认 200，并有独立上限设置
 - 端口冲突自动重试（最多 5 次）
 
 ### 8.2 MCP Server
@@ -693,17 +697,18 @@ Phase 2 是最耗时的部分（可能数秒），但不持有任何锁，查询
 
 ### 9.1 搜索界面
 
+- **首次索引模式**：快速开始仅使用所选目录；全盘搜索在明确授权 Full Disk Access 后切换到 `/` 并重建
 - **Alfred 风格**搜索框，全局热键唤起（默认 Option+Space）
 - **Ghost text 自动补全**：基于搜索历史的前缀匹配（最频繁 > 最近使用）
 - **去抖动**：文件名搜索 80ms，内容搜索 300ms
-- **分页**：`pageSize=100`，`maxResults=10,000`，`LazyVStack` + `onAppear` 触发加载更多
+- **分页**：文件名结果每页 100 条、内容结果每页 200 条；文件名查询上限为 100–100,000（默认 10,000），内容查询上限为 50–200（默认 200），导出使用各自上限内的完整缓存
 - **搜索取消**：`searchGeneration` 计数器，新搜索自动取消旧搜索
 
 ### 9.2 结果展示
 
 - **文件图标缓存**：`NSCache`，500 图标上限，按扩展名/路径/类型分级缓存
 - **关键词高亮**：大小写不敏感匹配，命中片段加粗 + 强调色
-- **交互**：双击打开、Cmd+Click 在 Finder 中显示、右键菜单（打开/显示/复制路径）、拖放支持
+- **交互**：双击打开、Cmd+Click 在 Finder 中显示、右键菜单（打开/显示/复制完整路径）、拖放支持
 
 ### 9.3 刷新节流
 
@@ -743,10 +748,10 @@ make benchmark     # 性能基准测试
 ```
 
 **测试架构**：
-- 49 个测试部分（Part），分布在 57 个 `.h` 头文件中
+- 测试实现分布在 87 个 C++ 头文件和 6 个 Swift 文件中
 - `test_all.cpp` 仅负责 `#include` 和 `main()` 调度，不包含测试实现
 - 支持 `--fast`/`--slow`/`--bench`/`--part N` 参数选择
-- 另有 1 个 Swift 测试文件（`test_index_refresh_throttle.swift`），独立编译
+- Swift 测试由 Makefile 中对应目标独立编译
 
 **测试覆盖**：
 - 单元测试：各核心模块（SearchEngine、ContentIndex、WAL、PagedWriter、PathTable 等）
@@ -760,82 +765,20 @@ make benchmark     # 性能基准测试
 
 ## 11. 文件清单
 
-### Core 层（17 组 .h + .cpp）
+文件数量和行数变化频繁，不在文档中维护容易失真的静态统计。以目录职责和 Xcode/Makefile 构建清单为准：
 
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `FileRecord.h` | 14 | 核心数据结构定义 |
-| `SearchEngine.h/.cpp` | 288/1527 | 搜索引擎（记录管理、trigram 索引、查询、compaction） |
-| `SearchEnginePersistence.cpp` | 216 | 遗留 v1/v2/v3 格式读写 |
-| `DirectoryScanner.h/.cpp` | 64/324 | 多线程文件系统扫描器 |
-| `ContentIndex.h/.cpp` | 150/747 | 文件内容 trigram 倒排索引 |
-| `IndexPersistence.h/.cpp` | 85/294 | 页面索引 + WAL 编排 |
-| `IndexWAL.h/.cpp` | 89/272 | 写前日志（CRC32 校验） |
-| `PagedIndexWriter.h/.cpp` | 62/459 | 页面格式读写 |
-| `ContentIndexPersistence.h/.cpp` | 131/439 | 内容索引持久化 + WAL |
-| `FileSystemWatcher.h/.cpp` | 88/214 | FSEvents 封装 |
-| `HttpServer.h/.cpp` | 78/626 | HTTP REST API |
-| `ServiceEngine.h/.cpp` | 154/506 | 服务编排中枢 |
-| `ServiceEngine+FSEvents.cpp` | 315 | FSEvents 事件处理 |
-| `ServiceEngine+Content.cpp` | 252 | 内容索引管理 |
-| `CompactionTimer.h/.cpp` | 35/56 | GCD 定时器封装 |
-| `InstanceLock.h/.cpp` | 27/40 | 单实例 flock 锁 |
-| `RescanDebounce.h` | 75 | 路径包含合并（header-only） |
-| `PathUtils.h` | 42 | 缓存/日志路径工具 |
-| `Logger.h/.cpp` | 149/155 | 线程安全日志（5MB 轮转，3 备份） |
-| `StringUtils.h/.cpp` | 7/46 | ASCII 快速小写化 + Unicode 回退 |
-| `TrigramExtraction.h` | header-only | 滚动 byte-trigram 提取与自适应去重 |
-| `PostingListIntersection.h` | header-only | 自适应有序 posting-list 求交 |
+- `MacEverything/Core/`：搜索、扫描、持久化、FSEvents、HTTP 和服务生命周期。
+- `MacEverything/Bridge/`：Objective-C++ 桥接与内容搜索分类。
+- `MacEverything/App/`：SwiftUI 界面、设置、结果交互和导出。
+- `MacEverything/CLI/`：`mace` 客户端与 MCP stdio 代理。
+- `tests/`：C++ 模块测试和可独立编译的 Swift 测试。
+- `benchmarks/`：可复现的微基准、查询集和历史结果。
 
-### Bridge 层
+查看当前源码规模可运行：
 
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `MacSearchBridge.h/.mm` | 136/380 | ObjC 单例桥接 |
-| `MacSearchBridge+Content.h/.mm` | 32/129 | 内容搜索分类 |
-| `MacSearchBridge_Internal.h` | 13 | 内部类扩展 |
-
-### App 层（14 个 Swift 文件）
-
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `MacEverythingApp.swift` | 78 | @main 入口 |
-| `SearchViewModel.swift` | 466 | 搜索逻辑（去抖动、分页、历史） |
-| `ContentView.swift` | 286 | 主界面 |
-| `AppDelegate.swift` | 127 | 状态栏、启动参数、登录项 |
-| `ResultRow.swift` | 159 | 文件结果行（图标缓存、交互） |
-| `ContentResultRow.swift` | 97 | 内容结果行 |
-| `PermissionView.swift` | 44 | Full Disk Access 引导 |
-| `HotkeyManager.swift` | 81 | 全局热键（Carbon API） |
-| `IndexRefreshThrottle.swift` | 79 | 刷新节流状态机 |
-| `AppLogger.swift` | 19 | Swift → C++ 日志桥接 |
-| `TextHighlight.swift` | 58 | 关键词高亮 |
-| `ShortcutSettingsView.swift` | 234 | 热键设置面板 |
-| `ContentSettingsView.swift` | 152 | 内容索引设置面板 |
-| `SearchHistoryStore.swift` | 71 | 搜索历史持久化 |
-
-### CLI 层
-
-| 文件 | 行数 | 职责 |
-|------|------|------|
-| `daemon_main.cpp` | 197 | 无头守护进程 |
-| `mace_main.cpp` | 184 | 短命令查询客户端 |
-| `MaceClient.h` | 234 | HTTP、URL 和 JSON 响应处理 |
-| `mcp_main.mm` | 481 | MCP 服务（JSON-RPC 2.0 stdio） |
-
-### 测试
-
-| 文件 | 测试内容 |
-|------|----------|
-| `test_helpers.h` | 共享工具（内存监控、CPU 计时、断言函数） |
-| `test_scan_query.h` (Part 1) | 全盘扫描 + 查询基准 |
-| `test_mutation.h` (Part 3) | 增量变更正确性 + 10K 操作性能 |
-| `test_thread_safety.h` (Part 5) | 4R+2W 并发压力测试 |
-| `test_trigram_index.h` (Part 8) | Trigram 倒排索引 |
-| `test_query_perf.h` (Part 44) | 500K 记录查询性能（7 场景） |
-| `test_query_perf_10m.h` (Part 46) | 1000 万记录查询性能 |
-| `test_mcp_protocol.h` (Part 49) | MCP 协议（进程外测试） |
-| 另有约 50 个测试文件... | 覆盖 WAL、持久化、compaction、FSEvents 等 |
+```bash
+find MacEverything -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' -o -name '*.swift' \) -print0 | xargs -0 wc -l | sort -nr
+```
 
 ---
 
@@ -860,5 +803,5 @@ make benchmark     # 性能基准测试
 | 内容索引最大文件 | 1MB | 默认值，可配置 |
 | 日志文件大小 | 5MB | 超出后轮转，保留 3 个备份 |
 | 图标缓存上限 | 500 | NSCache 限制 |
-| 搜索历史上限 | 200 条 | UserDefaults JSON 编码 |
+| 搜索历史上限 | 默认 50、最多 200 条 | UserDefaults JSON 编码 |
 | 查询取消检查频率 | 每 1024 次 | `queryGeneration_` 检查间隔 |

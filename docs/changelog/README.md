@@ -147,22 +147,38 @@
 | [130](130-publish-opensource-script.md) | chore | 开源发布脚本 (publish-opensource.sh) | 2026-04-19 |
 | [131](131-soa-tombstone-check.md) | performance | SoA Tombstone Check 优化 | 2026-04-19 |
 | [132](132-docs-release-preparation.md) | docs | 公开发布前文档审计与修复 | 2026-04-19 |
+| [133](133-v6-flat-soa-startup.md) | feature | v6 Flat SoA 持久化格式 — 亚秒级启动 | 2026-04-19 |
+| [134](134-readme-restructure-dual-audience.md) | docs | README 重构：用户视角 + 开发者视角双分区 | 2026-04-19 |
+| [135](135-p24-case-trigram-fix.md) | bugfix | Fix case: modifier skipping trigram pre-filtering | 2026-04-19 |
+| [136](136-v6-startup-perf-optimization.md) | performance | v6 启动性能优化 — Phase 1 加速 | 2026-04-19 |
+| [137](137-compiled-glob-evalterm.md) | performance | CompiledGlob 预编译 + 零分配 evalTerm | 2026-04-19 |
+| [138](138-extension-index.md) | performance | Extension Index for O(1) ext: Filter | 2026-04-19 |
+| [139](139-re2-regex.md) | performance | 替换 std::regex 为 Google RE2 | 2026-04-19 |
+| [140](140-diag-trigram-logging.md) | feature | DIAG-TRIGRAM 诊断日志 | 2026-04-19 |
+| [141](141-regex-filtered-re2.md) | bugfix | 使用 RE2 FilteredRE2 替代手写正则 literal 提取器 | 2026-04-20 |
+| [142](142-re2-bench.md) | test | RE2 Regex Benchmarks | 2026-04-20 |
+| [143](143-per-thread-re2.md) | performance | Per-Thread RE2 Clones 消除 DFA 互斥锁竞争 | 2026-04-20 |
+| [144](144-fsevents-search-latency-test.md) | test | FSEvents → Search 延迟测试 | 2026-04-20 |
+| [145](145-session-query-cancel.md) | bugfix | Per-Session 查询取消 | 2026-04-20 |
 | [146](146-release-1.5.md) | docs | MacEverything 1.5 Release Notes | 2026-05-21 |
 | [147](147-结果显示控件与五档缩放.md) | feature | 结果显示控件与五档缩放 | 2026-07-22 |
-| [148](148-release-1.7.22.md) | docs | MacEverything 1.7.22 Release Notes | 2026-07-22 |
+| [149](149-runtime-security-and-workflow-cleanup.md) | feature | 运行时安全与搜索工作流收尾 | 2026-07-25 |
+| [150](150-release-1.7.25.md) | docs | MacEverything 1.7.25 发布说明 | 2026-07-25 |
 
 ## 统计
 
 | 类型 | 数量 |
 |------|------|
-| bugfix | 50 |
-| feature | 34 |
-| performance | 31 |
+| bugfix | 53 |
+| feature | 37 |
+| performance | 36 |
 | refactor | 17 |
-| test | 5 |
-| docs | 3 |
+| test | 7 |
+| docs | 5 |
 | chore | 1 |
-| **合计** | **141 条 (134 个编号, 7 组重复编号各 2 条)** |
+| **合计** | **156 条 (149 个编号, 7 组重复编号各 2 条)** |
+
+> 编号 001–149 是历史序列，其中 7 组重复编号保持原文件名以避免破坏既有链接。从 150 起每个编号必须唯一；新增条目由本地文档检查阻止重复编号。
 
 ---
 
@@ -173,5 +189,8 @@
 | 2026-04-16 | 16 |
 | 2026-04-17 | 11 |
 | 2026-04-18 | 22 |
-| 2026-04-19 | 38 |
+| 2026-04-19 | 46 |
+| 2026-04-20 | 5 |
+| 2026-05-21 | 1 |
 | 2026-07-22 | 1 |
+| 2026-07-25 | 2 |

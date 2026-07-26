@@ -26,7 +26,8 @@ static std::string httpGet(uint16_t port, const std::string& path) {
         return "";
     }
 
-    std::string req = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n";
+    std::string req = "GET " + path + " HTTP/1.1\r\nHost: localhost\r\n"
+        "Authorization: Bearer test-token\r\nConnection: close\r\n\r\n";
     ::send(fd, req.data(), req.size(), 0);
 
     std::string response;
@@ -51,7 +52,8 @@ static std::string httpPost(uint16_t port, const std::string& path, const std::s
         ::close(fd);
         return "";
     }
-    std::string req = "POST " + path + " HTTP/1.1\r\nHost: localhost\r\nContent-Length: " +
+    std::string req = "POST " + path + " HTTP/1.1\r\nHost: localhost\r\n"
+        "Authorization: Bearer test-token\r\nContent-Length: " +
         std::to_string(body.size()) + "\r\nConnection: close\r\n\r\n" + body;
     ::send(fd, req.data(), req.size(), 0);
     std::string response;
@@ -78,6 +80,8 @@ static bool runPart39() {
 
     HttpServer server;
     uint16_t port = 19870;
+    server.setAuthToken("test-token");
+    server.setAuthenticationRequired(true);
 
     // Start with getter functions
     server.start(port,

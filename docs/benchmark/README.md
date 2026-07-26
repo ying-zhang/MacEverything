@@ -80,7 +80,9 @@ R29 ███░░░░░░░░░░░░░░░░░░░░░░�
 | linear | 57.8ms | 差 |
 | advanced-pure-filter-soa-gcd | 104.5ms | 差 |
 
-## 已知问题（当前状态）
+## 历史问题快照
+
+以下状态记录的是对应基准轮次结束时的结论，不代表当前版本仍存在这些问题。已修复项以 changelog 和当前自动化测试为准；新增性能结论应使用新的轮次文件，不直接覆盖历史数据。
 
 | 编号 | 等级 | 问题 |
 |------|------|------|
@@ -102,7 +104,7 @@ R29 ███░░░░░░░░░░░░░░░░░░░░░░�
 | P18 | ~~High~~ **Fixed R23** | ~~`*.py`/`*test*.cpp` glob走linear~~ `*.py` 16.5ms (was 166ms) |
 | P22 | Medium | CJK 短关键词 `桌面` 181ms 走 linear，0 结果 |
 | P23 | Medium | Flush 期间查询延迟暴涨（`qw` 547ms） |
-| P24 | **High (新)** | Case-sensitive 查询跳过 trigram（`case:README` 631ms） |
+| P24 | ~~High~~ **Fixed** | Case-sensitive 查询曾跳过 trigram；已由后续 case-trigram 修复覆盖 |
 | P25 | Low (新 R24) | 日志缓冲过于激进，trigram 查询（<10ms）日志丢失 |
 | P26 | Low (新 R25) | 手动测试 lockWait 非零（最高 10.8ms），benchmark 未复现 |
 

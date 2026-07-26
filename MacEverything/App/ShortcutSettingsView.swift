@@ -2,6 +2,7 @@ import SwiftUI
 import Carbon.HIToolbox
 
 struct ShortcutSettingsView: View {
+    @ObservedObject private var settings = AppSettings.shared
     @State private var isRecording = false
     @State private var currentShortcut: String = ""
     @State private var modifiers: UInt32 = UInt32(optionKey)

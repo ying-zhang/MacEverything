@@ -96,6 +96,22 @@ enum ResultDisplayMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
+enum InspectorDisplayMode: String, CaseIterable, Codable, Identifiable {
+    case adaptive
+    case hidden
+    case always
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .adaptive: return L10n.tr("Adaptive")
+        case .hidden: return L10n.tr("Never Show")
+        case .always: return L10n.tr("Always Show")
+        }
+    }
+}
+
 enum EnterKeyAction: String, CaseIterable, Codable, Identifiable {
     case openFile
     case rename
@@ -126,6 +142,7 @@ struct AppSettingsSnapshot {
     var defaultWholeWord: Bool
     var defaultMatchFilename: Bool
     var maxResults: Int
+    var contentSearchMaxResults: Int
     var sortField: SortField
     var sortAscending: Bool
     var contentIndexingEnabled: Bool
@@ -145,6 +162,7 @@ struct AppSettingsSnapshot {
     var showContentSnippets: Bool
     var resultDensity: ResultDensity
     var httpServerEnabled: Bool
+    var httpAuthenticationEnabled: Bool
     var httpPort: Int
     var hideDockIcon: Bool
     var automaticMaintenanceEnabled: Bool
@@ -190,6 +208,7 @@ final class AppSettings: ObservableObject {
         static let defaultWholeWord = "settings.defaultWholeWord"
         static let defaultMatchFilename = "settings.defaultMatchFilename"
         static let maxResults = "settings.maxResults"
+        static let contentSearchMaxResults = "settings.contentSearchMaxResults"
         static let sortField = "settings.sortField"
         static let sortAscending = "settings.sortAscending"
         static let contentIndexingEnabled = "settings.contentIndexingEnabled"
@@ -209,7 +228,9 @@ final class AppSettings: ObservableObject {
         static let showContentSnippets = "settings.showContentSnippets"
         static let resultDensity = "settings.resultDensity"
         static let httpServerEnabled = "settings.httpServerEnabled"
+        static let httpAuthenticationEnabled = "settings.httpAuthenticationEnabled"
         static let httpPort = "settings.httpPort"
+        static let recentPathFilters = "settings.recentPathFilters"
         static let hideDockIcon = "settings.hideDockIcon"
         static let automaticMaintenanceEnabled = "settings.automaticMaintenanceEnabled"
         static let lowMemoryMode = "settings.lowMemoryMode"
@@ -227,9 +248,12 @@ final class AppSettings: ObservableObject {
         static let showThumbnails = "settings.showThumbnails"
         static let resultDisplayMode = "settings.resultDisplayMode"
         static let gridIconSize = "settings.gridIconSize"
+        static let inspectorDisplayMode = "settings.inspectorDisplayMode"
+        static let language = "settings.language"
         static let settingsSchemaVersion = "settings.schemaVersion"
     }
 
+    @Published var language: AppLanguage { didSet { L10n.setLanguage(language) } }
     @Published var indexRoots: [String] { didSet { saveArray(indexRoots, Key.indexRoots) } }
     @Published var excludedPaths: [String] { didSet { saveArray(excludedPaths, Key.excludedPaths) } }
     @Published var excludedPatterns: [String] { didSet { saveArray(excludedPatterns, Key.excludedPatterns) } }
@@ -246,9 +270,16 @@ final class AppSettings: ObservableObject {
     @Published var defaultMatchFilename: Bool { didSet { save(defaultMatchFilename, Key.defaultMatchFilename) } }
     @Published var maxResults: Int {
         didSet {
-            let value = clamped(maxResults, 100, 10_000)
+            let value = clamped(maxResults, 100, 100_000)
             if value != maxResults { maxResults = value; return }
             save(value, Key.maxResults)
+        }
+    }
+    @Published var contentSearchMaxResults: Int {
+        didSet {
+            let value = clamped(contentSearchMaxResults, 50, 200)
+            if value != contentSearchMaxResults { contentSearchMaxResults = value; return }
+            save(value, Key.contentSearchMaxResults)
         }
     }
     @Published var sortField: SortField { didSet { save(sortField.rawValue, Key.sortField) } }
@@ -270,7 +301,7 @@ final class AppSettings: ObservableObject {
     @Published var searchHistoryEnabled: Bool { didSet { save(searchHistoryEnabled, Key.searchHistoryEnabled) } }
     @Published var searchHistoryLimit: Int {
         didSet {
-            let value = clamped(searchHistoryLimit, 0, 5000)
+            let value = clamped(searchHistoryLimit, 10, 200)
             if value != searchHistoryLimit { searchHistoryLimit = value; return }
             save(value, Key.searchHistoryLimit)
         }
@@ -282,6 +313,10 @@ final class AppSettings: ObservableObject {
     @Published var showContentSnippets: Bool { didSet { save(showContentSnippets, Key.showContentSnippets) } }
     @Published var resultDensity: ResultDensity { didSet { save(resultDensity.rawValue, Key.resultDensity) } }
     @Published var httpServerEnabled: Bool { didSet { save(httpServerEnabled, Key.httpServerEnabled) } }
+    @Published var httpAuthenticationEnabled: Bool { didSet { save(httpAuthenticationEnabled, Key.httpAuthenticationEnabled) } }
+    @Published private(set) var recentPathFilters: [String] {
+        didSet { defaults.set(recentPathFilters, forKey: Key.recentPathFilters) }
+    }
     @Published var httpPort: Int {
         didSet {
             let value = clamped(httpPort, 1024, 65535)
@@ -316,6 +351,9 @@ final class AppSettings: ObservableObject {
     }
     @Published var showThumbnails: Bool { didSet { save(showThumbnails, Key.showThumbnails) } }
     @Published var resultDisplayMode: ResultDisplayMode { didSet { save(resultDisplayMode.rawValue, Key.resultDisplayMode) } }
+    @Published var inspectorDisplayMode: InspectorDisplayMode {
+        didSet { save(inspectorDisplayMode.rawValue, Key.inspectorDisplayMode) }
+    }
     @Published var gridIconSize: CGFloat {
         didSet {
             let value = Self.normalizedGridIconSize(gridIconSize)
@@ -331,6 +369,7 @@ final class AppSettings: ObservableObject {
         let fallbackRoots = roots.isEmpty ? [FileManager.default.homeDirectoryForCurrentUser.path] : roots
         let excluded = Self.defaultExcludedPaths()
 
+        language = AppLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .system
         indexRoots = defaults.stringArray(forKey: Key.indexRoots) ?? fallbackRoots
         excludedPaths = defaults.stringArray(forKey: Key.excludedPaths) ?? excluded
         excludedPatterns = defaults.stringArray(forKey: Key.excludedPatterns) ?? Self.defaultExcludedPatterns()
@@ -345,7 +384,8 @@ final class AppSettings: ObservableObject {
         defaultCaseSensitive = defaults.object(forKey: Key.defaultCaseSensitive) as? Bool ?? false
         defaultWholeWord = defaults.object(forKey: Key.defaultWholeWord) as? Bool ?? false
         defaultMatchFilename = defaults.object(forKey: Key.defaultMatchFilename) as? Bool ?? false
-        maxResults = clamped(defaults.object(forKey: Key.maxResults) as? Int ?? 10_000, 100, 10_000)
+        maxResults = clamped(defaults.object(forKey: Key.maxResults) as? Int ?? 10_000, 100, 100_000)
+        contentSearchMaxResults = clamped(defaults.object(forKey: Key.contentSearchMaxResults) as? Int ?? 200, 50, 200)
         sortField = SortField(rawValue: defaults.string(forKey: Key.sortField) ?? "") ?? .relevance
         sortAscending = defaults.object(forKey: Key.sortAscending) as? Bool ?? false
         contentIndexingEnabled = defaults.object(forKey: Key.contentIndexingEnabled) as? Bool ?? true
@@ -357,7 +397,7 @@ final class AppSettings: ObservableObject {
         contentExcludedPaths = defaults.stringArray(forKey: Key.contentExcludedPaths) ?? excluded
         contentMaxFileSizeMB = defaults.object(forKey: Key.contentMaxFileSizeMB) as? Double ?? 1.0
         searchHistoryEnabled = defaults.object(forKey: Key.searchHistoryEnabled) as? Bool ?? true
-        searchHistoryLimit = defaults.object(forKey: Key.searchHistoryLimit) as? Int ?? 200
+        searchHistoryLimit = clamped(defaults.object(forKey: Key.searchHistoryLimit) as? Int ?? 50, 10, 200)
         showPath = defaults.object(forKey: Key.showPath) as? Bool ?? true
         showExtension = defaults.object(forKey: Key.showExtension) as? Bool ?? true
         showSize = defaults.object(forKey: Key.showSize) as? Bool ?? true
@@ -365,7 +405,11 @@ final class AppSettings: ObservableObject {
         showContentSnippets = defaults.object(forKey: Key.showContentSnippets) as? Bool ?? true
         resultDensity = ResultDensity(rawValue: defaults.string(forKey: Key.resultDensity) ?? "") ?? .comfortable
         httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? true
+        httpAuthenticationEnabled = defaults.object(forKey: Key.httpAuthenticationEnabled) as? Bool ?? false
         httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
+        recentPathFilters = Array(normalizedExistingPaths(
+            defaults.stringArray(forKey: Key.recentPathFilters) ?? []
+        ).prefix(5))
         automaticMaintenanceEnabled = defaults.object(forKey: Key.automaticMaintenanceEnabled) as? Bool ?? true
         let oldLowMemoryMode = defaults.object(forKey: Key.lowMemoryMode) as? Bool ?? false
         enablePinyinInitials = defaults.object(forKey: Key.enablePinyinInitials) as? Bool ?? !oldLowMemoryMode
@@ -382,6 +426,9 @@ final class AppSettings: ObservableObject {
         resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 20.0, 120.0))
         showThumbnails = defaults.object(forKey: Key.showThumbnails) as? Bool ?? true
         resultDisplayMode = ResultDisplayMode(rawValue: defaults.string(forKey: Key.resultDisplayMode) ?? "") ?? .list
+        inspectorDisplayMode = InspectorDisplayMode(
+            rawValue: defaults.string(forKey: Key.inspectorDisplayMode) ?? ""
+        ) ?? .adaptive
         gridIconSize = Self.normalizedGridIconSize(
             CGFloat(defaults.object(forKey: Key.gridIconSize) as? Double ?? 128.0)
         )
@@ -405,7 +452,8 @@ final class AppSettings: ObservableObject {
             defaultCaseSensitive: defaultCaseSensitive,
             defaultWholeWord: defaultWholeWord,
             defaultMatchFilename: defaultMatchFilename,
-            maxResults: clamped(maxResults, 100, 10_000),
+            maxResults: clamped(maxResults, 100, 100_000),
+            contentSearchMaxResults: clamped(contentSearchMaxResults, 50, 200),
             sortField: sortField,
             sortAscending: sortAscending,
             contentIndexingEnabled: contentIndexingEnabled,
@@ -417,7 +465,7 @@ final class AppSettings: ObservableObject {
             contentExcludedPaths: normalizedPaths(contentSearchUsesIndexExclusions ? excludedPaths : contentSearchExcludedPaths),
             contentMaxFileSizeMB: min(max(contentMaxFileSizeMB, 0.1), 100.0),
             searchHistoryEnabled: searchHistoryEnabled,
-            searchHistoryLimit: clamped(searchHistoryLimit, 0, 5000),
+            searchHistoryLimit: clamped(searchHistoryLimit, 10, 200),
             showPath: showPath,
             showExtension: showExtension,
             showSize: showSize,
@@ -425,6 +473,7 @@ final class AppSettings: ObservableObject {
             showContentSnippets: showContentSnippets,
             resultDensity: resultDensity,
             httpServerEnabled: httpServerEnabled,
+            httpAuthenticationEnabled: httpAuthenticationEnabled,
             httpPort: clamped(httpPort, 1024, 65535),
             hideDockIcon: hideDockIcon,
             automaticMaintenanceEnabled: automaticMaintenanceEnabled,
@@ -449,6 +498,18 @@ final class AppSettings: ObservableObject {
         contentExcludedPaths = Self.defaultExcludedPaths()
     }
 
+    func recordRecentPathFilter(_ path: String) {
+        guard let normalized = normalizedExistingPaths([path]).first else { return }
+        recentPathFilters = [normalized] + recentPathFilters.filter { $0 != normalized }
+        if recentPathFilters.count > 5 {
+            recentPathFilters = Array(recentPathFilters.prefix(5))
+        }
+    }
+
+    func removeRecentPathFilter(_ path: String) {
+        recentPathFilters.removeAll { $0 == path }
+    }
+
     func clearSearchHistory() {
         UserDefaults.standard.removeObject(forKey: SearchHistoryStore.defaultsKey)
     }
@@ -464,6 +525,7 @@ final class AppSettings: ObservableObject {
         resultRowHeight = 38
         showThumbnails = true
         resultDisplayMode = .list
+        inspectorDisplayMode = .adaptive
         gridIconSize = 128
     }
 

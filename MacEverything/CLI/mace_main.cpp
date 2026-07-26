@@ -1,5 +1,7 @@
 #include "MaceClient.h"
 
+#include <CoreFoundation/CoreFoundation.h>
+
 #include <cstdlib>
 #include <iostream>
 #include <string>
@@ -7,11 +9,29 @@
 
 namespace {
 
+constexpr uint16_t kDefaultHttpPort = 19860;
+
+uint16_t configuredHttpPort() {
+    constexpr int kMinimumPort = 1024;
+    constexpr int kMaximumPort = 65535;
+    CFStringRef domain = CFSTR("com.maceverything.app");
+    CFPreferencesAppSynchronize(domain);
+    CFPropertyListRef value = CFPreferencesCopyAppValue(CFSTR("settings.httpPort"), domain);
+    if (!value) return kDefaultHttpPort;
+
+    int port = 0;
+    bool valid = CFGetTypeID(value) == CFNumberGetTypeID() &&
+        CFNumberGetValue(static_cast<CFNumberRef>(value), kCFNumberIntType, &port) &&
+        port >= kMinimumPort && port <= kMaximumPort;
+    CFRelease(value);
+    return valid ? static_cast<uint16_t>(port) : kDefaultHttpPort;
+}
+
 enum class Mode { Search, Content, Recent, Status };
 
 struct Options {
     Mode mode = Mode::Search;
-    uint16_t port = 19860;
+    uint16_t port = configuredHttpPort();
     uint32_t limit = 100;
     bool json = false;
     bool nullSeparated = false;
@@ -29,7 +49,8 @@ void usage(std::ostream& output) {
         "  -r, --recent       List recently modified files\n"
         "  -s, --status       Show index status\n"
         "  -n, --limit N      Maximum results (default 100, max 10000)\n"
-        "  -p, --port PORT    HTTP API port (default 19860)\n"
+        "  -p, --port PORT    Override the port from MacEverything settings"
+        " (fallback 19860)\n"
         "  -j, --json         Print the raw JSON response\n"
         "  -0, --null         Separate result paths with NUL bytes\n"
         "  -h, --help         Show this help\n";

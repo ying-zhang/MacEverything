@@ -141,6 +141,13 @@ struct ResultInteractionTests {
         expect(filters.queryTokens.last.map { [$0] } ?? [], ["dm:2026-07-01..2026-07-20"],
                "custom date range normalizes reversed bounds")
 
+        expect(ResultPagination.nextEnd(currentCount: 0, totalCount: 750, pageSize: 200),
+               200, "content results load the first 200-item batch")
+        expect(ResultPagination.nextEnd(currentCount: 600, totalCount: 750, pageSize: 200),
+               750, "the final content batch stops at the complete result count")
+        expect(ResultPagination.nextEnd(currentCount: 750, totalCount: 750, pageSize: 200),
+               750, "completed pagination does not advance")
+
         if failures > 0 {
             exit(1)
         }

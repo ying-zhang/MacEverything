@@ -217,5 +217,5 @@ inline void runHighlightHintTests() {
         check(hints[0].text == "test", "only 'test' should be a hint");
     }
 
-    std::cout << "\n  Part 68 complete.\n";
+    std::cout << "\n  Part 70 complete.\n";
 }
