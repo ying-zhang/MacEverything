@@ -45,13 +45,13 @@ trap 'rm -f "$temporary_file"' EXIT
 
 sed -E \
     -e "s|^  version \"[^\"]+\"|  version \"$version\"|" \
-    -e "/^  on_arm do$/,/^  end$/s|^    sha256 \"[^\"]+\"|    sha256 \"$arm64_sha\"|" \
-    -e "/^  on_intel do$/,/^  end$/s|^    sha256 \"[^\"]+\"|    sha256 \"$intel_sha\"|" \
+    -e "s|^  sha256 arm:[[:space:]]+\"[^\"]+\",|  sha256 arm:   \"$arm64_sha\",|" \
+    -e "s|^         intel: \"[^\"]+\"|         intel: \"$intel_sha\"|" \
     "$cask_file" > "$temporary_file"
 
 updated_version="$(sed -nE 's/^  version "([^"]+)"$/\1/p' "$temporary_file")"
-updated_arm64_sha="$(sed -nE '/^  on_arm do$/,/^  end$/s/^    sha256 "([^"]+)"$/\1/p' "$temporary_file")"
-updated_intel_sha="$(sed -nE '/^  on_intel do$/,/^  end$/s/^    sha256 "([^"]+)"$/\1/p' "$temporary_file")"
+updated_arm64_sha="$(sed -nE 's/^  sha256 arm:[[:space:]]+"([^"]+)",$/\1/p' "$temporary_file")"
+updated_intel_sha="$(sed -nE 's/^         intel: "([^"]+)"$/\1/p' "$temporary_file")"
 if [[ "$updated_version" != "$version" ||
       "$updated_arm64_sha" != "$arm64_sha" ||
       "$updated_intel_sha" != "$intel_sha" ]]; then
