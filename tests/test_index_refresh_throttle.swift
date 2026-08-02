@@ -32,7 +32,7 @@ func assertEqual<T: Equatable>(_ a: T, _ b: T, _ msg: String = "", file: String 
 // Tests
 // ---------------------------------------------------------------------------
 
-func testFocusedFirstEvent() {
+@MainActor func testFocusedFirstEvent() {
     print("  test: focused first event triggers immediate refresh")
     let t = IndexRefreshThrottle()
     let triggered = t.indexChanged()
@@ -42,7 +42,7 @@ func testFocusedFirstEvent() {
     check(!t.isPending, "nothing pending")
 }
 
-func testFocusedCoalesceDuringCooldown() {
+@MainActor func testFocusedCoalesceDuringCooldown() {
     print("  test: focused events during cooldown are coalesced")
     let t = IndexRefreshThrottle()
     t.indexChanged()  // first — triggers refresh
@@ -54,7 +54,7 @@ func testFocusedCoalesceDuringCooldown() {
     check(t.isPending, "pending should be set")
 }
 
-func testCooldownExpiredWithPending() {
+@MainActor func testCooldownExpiredWithPending() {
     print("  test: cooldown expiry with pending triggers trailing refresh")
     let t = IndexRefreshThrottle()
     t.indexChanged()  // refresh #1
@@ -66,7 +66,7 @@ func testCooldownExpiredWithPending() {
     check(!t.isPending, "pending cleared")
 }
 
-func testCooldownExpiredNoPending() {
+@MainActor func testCooldownExpiredNoPending() {
     print("  test: cooldown expiry without pending does nothing")
     let t = IndexRefreshThrottle()
     t.indexChanged()
@@ -76,7 +76,7 @@ func testCooldownExpiredNoPending() {
     check(!t.isCooldownActive, "cooldown ended")
 }
 
-func testUnfocusedEventsDeferred() {
+@MainActor func testUnfocusedEventsDeferred() {
     print("  test: unfocused events are deferred, never refresh")
     let t = IndexRefreshThrottle()
     t.focusChanged(false)  // lose focus
@@ -89,7 +89,7 @@ func testUnfocusedEventsDeferred() {
     check(!t.isCooldownActive, "no cooldown")
 }
 
-func testFocusRegainWithPending() {
+@MainActor func testFocusRegainWithPending() {
     print("  test: focus regain with pending triggers catch-up refresh")
     let t = IndexRefreshThrottle()
     t.focusChanged(false)
@@ -103,7 +103,7 @@ func testFocusRegainWithPending() {
     check(t.isCooldownActive, "cooldown should be active after focus-regain refresh")
 }
 
-func testFocusRegainWithoutPending() {
+@MainActor func testFocusRegainWithoutPending() {
     print("  test: focus regain without pending does nothing")
     let t = IndexRefreshThrottle()
     t.focusChanged(false)
@@ -112,7 +112,7 @@ func testFocusRegainWithoutPending() {
     assertEqual(t.refreshCount, 0, "zero refreshes")
 }
 
-func testFocusedThenUnfocusedDuringCooldown() {
+@MainActor func testFocusedThenUnfocusedDuringCooldown() {
     print("  test: losing focus during cooldown, events deferred")
     let t = IndexRefreshThrottle()
     t.indexChanged()        // refresh #1, cooldown starts
@@ -130,7 +130,7 @@ func testFocusedThenUnfocusedDuringCooldown() {
     assertEqual(t.refreshCount, 2, "two total refreshes")
 }
 
-func testCallbackInvoked() {
+@MainActor func testCallbackInvoked() {
     print("  test: onRefresh callback invoked on each refresh")
     let t = IndexRefreshThrottle()
     var callbackCount = 0
@@ -142,7 +142,7 @@ func testCallbackInvoked() {
     assertEqual(t.refreshCount, 2, "refreshCount matches")
 }
 
-func testFullCycle() {
+@MainActor func testFullCycle() {
     print("  test: full cycle — focused, unfocused, regain, events throughout")
     let t = IndexRefreshThrottle()
 
@@ -172,7 +172,7 @@ func testFullCycle() {
     assertEqual(t.refreshCount, 4)
 }
 
-func testInitialState() {
+@MainActor func testInitialState() {
     print("  test: initial state is focused, no pending, no cooldown")
     let t = IndexRefreshThrottle()
     check(t.isFocused, "starts focused")
@@ -187,7 +187,7 @@ func testInitialState() {
 
 @main
 struct TestRunner {
-    static func main() {
+    @MainActor static func main() {
         print("Running IndexRefreshThrottle tests...")
         testInitialState()
         testFocusedFirstEvent()

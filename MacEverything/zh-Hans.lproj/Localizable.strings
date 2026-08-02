@@ -76,6 +76,7 @@
 "Quit MacEverything" = "退出 MacEverything";
 "Search" = "搜索";
 "Regex" = "正则表达式";
+"Use Regular Expression (Advanced)" = "使用正则表达式（高级）";
 "Case Sensitive" = "区分大小写";
 "Whole Word" = "仅匹配完整词";
 "Match Filename" = "仅匹配文件名";
@@ -86,6 +87,8 @@
 "Open Settings" = "打开设置";
 "Open" = "打开";
 "Open %d Items" = "打开 %d 项";
+"Open With..." = "打开方式...";
+"No Applications Found" = "未找到可用的应用程序";
 "Reveal in Finder" = "在访达中显示";
 "Reveal %d Items in Finder" = "在访达中显示 %d 项";
 "Open in Finder" = "在访达中打开";

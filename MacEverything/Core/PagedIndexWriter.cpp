@@ -1,4 +1,5 @@
 #include "PagedIndexWriter.h"
+#include "PathUtils.h"
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -83,9 +84,17 @@ bool PagedIndexWriter::writeStringPool(FILE* f, const StringPool& pool) {
 }
 
 bool PagedIndexWriter::readStringPool(FILE* f, StringPool& pool) {
+    static constexpr uint64_t kMaxExpandedPoolBytes = 512ULL * 1024 * 1024;
     uint32_t bufSize;
     if (fread(&bufSize, 4, 1, f) != 1) return false;
     if (bufSize > 500'000'000) return false; // sanity: 500MB
+
+    long bufferStart = ftell(f);
+    if (bufferStart < 0 || fseek(f, 0, SEEK_END) != 0) return false;
+    long fileEnd = ftell(f);
+    if (fileEnd < bufferStart || static_cast<uint64_t>(fileEnd - bufferStart) <
+            static_cast<uint64_t>(bufSize) + sizeof(uint32_t) + sizeof(uint32_t) ||
+        fseek(f, bufferStart, SEEK_SET) != 0) return false;
 
     std::vector<char> buffer(bufSize);
     if (bufSize > 0 && fread(buffer.data(), 1, bufSize, f) != bufSize) return false;
@@ -93,6 +102,12 @@ bool PagedIndexWriter::readStringPool(FILE* f, StringPool& pool) {
     uint32_t entryCount;
     if (fread(&entryCount, 4, 1, f) != 1) return false;
     if (entryCount > 50'000'000) return false; // sanity: 50M entries
+
+    const uint64_t entryBytes = static_cast<uint64_t>(entryCount) * sizeof(StringPool::Entry);
+    long entriesStart = ftell(f);
+    if (entriesStart < 0 || fileEnd < entriesStart ||
+        entryBytes + sizeof(uint32_t) > static_cast<uint64_t>(fileEnd - entriesStart) ||
+        static_cast<uint64_t>(bufSize) + entryBytes > kMaxExpandedPoolBytes) return false;
 
     std::vector<StringPool::Entry> entries(entryCount);
     if (entryCount > 0 && fread(entries.data(), sizeof(StringPool::Entry), entryCount, f) != entryCount)
@@ -243,14 +258,19 @@ bool PagedIndexWriter::writePtable(const IndexMetadata& meta, uint32_t totalReco
         return false;
     }
 
-    fsync(fileno(f));
-    fclose(f);
+    bool durable = fflush(f) == 0;
+    if (durable) durable = fsync(fileno(f)) == 0;
+    if (fclose(f) != 0) durable = false;
+    if (!durable) {
+        remove(tmpPath.c_str());
+        return false;
+    }
 
     if (rename(tmpPath.c_str(), ptablePath_.c_str()) != 0) {
         remove(tmpPath.c_str());
         return false;
     }
-    return true;
+    return PathUtils::syncParentDirectory(ptablePath_);
 }
 
 // ─── load ───
@@ -477,8 +497,10 @@ bool PagedIndexWriter::flushDirtyPages(SearchEngine& engine, const IndexMetadata
         pe.crc32 = crc;
     }
 
-    fsync(fileno(pf));
-    fclose(pf);
+    bool durable = fflush(pf) == 0;
+    if (durable) durable = fsync(fileno(pf)) == 0;
+    if (fclose(pf) != 0) durable = false;
+    if (!durable) return false;
 
     if (!writePtable(meta, totalRecords)) {
         return false;
@@ -491,6 +513,7 @@ bool PagedIndexWriter::flushDirtyPages(SearchEngine& engine, const IndexMetadata
 // ─── fullRewrite ───
 
 bool PagedIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& meta) {
+    const uint64_t rewriteGeneration = engine.fullRewriteGeneration();
     uint32_t totalRecords = engine.recordCount();
     uint32_t pageCount = (totalRecords + SearchEngine::kRecordsPerPage - 1) / SearchEngine::kRecordsPerPage;
     if (totalRecords == 0) pageCount = 0;
@@ -557,24 +580,30 @@ bool PagedIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& me
         writePos += buf.size();
     }
 
-    fsync(fileno(pf));
-    fclose(pf);
+    bool durable = fflush(pf) == 0;
+    if (durable) durable = fsync(fileno(pf)) == 0;
+    if (fclose(pf) != 0) durable = false;
+    if (!durable) {
+        remove(tmpPages.c_str());
+        return false;
+    }
 
     pageEntries_ = std::move(newEntries);
     pagesFileSize_ = writePos;
 
-    if (!writePtable(meta, totalRecords)) {
-        remove(tmpPages.c_str());
-        return false;
-    }
-
+    // Publish page data before the table that references its new offsets.
     if (rename(tmpPages.c_str(), pagesPath_.c_str()) != 0) {
         remove(tmpPages.c_str());
         return false;
     }
+    if (!PathUtils::syncParentDirectory(pagesPath_)) return false;
+
+    if (!writePtable(meta, totalRecords)) {
+        return false;
+    }
 
     engine.clearDirtyPages();
-    engine.clearFullRewriteNeeded();
+    engine.acknowledgeFullRewrite(rewriteGeneration);
     return true;
 }
 

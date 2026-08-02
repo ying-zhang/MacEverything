@@ -3,6 +3,8 @@
 #include "QueryDateParser.h"
 #include "StringUtils.h"
 #include <string>
+#include <cmath>
+#include <limits>
 #include <cctype>
 #include <cstdint>
 #include <algorithm>
@@ -179,7 +181,11 @@ private:
         }
         // "b" or empty = bytes, no multiplier
 
-        if (value < 0) value = 0;
-        return static_cast<uint64_t>(value * multiplier);
+        if (value <= 0) return 0;
+        const double maxValue = static_cast<double>(std::numeric_limits<uint64_t>::max());
+        if (!std::isfinite(value) || value >= maxValue / static_cast<double>(multiplier)) {
+            return std::numeric_limits<uint64_t>::max();
+        }
+        return static_cast<uint64_t>(value * static_cast<double>(multiplier));
     }
 };

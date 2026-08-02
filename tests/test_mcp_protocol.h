@@ -12,12 +12,19 @@
 #include <unistd.h>
 #include <vector>
 
-/// Send JSON-RPC messages to the MCP binary via pipe and capture all responses.
-static std::string mcpExec(const std::string& input) {
+struct McpExecResult {
+    std::string binary;
+    std::string output;
+    int waitStatus = -1;
+};
+
+static std::string findMcpBinary() {
     const char* configured = std::getenv("MACE_MCP_BINARY");
     std::string binary = configured ? configured : "";
+    if (!binary.empty()) return access(binary.c_str(), X_OK) == 0 ? binary : "";
     if (binary.empty()) {
         const char* candidates[] = {
+            "./artifacts/MacEverything.app/Contents/MacOS/MacEverythingMCP",
             "./build/mcp/Release/MacEverythingMCP",
             "./build/arm64/Release/MacEverythingMCP",
             "./build/Release/MacEverythingMCP"
@@ -29,14 +36,21 @@ static std::string mcpExec(const std::string& input) {
             }
         }
     }
-    if (binary.empty()) return "";
+    return binary;
+}
+
+/// Send JSON-RPC messages to the MCP binary via pipe and capture its status and output.
+static McpExecResult mcpExecWithStatus(const std::string& input) {
+    McpExecResult result;
+    result.binary = findMcpBinary();
+    if (result.binary.empty()) return result;
     int stdinPipe[2];
     int stdoutPipe[2];
-    if (pipe(stdinPipe) != 0) return "";
+    if (pipe(stdinPipe) != 0) return result;
     if (pipe(stdoutPipe) != 0) {
         close(stdinPipe[0]);
         close(stdinPipe[1]);
-        return "";
+        return result;
     }
     pid_t pid = fork();
     if (pid < 0) {
@@ -44,7 +58,7 @@ static std::string mcpExec(const std::string& input) {
         close(stdinPipe[1]);
         close(stdoutPipe[0]);
         close(stdoutPipe[1]);
-        return "";
+        return result;
     }
     if (pid == 0) {
         dup2(stdinPipe[0], STDIN_FILENO);
@@ -58,7 +72,7 @@ static std::string mcpExec(const std::string& input) {
         close(stdinPipe[1]);
         close(stdoutPipe[0]);
         close(stdoutPipe[1]);
-        execl(binary.c_str(), binary.c_str(), static_cast<char*>(nullptr));
+        execl(result.binary.c_str(), result.binary.c_str(), static_cast<char*>(nullptr));
         _exit(127);
     }
 
@@ -79,12 +93,17 @@ static std::string mcpExec(const std::string& input) {
         ssize_t count = read(stdoutPipe[0], buf, sizeof(buf));
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) break;
-        output.append(buf, static_cast<size_t>(count));
+        result.output.append(buf, static_cast<size_t>(count));
     }
     close(stdoutPipe[0]);
     int status = 0;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    return output;
+    result.waitStatus = status;
+    return result;
+}
+
+static std::string mcpExec(const std::string& input) {
+    return mcpExecWithStatus(input).output;
 }
 
 /// Split newline-delimited responses into individual JSON strings.
@@ -111,8 +130,30 @@ static void runMcpProtocolTests() {
     std::cout << "  Part 49: MCP Protocol Tests\n";
     std::cout << "========================================\n\n";
 
-    if (mcpExec(R"({"jsonrpc":"2.0","id":0,"method":"ping"})").empty()) {
-        std::cout << "  [SKIP] MCP binary not found in a known build directory\n";
+    auto probe = mcpExecWithStatus(R"({"jsonrpc":"2.0","id":0,"method":"ping"})");
+    if (probe.binary.empty()) {
+        check(false, "MCP binary must exist and be executable for protocol tests");
+        return;
+    }
+    if (probe.waitStatus == -1) {
+        check(false, "MCP protocol probe could not start or wait for the process");
+        return;
+    }
+    if (WIFSIGNALED(probe.waitStatus)) {
+        std::string message = "MCP binary terminated by signal " +
+                              std::to_string(WTERMSIG(probe.waitStatus));
+        check(false, message.c_str());
+        return;
+    }
+    if (!WIFEXITED(probe.waitStatus) || WEXITSTATUS(probe.waitStatus) != 0) {
+        std::string message = "MCP binary exited with status " +
+                              std::to_string(WIFEXITED(probe.waitStatus)
+                                                 ? WEXITSTATUS(probe.waitStatus) : -1);
+        check(false, message.c_str());
+        return;
+    }
+    if (probe.output.empty()) {
+        check(false, "MCP binary exited successfully without a protocol response");
         return;
     }
 

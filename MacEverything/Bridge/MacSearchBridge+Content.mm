@@ -1,6 +1,7 @@
 #import "MacSearchBridge_Internal.h"
 #import "MacSearchBridge+Content.h"
 #include "Logger.h"
+#include <unordered_map>
 
 @implementation MacSearchBridge (Content)
 
@@ -14,53 +15,56 @@
     if (key.empty()) return @[];
 
     auto service = _serviceEngine;
-    auto matches = contentIndex->query(key, maxResults,
-        [engine, service](uint32_t fileIndex, std::string& fullPath) {
-            auto record = engine->getRecord(fileIndex);
-            if (record.type != 1) return false;
-            fullPath = SearchEngine::makeFullPath(record.path, record.name);
-            return service->isContentPathAllowed(fullPath);
-        });
-    if (matches.empty()) return @[];
+    NSMutableArray<MEContentResult *> *results = nil;
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t contentGeneration = contentIndex->mappingGeneration();
+        if ((contentGeneration & 1U) != 0) continue;
+        uint64_t generation = engine->compactionGeneration();
+        auto matches = contentIndex->query(key, maxResults,
+            [service](uint32_t, std::string& fullPath) {
+                if (fullPath.empty()) return false;
+                return service->isContentPathAllowed(fullPath);
+            });
+        if (contentIndex->mappingGeneration() != contentGeneration) continue;
+        if (matches.empty()) {
+            if (engine->compactionGeneration() == generation) return @[];
+            continue;
+        }
 
-    // Pre-resolve file paths
-    struct CandidateInfo {
-        uint32_t fileIndex;
-        std::string name;
-        std::string fullPath;
-        std::string snippet;
-        uint32_t matchOffset;
-        uint8_t fileType;
-    };
-    std::vector<CandidateInfo> candidates;
-    candidates.reserve(matches.size());
-    for (const auto& match : matches) {
-        auto record = engine->getRecord(match.fileIndex);
-        if (record.type == 0) continue;
-        CandidateInfo info;
-        info.fileIndex = match.fileIndex;
-        info.name = std::move(record.name);
-        info.fullPath = SearchEngine::makeFullPath(record.path, info.name);
-        info.snippet = match.snippet;
-        info.matchOffset = match.matchOffset;
-        info.fileType = record.type;
-        candidates.push_back(std::move(info));
+        std::vector<uint32_t> indices;
+        indices.reserve(matches.size());
+        std::unordered_map<uint32_t, const ContentMatch *> matchByIndex;
+        matchByIndex.reserve(matches.size());
+        for (const auto& match : matches) {
+            indices.push_back(match.fileIndex);
+            matchByIndex[match.fileIndex] = &match;
+        }
+
+        results = [NSMutableArray arrayWithCapacity:matches.size()];
+        bool stable = engine->forEachRecordWithPathIfGeneration(
+            indices, generation, [&](uint32_t idx, const FileRecord& record, const std::string& path) {
+                if (record.type != 1) return;
+                auto matchIt = matchByIndex.find(idx);
+                if (matchIt == matchByIndex.end()) return;
+                const auto& match = *matchIt->second;
+                std::string fullPath = SearchEngine::makeFullPath(path, record.name);
+                NSString *nsFileName = [NSString stringWithUTF8String:record.name.c_str()];
+                NSString *nsFilePath = [NSString stringWithUTF8String:fullPath.c_str()];
+                NSString *nsSnippet = [NSString stringWithUTF8String:match.snippet.c_str()];
+                if (!nsFileName || !nsFilePath || !nsSnippet) return;
+                [results addObject:[[MEContentResult alloc]
+                    initWithFileName:nsFileName
+                            filePath:nsFilePath
+                             snippet:nsSnippet
+                         matchOffset:match.matchOffset
+                            fileType:record.type]];
+            });
+        if (stable && contentIndex->mappingGeneration() == contentGeneration) break;
+        results = nil;
     }
-
-    if (candidates.empty()) return @[];
-
-    NSMutableArray<MEContentResult *> *results = [NSMutableArray arrayWithCapacity:candidates.size()];
-    for (size_t i = 0; i < candidates.size(); i++) {
-        NSString *nsFileName = [NSString stringWithUTF8String:candidates[i].name.c_str()];
-        NSString *nsFilePath = [NSString stringWithUTF8String:candidates[i].fullPath.c_str()];
-        NSString *nsSnippet = [NSString stringWithUTF8String:candidates[i].snippet.c_str()];
-        if (!nsFileName || !nsFilePath || !nsSnippet) continue;
-        [results addObject:[[MEContentResult alloc]
-            initWithFileName:nsFileName
-                    filePath:nsFilePath
-                     snippet:nsSnippet
-                 matchOffset:candidates[i].matchOffset
-                    fileType:candidates[i].fileType]];
+    if (!results) {
+        LOG_WARN("Bridge", "queryContent: compaction changed indices during retries");
+        return @[];
     }
 
     auto queryElapsed = std::chrono::duration<double>(std::chrono::steady_clock::now() - queryStart).count();

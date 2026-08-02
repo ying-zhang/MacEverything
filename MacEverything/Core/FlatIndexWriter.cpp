@@ -1,5 +1,6 @@
 #include "FlatIndexWriter.h"
 #include "Logger.h"
+#include "PathUtils.h"
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -307,13 +308,19 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
         fclose(f); remove(tmpPath.c_str()); return false;
     }
 
-    fsync(fileno(f));
-    fclose(f);
+    bool durable = fflush(f) == 0;
+    if (durable) durable = fsync(fileno(f)) == 0;
+    if (fclose(f) != 0) durable = false;
+    if (!durable) {
+        remove(tmpPath.c_str());
+        return false;
+    }
 
     if (rename(tmpPath.c_str(), path_.c_str()) != 0) {
         remove(tmpPath.c_str());
         return false;
     }
+    if (!PathUtils::syncParentDirectory(path_)) return false;
 
     LOG_INFO("FlatIndexWriter", "v6 written: " << header.recordCount << " records ("
              << header.liveCount << " live), " << kSectionCount << " sections");
@@ -327,6 +334,12 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
 bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     FILE* f = fopen(path_.c_str(), "rb");
     if (!f) return false;
+
+    if (fseek(f, 0, SEEK_END) != 0) { fclose(f); return false; }
+    long fileEnd = ftell(f);
+    if (fileEnd < static_cast<long>(kHeaderSize)) { fclose(f); return false; }
+    const uint64_t fileSize = static_cast<uint64_t>(fileEnd);
+    rewind(f);
 
     // Read header
     Header header{};
@@ -342,6 +355,12 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     // Verify version
     if (header.version != kVersion) {
         LOG_ERROR("FlatIndexWriter", "Unknown v6 version: " << header.version);
+        fclose(f); return false;
+    }
+    constexpr uint32_t kMaxReasonableRecords = 50'000'000;
+    if (header.recordCount > kMaxReasonableRecords ||
+        header.liveCount > header.recordCount) {
+        LOG_ERROR("FlatIndexWriter", "Invalid record counts in v6 header");
         fclose(f); return false;
     }
 
@@ -376,6 +395,12 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     uint32_t sectionIdx[kSectionCountLegacy + 1];
     memset(sectionIdx, 0xFF, sizeof(sectionIdx));
     for (uint32_t i = 0; i < header.sectionCount; i++) {
+        const uint64_t offset = sections[i].offset;
+        const uint64_t length = sections[i].byteLength;
+        if (offset > fileSize || length > fileSize - offset) {
+            LOG_ERROR("FlatIndexWriter", "Section lies outside v6 file");
+            fclose(f); return false;
+        }
         uint32_t id = sections[i].sectionId;
         if (id <= kSectionCountLegacy) sectionIdx[id] = i;
     }
@@ -432,7 +457,8 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
         uint32_t entryCount;
         memcpy(&entryCount, raw.data() + pos, sizeof(uint32_t));
         pos += sizeof(uint32_t);
-        size_t entryBytes = entryCount * sizeof(StringPool::Entry);
+        if (entryCount > (entry.byteLength - pos) / sizeof(StringPool::Entry)) return false;
+        size_t entryBytes = static_cast<size_t>(entryCount) * sizeof(StringPool::Entry);
         if (pos + entryBytes > entry.byteLength) return false;
         std::vector<StringPool::Entry> entries(entryCount);
         if (entryCount > 0) memcpy(entries.data(), raw.data() + pos, entryBytes);
@@ -479,6 +505,10 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     // No error if missing — new v6 files don't include it.
 
     uint32_t n = origNamePool.entryCount();
+    if (n != header.recordCount || namePool.entryCount() != n) {
+        LOG_ERROR("FlatIndexWriter", "String pool count does not match v6 header");
+        fclose(f); return false;
+    }
 
     // Read array sections directly into target vectors (in-place CRC)
     std::vector<uint32_t> pathIndices;

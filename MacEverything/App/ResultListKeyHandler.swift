@@ -152,8 +152,13 @@ class ResultListKeyView: NSView {
             }
         case 49: // Space - toggle Quick Look
             coordinator.toggleQuickLook()
-        case 36, 76: // Return / Enter - open file
-            coordinator.parent.viewModel.openSelectedOrFirst()
+        case 36, 76: // Return / Enter
+            switch ResultReturnResolver.action(modifiers: event.modifierFlags) {
+            case .open:
+                coordinator.parent.viewModel.openSelectedOrFirst()
+            case .reveal:
+                coordinator.parent.viewModel.revealSelectedOrFirst()
+            }
         case 53: // Escape
             coordinator.parent.onEscape?()
         default:

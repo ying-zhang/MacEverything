@@ -1,21 +1,12 @@
 import SwiftUI
 import Foundation
+import os
 
 /// Shared highlight function used by ResultRow and ContentResultRow.
 /// Finds all case-insensitive, non-overlapping occurrences of `keyword`
 /// in `text` and renders matched segments in bold + `highlightColor`.
 /// For glob-style keywords containing `*` or `?`, highlights the literal
 /// (non-wildcard) segments extracted from the pattern.
-private func remapRanges(_ ranges: [Range<String.Index>], from source: String, to target: String) -> [Range<String.Index>] {
-    ranges.map { range in
-        let lo = source.distance(from: source.startIndex, to: range.lowerBound)
-        let hi = source.distance(from: source.startIndex, to: range.upperBound)
-        let tLo = target.index(target.startIndex, offsetBy: lo)
-        let tHi = target.index(target.startIndex, offsetBy: hi)
-        return tLo..<tHi
-    }
-}
-
 func highlightMatches(in text: String, keyword: String,
                       font: Font, color: Color,
                       highlightColor: Color = .accentColor) -> Text {
@@ -23,21 +14,18 @@ func highlightMatches(in text: String, keyword: String,
         return Text(text).font(font).foregroundColor(color)
     }
 
-    let lowerText = text.lowercased()
-    let lowerKey = keyword.lowercased()
-
     // Glob patterns — highlight literal (non-wildcard) segments
-    if lowerKey.contains("*") || lowerKey.contains("?") {
-        let literals = extractGlobLiterals(lowerKey)
+    if keyword.contains("*") || keyword.contains("?") {
+        let literals = extractGlobLiterals(keyword)
         if literals.isEmpty {
             return Text(text).font(font).foregroundColor(color)
         }
-        let ranges = remapRanges(findAllLiteralRanges(in: lowerText, literals: literals), from: lowerText, to: text)
+        let ranges = findAllLiteralRanges(in: text, literals: literals, options: .caseInsensitive)
         return buildHighlightedText(text: text, ranges: ranges, font: font, color: color, highlightColor: highlightColor)
     }
 
     // Multi-keyword: split by spaces and find all matches for each word
-    let words = lowerKey.components(separatedBy: " ").filter { !$0.isEmpty }
+    let words = keyword.components(separatedBy: " ").filter { !$0.isEmpty }
     if words.isEmpty {
         return Text(text).font(font).foregroundColor(color)
     }
@@ -45,15 +33,16 @@ func highlightMatches(in text: String, keyword: String,
     let ranges: [Range<String.Index>]
     if words.count == 1 {
         var singleRanges: [Range<String.Index>] = []
-        var searchStart = lowerText.startIndex
-        while searchStart < lowerText.endIndex,
-              let range = lowerText.range(of: words[0], range: searchStart..<lowerText.endIndex) {
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let range = text.range(of: words[0], options: .caseInsensitive,
+                                     range: searchStart..<text.endIndex) {
             singleRanges.append(range)
             searchStart = range.upperBound
         }
-        ranges = remapRanges(singleRanges, from: lowerText, to: text)
+        ranges = singleRanges
     } else {
-        ranges = remapRanges(findAllLiteralRanges(in: lowerText, literals: words), from: lowerText, to: text)
+        ranges = findAllLiteralRanges(in: text, literals: words, options: .caseInsensitive)
     }
 
     return buildHighlightedText(text: text, ranges: ranges, font: font, color: color, highlightColor: highlightColor)
@@ -79,22 +68,20 @@ func highlightCrossMatches(path: String, name: String, keyword: String,
     }
 
     let fullPath = path + "/" + name
-    let lowerFull = fullPath.lowercased()
-    let lowerKey = keyword.lowercased()
-
     // Find all matches in fullPath (supports multi-keyword via space splitting)
-    let words = lowerKey.components(separatedBy: " ").filter { !$0.isEmpty }
+    let words = keyword.components(separatedBy: " ").filter { !$0.isEmpty }
     var fullRanges: [Range<String.Index>]
     if words.count <= 1 {
         fullRanges = []
-        var searchStart = lowerFull.startIndex
-        while searchStart < lowerFull.endIndex,
-              let range = lowerFull.range(of: lowerKey, range: searchStart..<lowerFull.endIndex) {
+        var searchStart = fullPath.startIndex
+        while searchStart < fullPath.endIndex,
+              let range = fullPath.range(of: keyword, options: .caseInsensitive,
+                                         range: searchStart..<fullPath.endIndex) {
             fullRanges.append(range)
             searchStart = range.upperBound
         }
     } else {
-        fullRanges = findAllLiteralRanges(in: lowerFull, literals: words)
+        fullRanges = findAllLiteralRanges(in: fullPath, literals: words, options: .caseInsensitive)
     }
 
     if fullRanges.isEmpty {
@@ -168,12 +155,14 @@ func extractGlobLiterals(_ pattern: String) -> [String] {
 
 /// Find all case-insensitive occurrences of any literal in `text`,
 /// merge overlapping ranges, and return sorted non-overlapping ranges.
-func findAllLiteralRanges(in lowerText: String, literals: [String]) -> [Range<String.Index>] {
+func findAllLiteralRanges(in text: String, literals: [String],
+                          options: String.CompareOptions = []) -> [Range<String.Index>] {
     var allRanges: [Range<String.Index>] = []
     for literal in literals {
-        var searchStart = lowerText.startIndex
-        while searchStart < lowerText.endIndex,
-              let range = lowerText.range(of: literal, range: searchStart..<lowerText.endIndex) {
+        var searchStart = text.startIndex
+        while searchStart < text.endIndex,
+              let range = text.range(of: literal, options: options,
+                                     range: searchStart..<text.endIndex) {
             allRanges.append(range)
             searchStart = range.upperBound
         }
@@ -229,46 +218,28 @@ func buildHighlightedText(text: String, ranges: [Range<String.Index>],
 func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String.Index>] {
     guard !hint.text.isEmpty else { return [] }
 
-    let searchText: String
-    let searchKey: String
-    if hint.caseSensitive {
-        searchText = text
-        searchKey = hint.text
-    } else {
-        searchText = text.lowercased()
-        searchKey = hint.text.lowercased()
-    }
+    let searchKey = hint.text
+    let compareOptions: String.CompareOptions = hint.caseSensitive ? [] : .caseInsensitive
 
     switch hint.matchMode {
     case .substring:
         var ranges: [Range<String.Index>] = []
-        var start = searchText.startIndex
-        while start < searchText.endIndex,
-              let range = searchText.range(of: searchKey, range: start..<searchText.endIndex) {
-            let lo = searchText.distance(from: searchText.startIndex, to: range.lowerBound)
-            let hi = searchText.distance(from: searchText.startIndex, to: range.upperBound)
-            let tLo = text.index(text.startIndex, offsetBy: lo)
-            let tHi = text.index(text.startIndex, offsetBy: hi)
-            ranges.append(tLo..<tHi)
+        var start = text.startIndex
+        while start < text.endIndex,
+              let range = text.range(of: searchKey, options: compareOptions,
+                                     range: start..<text.endIndex) {
+            ranges.append(range)
             start = range.upperBound
         }
         if !hint.caseSensitive && isAsciiAlphaNumericQuery(searchKey) {
-            ranges.append(contentsOf: computePinyinInitialRanges(in: text, key: searchKey))
+            ranges.append(contentsOf: computePinyinInitialRanges(in: text, key: searchKey.lowercased()))
         }
         return mergeRanges(ranges, in: text)
 
     case .glob:
         let literals = extractGlobLiterals(searchKey)
         if literals.isEmpty { return [] }
-        let rawRanges = findAllLiteralRanges(in: searchText, literals: literals)
-        if hint.caseSensitive { return rawRanges }
-        return rawRanges.map { range in
-            let lo = searchText.distance(from: searchText.startIndex, to: range.lowerBound)
-            let hi = searchText.distance(from: searchText.startIndex, to: range.upperBound)
-            let tLo = text.index(text.startIndex, offsetBy: lo)
-            let tHi = text.index(text.startIndex, offsetBy: hi)
-            return tLo..<tHi
-        }
+        return findAllLiteralRanges(in: text, literals: literals, options: compareOptions)
 
     case .regex:
         var options: NSRegularExpression.Options = []
@@ -369,14 +340,24 @@ private func mandarinInitialMapping(for text: String) -> (key: String, sourceRan
     return (key, sourceRanges)
 }
 
-private var pinyinCache: [Character: Character?] = [:]
+private enum PinyinCacheEntry {
+    case initial(Character)
+    case unavailable
+}
+
+private let pinyinCache = OSAllocatedUnfairLock(initialState: [Character: PinyinCacheEntry]())
 
 private func mandarinInitial(for character: String) -> Character? {
-    let char = character.first!
-    if let cached = pinyinCache[char] { return cached }
+    guard let char = character.first else { return nil }
+    if let cached = pinyinCache.withLock({ $0[char] }) {
+        switch cached {
+        case .initial(let initial): return initial
+        case .unavailable: return nil
+        }
+    }
     let mutable = NSMutableString(string: character)
     guard CFStringTransform(mutable, nil, kCFStringTransformMandarinLatin, false) else {
-        pinyinCache[char] = .some(nil)
+        pinyinCache.withLock { $0[char] = .unavailable }
         return nil
     }
     CFStringTransform(mutable, nil, kCFStringTransformStripDiacritics, false)
@@ -385,16 +366,16 @@ private func mandarinInitial(for character: String) -> Character? {
         let value = UInt8(scalar.value)
         if value >= 65 && value <= 90 {
             let result = Character(UnicodeScalar(value + 32))
-            pinyinCache[char] = result
+            pinyinCache.withLock { $0[char] = .initial(result) }
             return result
         }
         if value >= 97 && value <= 122 {
             let result = Character(scalar)
-            pinyinCache[char] = result
+            pinyinCache.withLock { $0[char] = .initial(result) }
             return result
         }
     }
-    pinyinCache[char] = .some(nil)
+    pinyinCache.withLock { $0[char] = .unavailable }
     return nil
 }
 

@@ -30,6 +30,11 @@ jobs:
       - name: Build release DMG
         run: scripts/build-release-dmgs.sh arm64
 
+      - name: Run MCP protocol tests against built binary
+        env:
+          MACE_MCP_BINARY: build/arm64/Release/MacEverythingMCP
+        run: ./test_all --part 49 --quiet
+
       - name: Verify DMG exists
         run: |
           dmg="artifacts/MacEverything-arm64.dmg"
@@ -112,3 +117,24 @@ jobs:
         run: scripts/prepare-re2-deps.sh third_party/re2
       - name: Run fast tests with ThreadSanitizer
         run: make test-tsan
+
+  full-core-tests:
+    if: github.event_name == 'schedule'
+    name: Weekly full core tests
+    runs-on: macos-15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6.0.2
+      - name: Install dependencies
+        run: brew install re2 abseil
+      - name: Prepare local RE2 dependencies
+        run: scripts/prepare-re2-deps.sh third_party/re2
+      - name: Build MCP protocol test binary
+        run: >-
+          xcodebuild -project MacEverything.xcodeproj -target MacEverythingMCP
+          -configuration Release
+          CONFIGURATION_BUILD_DIR="$PWD/build/arm64/Release" build
+      - name: Run full core suite
+        env:
+          MACE_MCP_BINARY: build/arm64/Release/MacEverythingMCP
+        run: make test-all

@@ -454,7 +454,47 @@ static void runQueryDateFilterTests() {
         check(containsName(results, "recent.cpp"), "B15: dc:today works (modTime fallback)");
     }
 
+    // B16: Everything-style ranges may omit either endpoint.
+    {
+        auto before = QueryParser::parse("dm:..2023-12-31");
+        check(before && before->filterValid && before->numVal1 == 0,
+              "B16: open-start date range begins at epoch");
+        auto beforeResults = queryNames("dm:..2023-12-31");
+        check(containsName(beforeResults, "older.cpp"),
+              "B16: open-start range matches an older file");
+        check(!containsName(beforeResults, "recent.cpp"),
+              "B16: open-start range excludes a recent file");
+
+        auto after = QueryParser::parse("dm:2024-01-01..");
+        check(after && after->filterValid && after->numVal2 == UINT64_MAX,
+              "B16: open-end date range has an unbounded upper endpoint");
+        auto afterResults = queryNames("dm:2024-01-01..");
+        check(containsName(afterResults, "recent.cpp"),
+              "B16: open-end range matches a recent file");
+        check(!containsName(afterResults, "older.cpp"),
+              "B16: open-end range excludes an older file");
+    }
+
     // Cleanup
+    {
+        auto invalidMonth = QueryParser::parse("dm:2024-13-01");
+        auto invalidDay = QueryParser::parse("dm:2024-02-30");
+        check(invalidMonth && invalidMonth->numVal1 == 0 && invalidMonth->numVal2 == 0,
+              "B17: invalid month is rejected");
+        check(invalidDay && invalidDay->numVal1 == 0 && invalidDay->numVal2 == 0,
+              "B17: invalid day is rejected");
+        check(invalidMonth && !invalidMonth->filterValid,
+              "B17: invalid month marks the filter invalid");
+        check(invalidDay && !invalidDay->filterValid,
+              "B17: invalid day marks the filter invalid");
+
+        auto invalidComparison = QueryParser::parse("dm:>2024-01-01T12:00");
+        check(invalidComparison && !invalidComparison->filterValid,
+              "B17: invalid comparison marks the filter invalid");
+        auto results = queryNames("dm:>2024-01-01T12:00");
+        check(results.empty(), "B17: invalid comparison cannot broaden results");
+    }
+
     std::filesystem::remove_all(tmpDir);
 
     std::cout << "  Part 57 result: " << localPassed << " passed, " << localFailed << " failed\n";

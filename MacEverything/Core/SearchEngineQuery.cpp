@@ -475,3 +475,14 @@ void SearchEngine::cancelSession(uint64_t sessionId) const {
         it->second->fetch_add(1, std::memory_order_relaxed);
     }
 }
+
+void SearchEngine::releaseSession(uint64_t sessionId) const {
+    if (sessionId == 0) return;
+    std::lock_guard<std::mutex> lock(sessionGenMutex_);
+    auto it = sessionGenerations_.find(sessionId);
+    if (it == sessionGenerations_.end()) return;
+    // In-flight queries retain the shared atomic and observe cancellation even
+    // after the map entry is removed.
+    it->second->fetch_add(1, std::memory_order_relaxed);
+    sessionGenerations_.erase(it);
+}

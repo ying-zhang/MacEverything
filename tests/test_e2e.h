@@ -103,7 +103,7 @@ static void runEndToEndTest() {
     // Note: "e2e_test" is a substring of nothing after rename, but "e2e_renamed" does not contain "e2e_test"
     // Actually "e2e_test" won't match "e2e_renamed" since query matches on filename only
     // Let's verify the exact old path is removed
-    bool oldRemoved = !engine.removeByPath(tmpDir + "/e2e_test.txt");
+    bool oldRemoved = engine.indexForPath(tmpDir + "/e2e_test.txt") == UINT32_MAX;
     check(oldRemoved, "E2E: Old path no longer in index");
 
     // Delete the file

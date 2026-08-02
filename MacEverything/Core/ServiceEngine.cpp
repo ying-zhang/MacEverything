@@ -115,6 +115,7 @@ ServiceEngine::ServiceEngine(const ServiceConfig& config)
     watcher_ = std::make_shared<FileSystemWatcher>("live");
     contentIndex_ = std::make_shared<ContentIndex>();
     mutationQueue_ = dispatch_queue_create("com.maceverything.mutation", DISPATCH_QUEUE_SERIAL);
+    dispatch_queue_set_specific(mutationQueue_, this, this, nullptr);
     backgroundGroup_ = dispatch_group_create();
     contentIndexingGroup_ = dispatch_group_create();
     lifecycleQueue_ = dispatch_queue_create("com.maceverything.lifecycle", DISPATCH_QUEUE_SERIAL);
@@ -813,6 +814,8 @@ void ServiceEngine::backgroundSyncEngine(
                 replacementContent->setExtensions(previousContent->getExtensions());
                 replacementContent->setMaxFileSize(previousContent->getMaxFileSize());
             }
+            sharedPersistence->setContentIndexPersistence(nullptr);
+            sharedPersistence->setContentIndex(nullptr);
             auto previousCP = this->safeContentPersistence();
             if (previousCP) previousCP->stopAutoCompactionAndWait();
             this->setContentPersistence(nullptr);
@@ -821,10 +824,19 @@ void ServiceEngine::backgroundSyncEngine(
                 std::unique_lock contentLock(this->contentMutex_);
                 this->contentIndex_ = replacementContent;
             }
+            sharedPersistence->setContentIndex(replacementContent);
             std::error_code ec;
             fs::remove(config.cachePath + "/content_index.bin", ec);
             ec.clear();
             fs::remove(config.cachePath + "/content_index.wal", ec);
+            ec.clear();
+            for (const auto& entry : fs::directory_iterator(config.cachePath, ec)) {
+                if (ec) break;
+                if (entry.path().filename().string().rfind("content_index.wal.seg.", 0) == 0) {
+                    fs::remove(entry.path(), ec);
+                    ec.clear();
+                }
+            }
         }
 
         auto scanNow = std::chrono::steady_clock::now();

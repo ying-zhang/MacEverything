@@ -38,7 +38,8 @@ public:
     void sync();
 
     /// Read all valid entries from a WAL file (stops at first corrupt entry).
-    static std::vector<WALEntry> readAll(const std::string& walPath);
+    static std::vector<WALEntry> readAll(const std::string& walPath,
+                                         size_t* validBytes = nullptr);
 
     /// Number of entries written since open.
     uint64_t entryCount() const { return entryCount_; }
@@ -52,6 +53,7 @@ public:
 
     /// Current WAL file size in bytes.
     size_t currentSize() const { return currentSize_; }
+    const std::string& path() const { return path_; }
 
     /// Close the WAL file (fsyncs pending data before closing).
     void close();
@@ -82,6 +84,7 @@ private:
     uint64_t syncInterval_ = 64;  // fsync every 64 entries by default
     size_t currentSize_ = 0;
     std::atomic<bool> dirty_{false};
+    bool failed_ = false;
     std::mutex mutex_;
 
     static bool writeRecord(FILE* f, const FileRecord& record);

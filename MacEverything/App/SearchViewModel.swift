@@ -6,6 +6,62 @@ import os
 // MacSearchBridge owns a thread-safe C++ ServiceEngine and is explicitly used
 // from background search/indexing tasks throughout the app.
 extension MacSearchBridge: @unchecked Sendable {}
+extension MEFileResult: @unchecked Sendable {}
+
+private final class SearchSessionLifetime: @unchecked Sendable {
+    final class QueryLease: @unchecked Sendable {
+        private let finishHandler: @Sendable () -> Void
+        private let lock = NSLock()
+        private var finished = false
+
+        init(_ finishHandler: @escaping @Sendable () -> Void) {
+            self.finishHandler = finishHandler
+        }
+
+        func finish() {
+            let shouldFinish = lock.withLock {
+                guard !finished else { return false }
+                finished = true
+                return true
+            }
+            if shouldFinish { finishHandler() }
+        }
+
+        deinit { finish() }
+    }
+
+    private let bridge: MacSearchBridge
+    private let sessionId: UInt64
+    private let lock = NSLock()
+    private var ownerReleased = false
+    private var activeQueries = 0
+
+    init(bridge: MacSearchBridge, sessionId: UInt64) {
+        self.bridge = bridge
+        self.sessionId = sessionId
+    }
+
+    func beginQuery() -> QueryLease {
+        lock.withLock { activeQueries += 1 }
+        return QueryLease { self.finishQuery() }
+    }
+
+    func releaseOwner() {
+        let shouldRelease = lock.withLock {
+            ownerReleased = true
+            return activeQueries == 0
+        }
+        if shouldRelease { bridge.releaseSession(sessionId) }
+    }
+
+    private func finishQuery() {
+        let shouldRelease = lock.withLock {
+            activeQueries -= 1
+            return ownerReleased && activeQueries == 0
+        }
+        if shouldRelease { bridge.releaseSession(sessionId) }
+    }
+}
 
 struct FileItem: Identifiable, Sendable {
     static let fileTypeRegular: UInt8 = 1
@@ -378,13 +434,13 @@ final class SearchServiceModel: ObservableObject {
         bridge.removeSubtree(path) { [weak self] removedCount in
             Task { @MainActor in
                 guard let self else { return }
+                self.bridge.clearVolumeUnmounting(path)
                 if removedCount > 0 {
                     AppLogger.info("VolumeMonitor", "Removed \(removedCount) remaining records for unmounted volume: \(path)")
                 }
                 self.performIndexRefresh()
             }
         }
-        bridge.clearVolumeUnmounting(path)
     }
 
     private func handleVolumeMounted(_ notification: Notification) {
@@ -498,6 +554,7 @@ class SearchViewModel: ObservableObject {
     private var loadedCount: Int = 0
     private var searchGeneration: UInt64 = 0
     private let sessionId: UInt64
+    private let sessionLifetime: SearchSessionLifetime
     private var allowQuickFilterAutoResetForCurrentSearch = false
 
     private static let pageSize: Int = 100
@@ -544,12 +601,19 @@ class SearchViewModel: ObservableObject {
 
     init() {
         self.service = SearchServiceModel.shared
-        self.sessionId = Self.nextSessionId()
+        let sessionId = Self.nextSessionId()
+        self.sessionId = sessionId
+        self.sessionLifetime = SearchSessionLifetime(bridge: MacSearchBridge.shared(),
+                                                     sessionId: sessionId)
         optionsSink = searchOptions.objectWillChange.sink { [weak self] _ in
             Task { @MainActor [weak self] in
                 self?.onSearchOptionsChanged()
             }
         }
+    }
+
+    deinit {
+        sessionLifetime.releaseOwner()
     }
 
     // MARK: - Active-window bridge for menu commands
@@ -598,12 +662,17 @@ class SearchViewModel: ObservableObject {
     }
 
     private func onSearchOptionsChanged() {
-        guard service.scanComplete, !searchText.isEmpty, !isContentSearch else { return }
+        guard service.scanComplete, !searchText.isEmpty else { return }
         searchTask?.cancel()
         searchGeneration &+= 1
         bridge.cancelSession(sessionId)
         updateHighlightHints()
-        performSearch(searchText)
+        if isContentSearch {
+            let keyword = currentContentSearchKeyword()
+            if !keyword.isEmpty { performContentSearch(keyword) }
+        } else {
+            performSearch(searchText)
+        }
     }
 
     private func updateHighlightHints() {
@@ -748,7 +817,12 @@ class SearchViewModel: ObservableObject {
         let gen = searchGeneration
         let sessionId = self.sessionId
         let query = composedQuery(for: keyword)
+        let sortField = settings.snapshot.sortField
+        let sortAscending = settings.snapshot.sortAscending
+        let pathNeedle = pathFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        let sessionLease = sessionLifetime.beginQuery()
         Task.detached { [weak self] in
+            defer { sessionLease.finish() }
             let start = CFAbsoluteTimeGetCurrent()
             // P-4: Use batch method — single engine lock, no NSNumber boxing
             let results = bridge.queryResults(query, maxResults: maxResults + 1, sessionId: sessionId)
@@ -759,6 +833,10 @@ class SearchViewModel: ObservableObject {
                 items.append(fileItem(from: r))
             }
             let finalItems = items
+            let pathFiltered = pathNeedle.isEmpty ? finalItems : finalItems.filter {
+                $0.fullPath.localizedCaseInsensitiveContains(pathNeedle)
+            }
+            let preparedItems = Self.sorted(pathFiltered, field: sortField, ascending: sortAscending)
             let limitedResults = Array(results.prefix(Int(maxResults)))
             let limitReached = results.count > Int(maxResults)
 
@@ -781,7 +859,8 @@ class SearchViewModel: ObservableObject {
                 self.allowQuickFilterAutoResetForCurrentSearch = false
                 self.cachedResults = limitedResults
                 self.sourceItems = finalItems
-                self.applySortedResults(pageSize: pageSize)
+                self.cachedItems = preparedItems
+                self.applyCachedResults(pageSize: pageSize)
                 self.totalMatches = self.cachedItems.count
                 self.resultLimitReached = limitReached
                 self.queryTimeMs = elapsed
@@ -1073,6 +1152,15 @@ class SearchViewModel: ObservableObject {
         }
     }
 
+    func revealSelectedOrFirst() {
+        if let selectedItemID,
+           let selected = displayItems.first(where: { $0.id == selectedItemID }) {
+            FileActions.revealInFinder(selected)
+        } else if let first = displayItems.first {
+            FileActions.revealInFinder(first)
+        }
+    }
+
     func activateSelectedOrFirstResult() -> Bool {
         guard let first = displayItems.first else { return false }
         if let selectedItemID,
@@ -1190,9 +1278,13 @@ class SearchViewModel: ObservableObject {
 
     private func applySortedResults(pageSize: Int) {
         cachedItems = sorted(filteredByPath(sourceItems))
+        applyCachedResults(pageSize: pageSize)
+    }
+
+    private func applyCachedResults(pageSize: Int) {
         loadedCount = min(pageSize, cachedItems.count)
         displayItems = Array(cachedItems.prefix(loadedCount))
-        selectedItemIDs = selectedItemIDs.intersection(Set(displayItems.map(\.id)))
+        selectedItemIDs = selectedItemIDs.intersection(Set(cachedItems.map(\.id)))
         if let selectedItemID, !selectedItemIDs.contains(selectedItemID) {
             self.selectedItemID = selectedItemIDs.first
         }
@@ -1203,10 +1295,14 @@ class SearchViewModel: ObservableObject {
 
     private func sorted(_ items: [FileItem]) -> [FileItem] {
         let snapshot = settings.snapshot
-        guard snapshot.sortField != .relevance else { return items }
+        return Self.sorted(items, field: snapshot.sortField, ascending: snapshot.sortAscending)
+    }
 
-        let ascending = snapshot.sortAscending
-        let groupByType = snapshot.sortField != .path
+    private nonisolated static func sorted(_ items: [FileItem], field: SortField,
+                                           ascending: Bool) -> [FileItem] {
+        guard field != .relevance else { return items }
+
+        let groupByType = field != .path
         return items.sorted { lhs, rhs in
             if groupByType {
                 let lhsIsDir = lhs.isFolder
@@ -1214,7 +1310,7 @@ class SearchViewModel: ObservableObject {
                 if lhsIsDir != rhsIsDir { return lhsIsDir }
             }
             let result: ComparisonResult
-            switch snapshot.sortField {
+            switch field {
             case .relevance:
                 result = .orderedSame
             case .name:
@@ -1229,7 +1325,7 @@ class SearchViewModel: ObservableObject {
                 result = lhs.modTime == rhs.modTime ? .orderedSame : (lhs.modTime < rhs.modTime ? .orderedAscending : .orderedDescending)
             }
             if result == .orderedSame {
-                let fallback = (lhs.path + "/" + lhs.name).localizedCaseInsensitiveCompare(rhs.path + "/" + rhs.name)
+                let fallback = lhs.fullPath.localizedCaseInsensitiveCompare(rhs.fullPath)
                 return fallback == .orderedAscending
             }
             return ascending ? result == .orderedAscending : result == .orderedDescending
@@ -1365,8 +1461,8 @@ class SearchViewModel: ObservableObject {
 
     func onPathFilterChanged() {
         guard service.scanComplete else { return }
-        applySortedResults(pageSize: max(loadedCount, Self.pageSize))
-        totalMatches = cachedItems.count
+        guard !isContentSearch else { return }
+        rerunCurrentSearch()
     }
 
     func onAdvancedFiltersChanged(from oldValue: AdvancedFilterState,

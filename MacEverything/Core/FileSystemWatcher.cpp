@@ -248,7 +248,8 @@ void FileSystemWatcher::fseventsCallback(
             bool isExcludedAncestor = false;
             for (const auto& ep : exclusions) {
                 if (ep.size() > pathStr.size() &&
-                    ep.compare(0, pathStr.size(), pathStr) == 0) {
+                    ep.compare(0, pathStr.size(), pathStr) == 0 &&
+                    (pathStr.empty() || pathStr.back() == '/' || ep[pathStr.size()] == '/')) {
                     isExcludedAncestor = true;
                     break;
                 }

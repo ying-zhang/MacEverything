@@ -17,6 +17,19 @@
 ///   Comparison: >2024-01-01, >=yesterday, <2024-06, <=today
 ///   Range:      2023..2024, 2024-01..2024-06, yesterday..today
 class QueryDateParser {
+    static bool isLeapYear(int year) {
+        return year % 4 == 0 && (year % 100 != 0 || year % 400 == 0);
+    }
+
+    static bool isValidDate(int year, int month, int day) {
+        if (year < 1900 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+        static constexpr int daysPerMonth[] = {
+            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+        };
+        int maxDay = daysPerMonth[month - 1];
+        if (month == 2 && isLeapYear(year)) maxDay = 29;
+        return day <= maxDay;
+    }
     static int safeStoi(const std::string& s, bool& ok) {
         try { ok = true; return std::stoi(s); }
         catch (...) { ok = false; return 0; }
@@ -39,18 +52,30 @@ public:
     /// Uses RANGE op with numVal1=start, numVal2=end (both inclusive, epoch seconds).
     /// For comparisons (GT/LT/GE/LE), uses the corresponding CompareOp.
     static void parse(QueryNode& node, const std::string& arg) {
-        if (arg.empty()) return;
+        if (arg.empty()) {
+            node.filterValid = false;
+            return;
+        }
 
         // Check for range: A..B
         auto dotdot = arg.find("..");
         if (dotdot != std::string::npos) {
             std::string left = arg.substr(0, dotdot);
             std::string right = arg.substr(dotdot + 2);
+            if (left.empty() && right.empty()) {
+                node.filterValid = false;
+                return;
+            }
             auto [ls, le] = parseDateExpr(left);
             auto [rs, re] = parseDateExpr(right);
+            if ((!left.empty() && ls == 0 && le == 0) ||
+                (!right.empty() && rs == 0 && re == 0)) {
+                node.filterValid = false;
+                return;
+            }
             node.op = CompareOp::RANGE;
-            node.numVal1 = toEpoch(ls);   // range start
-            node.numVal2 = toEpoch(re);   // range end
+            node.numVal1 = left.empty() ? 0 : toEpoch(ls);
+            node.numVal2 = right.empty() ? UINT64_MAX : toEpoch(re);
             return;
         }
 
@@ -73,6 +98,10 @@ public:
 
         std::string dateStr = arg.substr(valStart);
         auto [start, end] = parseDateExpr(dateStr);
+        if (start == 0 && end == 0) {
+            node.filterValid = false;
+            return;
+        }
 
         if (cmpOp == CompareOp::GE || cmpOp == CompareOp::GT ||
             cmpOp == CompareOp::LE || cmpOp == CompareOp::LT) {
@@ -270,12 +299,12 @@ private:
         if (s.size() < 4) return {0, 0};
 
         // Check for YYYY-MM-DD
-        if (s.size() >= 10 && s[4] == '-' && s[7] == '-') {
+        if (s.size() == 10 && s[4] == '-' && s[7] == '-') {
             bool ok1, ok2, ok3;
             int y = safeStoi(s.substr(0, 4), ok1);
             int m = safeStoi(s.substr(5, 2), ok2);
             int d = safeStoi(s.substr(8, 2), ok3);
-            if (!ok1 || !ok2 || !ok3) return {0, 0};
+            if (!ok1 || !ok2 || !ok3 || !isValidDate(y, m, d)) return {0, 0};
             struct tm t = {};
             t.tm_year = y - 1900; t.tm_mon = m - 1; t.tm_mday = d;
             t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
@@ -287,11 +316,11 @@ private:
         }
 
         // Check for YYYY-MM
-        if (s.size() >= 7 && s[4] == '-') {
+        if (s.size() == 7 && s[4] == '-') {
             bool ok1, ok2;
             int y = safeStoi(s.substr(0, 4), ok1);
             int m = safeStoi(s.substr(5, 2), ok2);
-            if (!ok1 || !ok2) return {0, 0};
+            if (!ok1 || !ok2 || !isValidDate(y, m, 1)) return {0, 0};
             struct tm t = {};
             t.tm_year = y - 1900; t.tm_mon = m - 1; t.tm_mday = 1;
             t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;
@@ -303,10 +332,10 @@ private:
         }
 
         // YYYY only
-        if (s.size() >= 4 && std::isdigit(static_cast<unsigned char>(s[0]))) {
+        if (s.size() == 4 && std::isdigit(static_cast<unsigned char>(s[0]))) {
             bool ok;
             int y = safeStoi(s.substr(0, 4), ok);
-            if (!ok) return {0, 0};
+            if (!ok || !isValidDate(y, 1, 1)) return {0, 0};
             struct tm t = {};
             t.tm_year = y - 1900; t.tm_mon = 0; t.tm_mday = 1;
             t.tm_hour = 0; t.tm_min = 0; t.tm_sec = 0;

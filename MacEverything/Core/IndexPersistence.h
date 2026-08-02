@@ -51,10 +51,10 @@ public:
     void compact(const IndexMetadata& metadata, bool force = false) { flush(metadata, force); }
 
     /// Set the ContentIndex so compaction can propagate index remapping.
-    void setContentIndex(std::shared_ptr<ContentIndex> ci) { contentIndex_ = std::move(ci); }
+    void setContentIndex(std::shared_ptr<ContentIndex> ci);
 
     /// Set the ContentIndexPersistence so fullCompact can flush content index after remap.
-    void setContentIndexPersistence(std::shared_ptr<ContentIndexPersistence> cp) { contentPersistence_ = std::move(cp); }
+    void setContentIndexPersistence(std::shared_ptr<ContentIndexPersistence> cp);
 
     /// Start a GCD timer that flushes with adaptive interval.
     void startAutoCompaction(double intervalSec, std::shared_ptr<FileSystemWatcher> watcher);
@@ -89,6 +89,7 @@ private:
     mutable std::mutex walMutex_;
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
     std::mutex compactionMutex_;
+    bool previousBaseWriteFailed_ = false;
 
     void fullCompactLocked(const IndexMetadata& metadata);
 

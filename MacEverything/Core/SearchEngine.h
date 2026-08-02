@@ -231,6 +231,10 @@ public:
     /// Cancel in-flight queries for the given session. Lock-free on the generation atomic.
     void cancelSession(uint64_t sessionId) const;
 
+    /// Cancel in-flight queries and remove the session's retained generation state.
+    /// The caller must not reuse sessionId after releasing it.
+    void releaseSession(uint64_t sessionId) const;
+
     /// Get or create the generation atomic for a session. Returns {atomicPtr, currentGenValue}.
     std::pair<std::shared_ptr<std::atomic<uint64_t>>, uint64_t>
     acquireSessionGeneration(uint64_t sessionId) const;
@@ -316,9 +320,16 @@ public:
     /// Clear the dirty page bitmap. Thread-safe.
     void clearDirtyPages();
 
-    /// Whether a full rewrite is needed (set after compactRecords renumbers indices).
-    bool needsFullRewrite() const { return fullRewriteNeeded_.load(std::memory_order_relaxed); }
-    void clearFullRewriteNeeded() { fullRewriteNeeded_.store(false, std::memory_order_relaxed); }
+    /// Whether an unacknowledged full rewrite request exists. A generation token
+    /// prevents a rewrite from clearing a WAL failure raised while it was writing.
+    bool needsFullRewrite() const {
+        return fullRewriteGeneration_.load(std::memory_order_acquire) !=
+               acknowledgedRewriteGeneration_.load(std::memory_order_acquire);
+    }
+    uint64_t fullRewriteGeneration() const {
+        return fullRewriteGeneration_.load(std::memory_order_acquire);
+    }
+    void acknowledgeFullRewrite(uint64_t generation);
 
     /// Monotonically increasing generation counter, incremented on each compaction.
     uint64_t compactionGeneration() const { return compactionGen_.load(std::memory_order_relaxed); }
@@ -337,13 +348,9 @@ public:
     static std::string makeFullPath(std::string_view path, std::string_view name);
 
     /// Compute lowercase path on-the-fly from pathPool_ (replaces lowerPathPool_).
-    /// Uses SIMD ASCII lowering for speed; equivalent to me::toLower() for
-    /// filesystem paths where only ASCII A-Z case matters.
+    /// Uses the canonical Unicode-aware lowering shared by mutation lookups and queries.
     static inline std::string lowerPathStr(const StringPool& pool, uint32_t pathIdx) {
-        auto v = pool.view(pathIdx);
-        std::string result(v.data(), v.size());
-        me::simdToLowerAscii(result.data(), result.size());
-        return result;
+        return me::toLower(pool.str(pathIdx));
     }
 
     /// Resolve a record's path via pathPool_. Thread-safe (acquires shared_lock).
@@ -372,6 +379,29 @@ public:
             rec.devId = devIds_[idx];
             func(idx, rec, path);
         }
+    }
+
+    /// Resolve indices only if no compaction has renumbered them since the query.
+    template<typename Func>
+    bool forEachRecordWithPathIfGeneration(const std::vector<uint32_t>& indices,
+                                           uint64_t expectedGeneration,
+                                           Func&& func) const {
+        std::shared_lock lock(mutex_);
+        if (compactionGen_.load(std::memory_order_relaxed) != expectedGeneration) return false;
+        for (uint32_t idx : indices) {
+            if (idx >= types_.size() || types_[idx] == 0) continue;
+            std::string path = pathPool_.str(pathIndices_[idx]);
+            FileRecord rec;
+            rec.name = origNamePool_.str(idx);
+            rec.path = path;
+            rec.type = types_[idx];
+            rec.size = sizes_[idx];
+            rec.modTime = static_cast<time_t>(modTimes_[idx]);
+            rec.inode = inodes_[idx];
+            rec.devId = devIds_[idx];
+            func(idx, rec, path);
+        }
+        return true;
     }
 
     /// Batch callback for a contiguous range of records, including tombstones.
@@ -488,6 +518,7 @@ private:
     /// Unlocked variants — caller must hold unique_lock on mutex_.
     bool removeByPathUnlocked(const std::string& fullPath);
     void updateByPathUnlocked(const std::string& fullPath, FileRecord&& updated);
+    std::vector<uint32_t> prefixRecordCandidatesUnlocked(const std::string& lowerPrefix) const;
 
     /// Build trigram index from namePool_ (called inside loadRecords/compactRecords under lock)
     void buildTrigramIndex();
@@ -508,6 +539,8 @@ private:
     void addExtensionForRecord(uint32_t idx);
     /// Remove a record from the extension index
     void removeExtensionForRecord(uint32_t idx);
+    /// Remove an extension posting using snapshot data after the live pool entry was tombstoned.
+    void removeExtensionForRecord(uint32_t idx, const char* nameData, uint16_t nameLen);
 
     /// Build path trigram index from pathPool_
     void buildPathTrigramIndex();
@@ -582,11 +615,19 @@ private:
                                    size_t totalSize, const QueryCancelCtx& cancel,
                                    std::vector<Match>& merged) const;
 
-    std::vector<bool> dirtyPages_;                // dirty page bitmap
-    std::atomic<bool> fullRewriteNeeded_{false};   // set by compactRecords()
+    std::vector<bool> dirtyPages_;                 // dirty page bitmap
+    std::atomic<uint64_t> fullRewriteGeneration_{0};
+    std::atomic<uint64_t> acknowledgedRewriteGeneration_{0};
 
     /// Mark the page containing the given record index as dirty. Must be called under lock.
     void markPageDirty(uint32_t recordIndex);
+
+    /// Append a mutation to the WAL and force a base rewrite if persistence fails.
+    void appendWALUnlocked(WALOp op, const std::string& fullPath,
+                           const FileRecord& record = {});
+    void markFullRewriteNeeded() {
+        fullRewriteGeneration_.fetch_add(1, std::memory_order_release);
+    }
 
     std::shared_ptr<IndexWAL> wal_;
     std::atomic<uint64_t> compactionGen_{0};

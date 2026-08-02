@@ -174,4 +174,18 @@ inline void runQueryCancelTests() {
         auto results = engine.query("file_match_99", 100, true, 42);
         check(!results.empty(), "Single query on fresh session returns results");
     }
+
+    // Test 7: releasing a session cancels in-flight work and drops retained state
+    {
+        constexpr uint64_t SESSION_RELEASED = 99;
+        auto [oldGeneration, oldValue] = engine.acquireSessionGeneration(SESSION_RELEASED);
+        engine.releaseSession(SESSION_RELEASED);
+        check(oldGeneration->load(std::memory_order_relaxed) != oldValue,
+              "releaseSession cancels holders of the old generation");
+
+        auto [newGeneration, newValue] = engine.acquireSessionGeneration(SESSION_RELEASED);
+        check(newGeneration != oldGeneration && newValue == 1,
+              "released session state is recreated independently");
+        engine.releaseSession(SESSION_RELEASED);
+    }
 }

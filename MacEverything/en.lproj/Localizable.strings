@@ -76,6 +76,7 @@
 "Quit MacEverything" = "Quit MacEverything";
 "Search" = "Search";
 "Regex" = "Regex";
+"Use Regular Expression (Advanced)" = "Use Regular Expression (Advanced)";
 "Case Sensitive" = "Case Sensitive";
 "Whole Word" = "Match Whole Word";
 "Match Filename" = "Filename Only";
@@ -86,6 +87,8 @@
 "Open Settings" = "Open Settings";
 "Open" = "Open";
 "Open %d Items" = "Open %d Items";
+"Open With..." = "Open With...";
+"No Applications Found" = "No Applications Found";
 "Reveal in Finder" = "Reveal in Finder";
 "Reveal %d Items in Finder" = "Reveal %d Items in Finder";
 "Open in Finder" = "Open in Finder";

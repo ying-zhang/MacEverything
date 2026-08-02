@@ -342,6 +342,7 @@ struct HighlightedSearchField: NSViewRepresentable {
         }
 
         func applyHighlighting(_ textView: NSTextView) {
+            guard !textView.hasMarkedText() else { return }
             guard let textStorage = textView.textStorage else { return }
             let fullRange = NSRange(location: 0, length: textStorage.length)
             let text = textStorage.string

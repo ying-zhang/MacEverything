@@ -73,7 +73,7 @@ bool SearchEngine::pathSegmentsMatch(std::string_view dirPath,
             compIdx--;
         } else {
             if (segIdx < static_cast<int>(segments.size()) - 1 &&
-                segments[segIdx + 1].adjacentToNext == false) {
+                segments[segIdx].adjacentToNext == false) {
                 compIdx--;
             } else if (segIdx == static_cast<int>(segments.size()) - 1) {
                 compIdx--;
@@ -299,7 +299,7 @@ void SearchEngine::queryStructured(const ParsedQuery& pq,
     } else {
         // No path segments: buffer-scan the contiguous namePool_ buffer
         // with SIMD for substring mode; anchored modes scan entries directly.
-        if (pq.nameKind == PathSegmentKind::SUBSTRING) {
+        if (pq.nameKind == PathSegmentKind::SUBSTRING && namePattern.size() >= 3) {
             std::vector<size_t> hitOffsets;
             me::simdFindAll(namePool_.rawBuffer(), namePool_.rawSize(),
                             namePattern.data(), namePattern.size(), hitOffsets);

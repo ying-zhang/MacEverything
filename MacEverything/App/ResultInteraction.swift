@@ -108,6 +108,17 @@ enum ResultClickAction: Equatable {
     case reveal
 }
 
+enum ResultReturnAction: Equatable {
+    case open
+    case reveal
+}
+
+enum ResultReturnResolver {
+    static func action(modifiers: NSEvent.ModifierFlags) -> ResultReturnAction {
+        modifiers.contains(.command) ? .reveal : .open
+    }
+}
+
 enum ResultClickResolver {
     static func actions(clickCount: Int,
                         modifiers: NSEvent.ModifierFlags,

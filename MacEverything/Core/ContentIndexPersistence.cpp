@@ -107,8 +107,26 @@ bool ContentIndexWAL::open(const std::string& walPath) {
         }
     }
 
-    entryCount_ = 0;
-    dirty_.store(false, std::memory_order_relaxed);
+    if (currentSize_ > 2 * sizeof(uint32_t)) {
+        size_t validBytes = 2 * sizeof(uint32_t);
+        entryCount_ = readAll(walPath, &validBytes).size();
+        if (validBytes < currentSize_) {
+            LOG_WARN("ContentIndexWAL", "Truncating invalid WAL tail from " << currentSize_
+                     << " to " << validBytes << " bytes: " << walPath);
+            if (ftruncate(fileno(file_), static_cast<off_t>(validBytes)) != 0 ||
+                fseek(file_, 0, SEEK_END) != 0) {
+                fclose(file_);
+                file_ = nullptr;
+                return false;
+            }
+            currentSize_ = validBytes;
+        }
+        dirty_.store(entryCount_ > 0, std::memory_order_relaxed);
+    } else {
+        entryCount_ = 0;
+        dirty_.store(false, std::memory_order_relaxed);
+    }
+    failed_ = false;
     return true;
 }
 
@@ -116,10 +134,12 @@ bool ContentIndexWAL::appendAdd(uint32_t fileIndex, const std::string& fullPath,
                                  uint64_t contentHash, const std::vector<Trigram>& trigrams,
                                  time_t lastModTime) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!file_) return false;
+    if (!file_ || failed_) return false;
 
     // H-6: Check WAL file size limit (in-memory tracking)
-    if (currentSize_ >= kMaxWALSize) return false;
+    if (currentSize_ >= kMaxWALSize) {
+        LOG_WARN("ContentIndexWAL", "WAL exceeded soft size limit; preserving add mutation");
+    }
 
     // Build entry into buffer for CRC32
     std::string buf;
@@ -142,20 +162,28 @@ bool ContentIndexWAL::appendAdd(uint32_t fileIndex, const std::string& fullPath,
     buf.append(reinterpret_cast<const char*>(&modTime64), sizeof(int64_t));
 
     // Write entry + CRC32
-    if (fwrite(buf.data(), 1, buf.size(), file_) != buf.size()) return false;
+    if (fwrite(buf.data(), 1, buf.size(), file_) != buf.size()) {
+        failed_ = true;
+        return false;
+    }
     uint32_t checksum = IndexWAL::crc32(buf.data(), buf.size());
-    if (fwrite(&checksum, sizeof(uint32_t), 1, file_) != 1) return false;
+    if (fwrite(&checksum, sizeof(uint32_t), 1, file_) != 1 || fflush(file_) != 0) {
+        failed_ = true;
+        return false;
+    }
 
     size_t written = buf.size() + sizeof(uint32_t);
     currentSize_ += written;
     entryCount_++;
     dirty_.store(true, std::memory_order_relaxed);
 
-    fflush(file_);
     unflushedCount_++;
 
     if (syncInterval_ > 0 && unflushedCount_ >= syncInterval_) {
-        fsync(fileno(file_));
+        if (fsync(fileno(file_)) != 0) {
+            failed_ = true;
+            return false;
+        }
         unflushedCount_ = 0;
     }
 
@@ -164,10 +192,12 @@ bool ContentIndexWAL::appendAdd(uint32_t fileIndex, const std::string& fullPath,
 
 bool ContentIndexWAL::appendRemove(uint32_t fileIndex, const std::string& fullPath) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!file_) return false;
+    if (!file_ || failed_) return false;
 
     // H-6: Check WAL file size limit (in-memory tracking)
-    if (currentSize_ >= kMaxWALSize) return false;
+    if (currentSize_ >= kMaxWALSize) {
+        LOG_WARN("ContentIndexWAL", "WAL exceeded soft size limit; preserving remove mutation");
+    }
 
     // Build entry into buffer for CRC32
     std::string buf;
@@ -179,31 +209,43 @@ bool ContentIndexWAL::appendRemove(uint32_t fileIndex, const std::string& fullPa
     buf.append(fullPath.data(), fullPath.size());
 
     // Write entry + CRC32
-    if (fwrite(buf.data(), 1, buf.size(), file_) != buf.size()) return false;
+    if (fwrite(buf.data(), 1, buf.size(), file_) != buf.size()) {
+        failed_ = true;
+        return false;
+    }
     uint32_t checksum = IndexWAL::crc32(buf.data(), buf.size());
-    if (fwrite(&checksum, sizeof(uint32_t), 1, file_) != 1) return false;
+    if (fwrite(&checksum, sizeof(uint32_t), 1, file_) != 1 || fflush(file_) != 0) {
+        failed_ = true;
+        return false;
+    }
 
     size_t written = buf.size() + sizeof(uint32_t);
     currentSize_ += written;
     entryCount_++;
     dirty_.store(true, std::memory_order_relaxed);
 
-    fflush(file_);
     unflushedCount_++;
 
     if (syncInterval_ > 0 && unflushedCount_ >= syncInterval_) {
-        fsync(fileno(file_));
+        if (fsync(fileno(file_)) != 0) {
+            failed_ = true;
+            return false;
+        }
         unflushedCount_ = 0;
     }
 
     return true;
 }
 
-std::vector<ContentIndexWAL::Entry> ContentIndexWAL::readAll(const std::string& walPath) {
+std::vector<ContentIndexWAL::Entry> ContentIndexWAL::readAll(const std::string& walPath,
+                                                              size_t* validBytes) {
     std::vector<Entry> entries;
 
     FILE* f = fopen(walPath.c_str(), "rb");
-    if (!f) return entries;
+    if (!f) {
+        if (validBytes) *validBytes = 0;
+        return entries;
+    }
 
     // Verify the current path-based WAL header. Legacy numeric WALs are
     // intentionally ignored so the derived content cache is rebuilt safely.
@@ -212,8 +254,10 @@ std::vector<ContentIndexWAL::Entry> ContentIndexWAL::readAll(const std::string& 
         fread(&version, sizeof(uint32_t), 1, f) != 1 ||
         magic != kMagic || version != kVersion) {
         fclose(f);
+        if (validBytes) *validBytes = 0;
         return entries;
     }
+    size_t lastValidOffset = 2 * sizeof(uint32_t);
 
     while (true) {
         long startPos = ftell(f);
@@ -272,17 +316,23 @@ std::vector<ContentIndexWAL::Entry> ContentIndexWAL::readAll(const std::string& 
         }
 
         entries.push_back(std::move(entry));
+        lastValidOffset = static_cast<size_t>(afterCRC);
     }
 
     fclose(f);
+    if (validBytes) *validBytes = lastValidOffset;
     return entries;
 }
 
 void ContentIndexWAL::sync() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (file_ && unflushedCount_ > 0) {
-        fsync(fileno(file_));
-        unflushedCount_ = 0;
+        if (fflush(file_) != 0 || fsync(fileno(file_)) != 0) {
+            failed_ = true;
+            LOG_ERROR("ContentIndexWAL", "Failed to sync WAL: " << path_);
+        } else {
+            unflushedCount_ = 0;
+        }
     }
 }
 
@@ -290,8 +340,11 @@ void ContentIndexWAL::close() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (file_) {
         if (unflushedCount_ > 0) {
-            fsync(fileno(file_));
-            unflushedCount_ = 0;
+            if (fflush(file_) != 0 || fsync(fileno(file_)) != 0) {
+                LOG_ERROR("ContentIndexWAL", "Failed to sync WAL before close: " << path_);
+            } else {
+                unflushedCount_ = 0;
+            }
         }
         fclose(file_);
         file_ = nullptr;
@@ -329,7 +382,6 @@ ContentIndexPersistence::ContentIndexPersistence(std::shared_ptr<ContentIndex> i
 {}
 
 ContentIndexPersistence::~ContentIndexPersistence() {
-    alive_->store(false, std::memory_order_release);
     stopAutoCompactionAndWait();
     if (wal_) wal_->close();
 }
@@ -403,22 +455,23 @@ void ContentIndexPersistence::compact(bool force) {
     {
         std::lock_guard<std::mutex> lock(walMutex_);
         const bool pendingSegments = contentWalSegments(walPath_).size() > 1;
+        const bool forceRewrite = forceCompactionNeeded_.load(std::memory_order_acquire);
         if (!wal_) {
             LOG_INFO("ContentIndexPersistence", "Skipping compaction — no WAL");
             return;
         }
         if (force) {
             // Only skip if WAL file is truly empty (header-only, no stale entries)
-            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments) {
+            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments && !forceRewrite) {
                 LOG_INFO("ContentIndexPersistence", "Skipping compaction — WAL is empty");
                 return;
             }
         } else {
-            if (!wal_->isDirty() && !pendingSegments) {
+            if (!wal_->isDirty() && !pendingSegments && !forceRewrite) {
                 LOG_INFO("ContentIndexPersistence", "Skipping compaction — no mutations since last compact");
                 return;
             }
-            if (wal_->entryCount() < kCompactThreshold && !pendingSegments) {
+            if (wal_->entryCount() < kCompactThreshold && !pendingSegments && !forceRewrite) {
                 LOG_INFO("ContentIndexPersistence", "Skipping compaction — below threshold ("
                           << wal_->entryCount() << " < " << kCompactThreshold << ")");
                 return;
@@ -444,6 +497,7 @@ void ContentIndexPersistence::compact(bool force) {
 
     // 3. Write new base file (crash-safety: C-1 fix — write before removing old WAL)
     if (index_->saveToFile(basePath_)) {
+        forceCompactionNeeded_.store(false, std::memory_order_release);
         LOG_INFO("ContentIndexPersistence", "Compacted content index, files="
                   << index_->indexedFileCount()
                   << ", walEntries=" << (oldWal ? oldWal->entryCount() : 0)
@@ -464,12 +518,21 @@ void ContentIndexPersistence::compact(bool force) {
 
 void ContentIndexPersistence::startAutoCompaction(double /*intervalSec*/) {
     stopAutoCompactionAndWait();
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    alive_ = std::make_shared<std::atomic<bool>>(true);
     compactionQueue_ = dispatch_queue_create(
         "com.maceverything.content.compaction", DISPATCH_QUEUE_SERIAL);
     LOG_INFO("ContentIndexPersistence", "Auto-compaction started (event-driven)");
 }
 
 void ContentIndexPersistence::stopAutoCompactionAndWait() {
+    std::lock_guard<std::mutex> lock(queueMutex_);
+    alive_->store(false, std::memory_order_release);
+    if (compactionTimer_) {
+        dispatch_source_cancel(compactionTimer_);
+        dispatch_release(compactionTimer_);
+        compactionTimer_ = nullptr;
+    }
     if (compactionQueue_) {
         // Drain any pending work
         dispatch_sync(compactionQueue_, ^{});
@@ -480,6 +543,7 @@ void ContentIndexPersistence::stopAutoCompactionAndWait() {
 }
 
 void ContentIndexPersistence::scheduleCompaction() {
+    std::lock_guard<std::mutex> lock(queueMutex_);
     if (!compactionQueue_) return;
 
     // Only schedule if not already pending
@@ -489,16 +553,25 @@ void ContentIndexPersistence::scheduleCompaction() {
         return;
     }
 
-    auto delaySec = kCompactionDelaySec;
-    auto alive = alive_;  // prevent use-after-free: block outlives object
-    dispatch_after(
-        dispatch_time(DISPATCH_TIME_NOW, static_cast<int64_t>(delaySec * NSEC_PER_SEC)),
-        compactionQueue_,
-        ^{
-            if (!alive->load(std::memory_order_acquire)) return;
-            this->compactionScheduled_.store(false, std::memory_order_relaxed);
-            this->compact();
-        });
+    if (compactionTimer_) {
+        dispatch_source_cancel(compactionTimer_);
+        dispatch_release(compactionTimer_);
+    }
+    compactionTimer_ = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_TIMER, 0, 0, compactionQueue_);
+    auto alive = alive_;
+    dispatch_source_set_timer(
+        compactionTimer_,
+        dispatch_time(DISPATCH_TIME_NOW,
+                      static_cast<int64_t>(kCompactionDelaySec * NSEC_PER_SEC)),
+        DISPATCH_TIME_FOREVER,
+        NSEC_PER_SEC);
+    dispatch_source_set_event_handler(compactionTimer_, ^{
+        if (!alive->load(std::memory_order_acquire)) return;
+        this->compactionScheduled_.store(false, std::memory_order_relaxed);
+        this->compact();
+    });
+    dispatch_resume(compactionTimer_);
 }
 
 void ContentIndexPersistence::walAppendAdd(uint32_t fileIndex, const std::string& fullPath,
@@ -506,8 +579,9 @@ void ContentIndexPersistence::walAppendAdd(uint32_t fileIndex, const std::string
                                             time_t lastModTime) {
     {
         std::lock_guard<std::mutex> lock(walMutex_);
-        if (wal_) {
-            wal_->appendAdd(fileIndex, fullPath, contentHash, trigrams, lastModTime);
+        if (wal_ && !wal_->appendAdd(fileIndex, fullPath, contentHash, trigrams, lastModTime)) {
+            forceCompactionNeeded_.store(true, std::memory_order_release);
+            LOG_ERROR("ContentIndexPersistence", "Content WAL append failed; forcing base rewrite");
         }
     }
     scheduleCompaction();
@@ -516,8 +590,9 @@ void ContentIndexPersistence::walAppendAdd(uint32_t fileIndex, const std::string
 void ContentIndexPersistence::walAppendRemove(uint32_t fileIndex, const std::string& fullPath) {
     {
         std::lock_guard<std::mutex> lock(walMutex_);
-        if (wal_) {
-            wal_->appendRemove(fileIndex, fullPath);
+        if (wal_ && !wal_->appendRemove(fileIndex, fullPath)) {
+            forceCompactionNeeded_.store(true, std::memory_order_release);
+            LOG_ERROR("ContentIndexPersistence", "Content WAL append failed; forcing base rewrite");
         }
     }
     scheduleCompaction();

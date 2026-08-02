@@ -1,4 +1,5 @@
 #include "ContentIndex.h"
+#include "PathUtils.h"
 #include "Logger.h"
 #include "StringUtils.h"
 #include "SIMDSearch.h"
@@ -12,13 +13,68 @@
 #include <cstring>
 #include <atomic>
 #include <thread>
+#include <string_view>
+#include <sys/sysctl.h>
 #include <unistd.h>
 #include <dispatch/dispatch.h>
 #include <CoreFoundation/CoreFoundation.h>
 
 // --- Magic and version for binary persistence ---
 static constexpr char CONTENT_MAGIC[4] = {'M', 'E', 'C', 'I'};
-static constexpr uint32_t CONTENT_FORMAT_VERSION = 3;
+static constexpr uint32_t CONTENT_FORMAT_VERSION = 4;
+static constexpr uint64_t kMinContentIndexLoadMemory = 512ULL * 1024 * 1024;
+static constexpr uint64_t kMaxContentIndexLoadMemory = 8ULL * 1024 * 1024 * 1024;
+static constexpr uint64_t kEstimatedFileInfoBytes = 256;
+static constexpr uint64_t kEstimatedBytesPerTrigram = 16;
+
+static uint64_t contentIndexLoadMemoryBudget() {
+    uint64_t physicalMemory = 0;
+    size_t size = sizeof(physicalMemory);
+    if (sysctlbyname("hw.memsize", &physicalMemory, &size, nullptr, 0) != 0 ||
+        physicalMemory == 0) {
+        return kMinContentIndexLoadMemory;
+    }
+
+    const uint64_t adaptiveBudget = physicalMemory / 4 * 3;
+    return std::clamp(adaptiveBudget, kMinContentIndexLoadMemory,
+                      kMaxContentIndexLoadMemory);
+}
+
+static bool isAsciiText(std::string_view text) {
+    return std::all_of(text.begin(), text.end(), [](unsigned char c) { return c < 0x80; });
+}
+
+static bool unicodeCaseInsensitiveFind(const std::string& text,
+                                       const std::string& keyword,
+                                       size_t& byteOffset,
+                                       bool& validUTF8) {
+    validUTF8 = true;
+    CFStringRef haystack = CFStringCreateWithBytes(
+        kCFAllocatorDefault, reinterpret_cast<const UInt8*>(text.data()),
+        static_cast<CFIndex>(text.size()), kCFStringEncodingUTF8, false);
+    CFStringRef needle = CFStringCreateWithBytes(
+        kCFAllocatorDefault, reinterpret_cast<const UInt8*>(keyword.data()),
+        static_cast<CFIndex>(keyword.size()), kCFStringEncodingUTF8, false);
+    if (!haystack || !needle) {
+        validUTF8 = false;
+        if (haystack) CFRelease(haystack);
+        if (needle) CFRelease(needle);
+        return false;
+    }
+    CFRange found = CFStringFind(haystack, needle,
+        kCFCompareCaseInsensitive | kCFCompareNonliteral);
+    CFRelease(needle);
+    if (found.location == kCFNotFound) {
+        CFRelease(haystack);
+        return false;
+    }
+    CFIndex usedBytes = 0;
+    CFStringGetBytes(haystack, CFRangeMake(0, found.location),
+                     kCFStringEncodingUTF8, 0, false, nullptr, 0, &usedBytes);
+    CFRelease(haystack);
+    byteOffset = static_cast<size_t>(usedBytes);
+    return true;
+}
 
 ContentIndex::ContentIndex() {
     // No default extensions — content indexing is opt-in.
@@ -31,7 +87,7 @@ void ContentIndex::setExtensions(const std::vector<std::string>& exts) {
     std::unique_lock lock(mutex_);
     extensions_.clear();
     for (const auto& ext : exts) {
-        extensions_.insert(me::toLower(ext));
+        if (!ext.empty()) extensions_.insert(me::toLower(ext));
     }
 }
 
@@ -139,7 +195,8 @@ std::string ContentIndex::generateSnippet(const std::string& path,
     size_t maxRead = std::min(static_cast<uint64_t>(fileSize), maxReadBytes);
     size_t overlapSize = keyword.size() > 1 ? keyword.size() - 1 : 0;
 
-    // Pre-compute lowercase keyword once (SIMD for ASCII)
+    const bool asciiKeyword = isAsciiText(keyword);
+    // Pre-compute lowercase keyword once for the ASCII fast path.
     std::string lowerKey(keyword);
     me::simdToLowerAscii(lowerKey.data(), lowerKey.size());
 
@@ -158,13 +215,28 @@ std::string ContentIndex::generateSnippet(const std::string& path,
         if (bytesRead == 0) break;
         chunk.resize(bytesRead);
 
-        // Lowercase the chunk using SIMD (ASCII fast-path; non-ASCII bytes pass through)
-        lowerChunk.resize(bytesRead);
-        std::memcpy(lowerChunk.data(), chunk.data(), bytesRead);
-        me::simdToLowerAscii(lowerChunk.data(), bytesRead);
+        size_t pos = std::string::npos;
+        if (asciiKeyword && isAsciiText(chunk)) {
+            lowerChunk.resize(bytesRead);
+            std::memcpy(lowerChunk.data(), chunk.data(), bytesRead);
+            me::simdToLowerAscii(lowerChunk.data(), bytesRead);
+            size_t found = me::simdFind(lowerChunk.data(), bytesRead,
+                                        lowerKey.data(), lowerKey.size());
+            if (found < bytesRead) pos = found;
+        } else {
+            bool validUTF8 = true;
+            unicodeCaseInsensitiveFind(chunk, keyword, pos, validUTF8);
+            if (!validUTF8 && asciiKeyword) {
+                lowerChunk.resize(bytesRead);
+                std::memcpy(lowerChunk.data(), chunk.data(), bytesRead);
+                me::simdToLowerAscii(lowerChunk.data(), bytesRead);
+                size_t found = me::simdFind(lowerChunk.data(), bytesRead,
+                                            lowerKey.data(), lowerKey.size());
+                if (found < bytesRead) pos = found;
+            }
+        }
 
-        size_t pos = me::simdFind(lowerChunk.data(), bytesRead, lowerKey.data(), lowerKey.size());
-        if (pos < bytesRead) {
+        if (pos != std::string::npos) {
             globalMatchPos = fileOffset + pos;
             matchContent = std::move(chunk);
             matchContentOffset = fileOffset;
@@ -229,6 +301,9 @@ std::string ContentIndex::generateSnippet(const std::string& path,
 
 ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string& fullPath,
                                            time_t modTime) {
+    const uint64_t startGeneration = mappingGeneration_.load(std::memory_order_acquire);
+    if ((startGeneration & 1U) != 0) return ContentIndexUpdate::Unchanged;
+
     // Check extension (read lock for config)
     bool allowedExtension = false;
     {
@@ -240,6 +315,9 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
     }
     if (!allowedExtension) {
         std::unique_lock lock(mutex_);
+        if (mappingGeneration_.load(std::memory_order_acquire) != startGeneration) {
+            return ContentIndexUpdate::Unchanged;
+        }
         if (fileInfos_.find(fileIndex) == fileInfos_.end()) return ContentIndexUpdate::Unchanged;
         removeFileInternal(fileIndex);
         return ContentIndexUpdate::Removed;
@@ -265,6 +343,9 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
     std::string content = readFileIfText(fullPath, maxSize);
     if (content.empty()) {
         std::unique_lock lock(mutex_);
+        if (mappingGeneration_.load(std::memory_order_acquire) != startGeneration) {
+            return ContentIndexUpdate::Unchanged;
+        }
         if (fileInfos_.find(fileIndex) == fileInfos_.end()) {
             return ContentIndexUpdate::Unchanged;
         }
@@ -273,7 +354,7 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
     }
 
     uint64_t hash = hashContent(content);
-    auto trigrams = extractTrigrams(content);
+    auto trigrams = extractTrigrams(me::normalizeNFC(me::toLower(content)));
 
     // Check if already indexed with same hash
     {
@@ -285,12 +366,16 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
                 it->second.fullPath != fullPath) {
                 lock.unlock();
                 std::unique_lock wlock(mutex_);
+                if (mappingGeneration_.load(std::memory_order_acquire) != startGeneration) {
+                    return ContentIndexUpdate::Unchanged;
+                }
                 auto wit = fileInfos_.find(fileIndex);
-                if (wit != fileInfos_.end()) {
+                if (wit != fileInfos_.end() && wit->second.contentHash == hash) {
                     wit->second.lastModTime = modTime;
                     wit->second.fullPath = fullPath;
+                    return ContentIndexUpdate::Upserted;
                 }
-                return ContentIndexUpdate::Upserted;
+                return ContentIndexUpdate::Unchanged;
             }
             return ContentIndexUpdate::Unchanged;
         }
@@ -298,6 +383,9 @@ ContentIndexUpdate ContentIndex::indexFile(uint32_t fileIndex, const std::string
 
     // Update index (exclusive lock)
     std::unique_lock lock(mutex_);
+    if (mappingGeneration_.load(std::memory_order_acquire) != startGeneration) {
+        return ContentIndexUpdate::Unchanged;
+    }
 
     // Remove old entry if exists
     auto oldIt = fileInfos_.find(fileIndex);
@@ -389,6 +477,22 @@ void ContentIndex::remapFileIndices(const std::unordered_map<uint32_t, uint32_t>
     }
 }
 
+void ContentIndex::beginFileIndexRemap() {
+    remapMutex_.lock();
+    mappingGeneration_.fetch_add(1, std::memory_order_acq_rel);
+}
+
+bool ContentIndex::tryBeginFileIndexRemap() {
+    if (!remapMutex_.try_lock()) return false;
+    mappingGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    return true;
+}
+
+void ContentIndex::endFileIndexRemap() {
+    mappingGeneration_.fetch_add(1, std::memory_order_release);
+    remapMutex_.unlock();
+}
+
 uint32_t ContentIndex::pruneStaleEntries(const std::unordered_set<uint32_t>& validFileIndices) {
     std::unique_lock lock(mutex_);
 
@@ -404,6 +508,22 @@ uint32_t ContentIndex::pruneStaleEntries(const std::unordered_set<uint32_t>& val
     }
 
     return static_cast<uint32_t>(toRemove.size());
+}
+
+std::vector<std::pair<uint32_t, ContentFileInfo>> ContentIndex::removeByPathPrefix(
+    const std::string& pathPrefix) {
+    std::unique_lock lock(mutex_);
+    std::vector<std::pair<uint32_t, ContentFileInfo>> removed;
+    const std::string childPrefix = pathPrefix == "/" ? "/" : pathPrefix + "/";
+    for (const auto& [fileIndex, info] : fileInfos_) {
+        if (info.fullPath == pathPrefix || info.fullPath.rfind(childPrefix, 0) == 0) {
+            removed.emplace_back(fileIndex, info);
+        }
+    }
+    for (const auto& [fileIndex, _] : removed) {
+        removeFileInternal(fileIndex);
+    }
+    return removed;
 }
 
 bool ContentIndex::isFileIndexed(uint32_t fileIndex) const {
@@ -461,7 +581,7 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
                                               const PathResolver& resolvePath) const {
     if (keyword.empty()) return {};
 
-    std::string lowerKey = me::toLower(keyword);
+    std::string lowerKey = me::normalizeNFC(me::toLower(keyword));
 
     std::shared_lock lock(mutex_);
     const uint64_t maxVerificationBytes = maxFileSize_;
@@ -518,17 +638,35 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
         return {};
     }
 
-    // Release shared lock before doing file I/O for verification
+    // Snapshot paths before releasing the index lock. fileIndex belongs to the
+    // SearchEngine's compactable SoA and must not be resolved there after this
+    // lock is released: a concurrent compaction can remap it. ContentFileInfo's
+    // path is the stable identity used by persistence and survives remapping.
+    struct VerificationCandidate {
+        uint32_t fileIndex;
+        std::string fullPath;
+    };
+    std::vector<VerificationCandidate> verificationCandidates;
+    verificationCandidates.reserve(candidates.size());
+    for (uint32_t fileIndex : candidates) {
+        auto info = fileInfos_.find(fileIndex);
+        if (info == fileInfos_.end()) continue;
+        verificationCandidates.push_back({fileIndex, info->second.fullPath});
+    }
+
+    // Release shared lock before doing file I/O for verification.
     lock.unlock();
 
     std::vector<ContentMatch> results;
     constexpr size_t kVerificationBatchSize = 32;
-    results.reserve(std::min<size_t>(candidates.size(), maxResults == 0 ? candidates.size() : maxResults));
+    results.reserve(std::min<size_t>(verificationCandidates.size(),
+        maxResults == 0 ? verificationCandidates.size() : maxResults));
 
-    for (size_t base = 0; base < candidates.size(); base += kVerificationBatchSize) {
+    for (size_t base = 0; base < verificationCandidates.size(); base += kVerificationBatchSize) {
         if (maxResults > 0 && results.size() >= maxResults) break;
 
-        const size_t count = std::min(kVerificationBatchSize, candidates.size() - base);
+        const size_t count = std::min(kVerificationBatchSize,
+                                      verificationCandidates.size() - base);
         struct VerificationBatch {
             explicit VerificationBatch(size_t size) : matches(size), valid(size, 0) {}
             std::vector<ContentMatch> matches;
@@ -536,9 +674,11 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
         };
         auto batch = std::make_shared<VerificationBatch>(count);
         auto verifyCandidate = [&](size_t i) {
-            const uint32_t fileIdx = candidates[base + i];
-            std::string fullPath;
+            const auto& candidate = verificationCandidates[base + i];
+            const uint32_t fileIdx = candidate.fileIndex;
+            std::string fullPath = candidate.fullPath;
             if (!resolvePath || !resolvePath(fileIdx, fullPath)) return;
+            if (fullPath.empty()) return;
 
             uint32_t offset = 0;
             std::string snippet = generateSnippet(
@@ -600,6 +740,15 @@ bool ContentIndex::saveToFile(const std::string& path) const {
     uint32_t version = CONTENT_FORMAT_VERSION;
     safeWrite(&version, sizeof(uint32_t), 1);
 
+    safeWrite(&maxFileSize_, sizeof(uint64_t), 1);
+    uint32_t extensionCount = static_cast<uint32_t>(extensions_.size());
+    safeWrite(&extensionCount, sizeof(uint32_t), 1);
+    for (const auto& ext : extensions_) {
+        uint32_t length = static_cast<uint32_t>(ext.size());
+        safeWrite(&length, sizeof(uint32_t), 1);
+        if (length > 0) safeWrite(ext.data(), 1, length);
+    }
+
     // File count
     uint32_t fileCount = static_cast<uint32_t>(fileInfos_.size());
     safeWrite(&fileCount, sizeof(uint32_t), 1);
@@ -622,9 +771,8 @@ bool ContentIndex::saveToFile(const std::string& path) const {
         safeWrite(&modTime, sizeof(int64_t), 1);
     }
 
-    // H-2: fsync before close to ensure data reaches disk before rename
-    if (ok) fsync(fileno(f));
-    fclose(f);
+    if (ok && (fflush(f) != 0 || fsync(fileno(f)) != 0)) ok = false;
+    if (fclose(f) != 0) ok = false;
 
     if (!ok) {
         remove(tmpPath.c_str());
@@ -635,7 +783,7 @@ bool ContentIndex::saveToFile(const std::string& path) const {
         remove(tmpPath.c_str());
         return false;
     }
-    return true;
+    return PathUtils::syncParentDirectory(path);
 }
 
 bool ContentIndex::loadFromFile(const std::string& path, const IndexResolver& resolveIndex) {
@@ -655,15 +803,99 @@ bool ContentIndex::loadFromFile(const std::string& path, const IndexResolver& re
         return false;
     }
 
+    uint64_t loadedMaxFileSize = 0;
+    if (!readU64(f, loadedMaxFileSize) || loadedMaxFileSize == 0 ||
+        loadedMaxFileSize > 100ULL * 1024 * 1024) {
+        fclose(f);
+        return false;
+    }
+    uint32_t extensionCount = 0;
+    if (!readU32(f, extensionCount) || extensionCount > 10000) {
+        fclose(f);
+        return false;
+    }
+    std::unordered_set<std::string> loadedExtensions;
+    for (uint32_t i = 0; i < extensionCount; ++i) {
+        uint32_t length = 0;
+        if (!readU32(f, length) || length == 0 || length > 64) {
+            fclose(f);
+            return false;
+        }
+        std::string ext(length, '\0');
+        if (fread(ext.data(), 1, length, f) != length) {
+            fclose(f);
+            return false;
+        }
+        loadedExtensions.insert(std::move(ext));
+    }
+
     uint32_t fileCount;
     if (!readU32(f, fileCount)) {
         fclose(f);
         return false;
     }
 
-    constexpr uint32_t kMaxReasonableCount = 50'000'000;
-    if (fileCount > kMaxReasonableCount) {
+    long entriesStart = ftell(f);
+    if (entriesStart < 0 || fseek(f, 0, SEEK_END) != 0) {
+        fclose(f);
+        return false;
+    }
+    long fileEnd = ftell(f);
+    if (fileEnd < entriesStart || fseek(f, entriesStart, SEEK_SET) != 0) {
+        fclose(f);
+        return false;
+    }
+    constexpr uint64_t kMinimumEntryBytes = 4 + 4 + 8 + 4 + 8;
+    constexpr uint32_t kMaxReasonableCount = 10'000'000;
+    uint64_t remainingBytes = static_cast<uint64_t>(fileEnd - entriesStart);
+    if (fileCount > kMaxReasonableCount ||
+        static_cast<uint64_t>(fileCount) > remainingBytes / kMinimumEntryBytes) {
         std::cerr << "[ContentIndex] Corrupt index: fileCount=" << fileCount << " exceeds limit\n";
+        fclose(f);
+        return false;
+    }
+
+    // Validate the complete entry layout and estimate the expanded in-memory
+    // representation before allocating vectors and hash tables. Each trigram is
+    // retained both per file and in a posting list, with allocator overhead.
+    const uint64_t loadMemoryBudget = contentIndexLoadMemoryBudget();
+    uint64_t estimatedMemory = 0;
+    for (uint32_t i = 0; i < fileCount; ++i) {
+        uint32_t ignoredIndex = 0;
+        uint32_t pathLen = 0;
+        if (!readU32(f, ignoredIndex) || !readU32(f, pathLen) || pathLen > 1024 * 1024) {
+            fclose(f);
+            return false;
+        }
+        if (fseek(f, static_cast<long>(pathLen), SEEK_CUR) != 0) {
+            fclose(f);
+            return false;
+        }
+        uint64_t ignoredHash = 0;
+        uint32_t triCount = 0;
+        if (!readU64(f, ignoredHash) || !readU32(f, triCount) || triCount > 1'000'000) {
+            fclose(f);
+            return false;
+        }
+        const uint64_t entryMemory = kEstimatedFileInfoBytes + pathLen +
+            static_cast<uint64_t>(triCount) * kEstimatedBytesPerTrigram;
+        if (entryMemory > loadMemoryBudget - estimatedMemory) {
+            std::cerr << "[ContentIndex] Index exceeds load memory budget ("
+                      << (loadMemoryBudget >> 20) << " MB)\n";
+            fclose(f);
+            return false;
+        }
+        estimatedMemory += entryMemory;
+        const uint64_t trigramBytes = static_cast<uint64_t>(triCount) * sizeof(Trigram);
+        long current = ftell(f);
+        if (current < 0 || current > fileEnd || trigramBytes + sizeof(int64_t) >
+                static_cast<uint64_t>(fileEnd - current) ||
+            fseek(f, static_cast<long>(trigramBytes + sizeof(int64_t)), SEEK_CUR) != 0) {
+            fclose(f);
+            return false;
+        }
+    }
+    if (fseek(f, entriesStart, SEEK_SET) != 0) {
         fclose(f);
         return false;
     }
@@ -743,6 +975,8 @@ bool ContentIndex::loadFromFile(const std::string& path, const IndexResolver& re
     std::unique_lock lock(mutex_);
     invertedIndex_ = std::move(newInvertedIndex);
     fileInfos_ = std::move(newFileInfos);
+    extensions_ = std::move(loadedExtensions);
+    maxFileSize_ = loadedMaxFileSize;
 
     return true;
 }

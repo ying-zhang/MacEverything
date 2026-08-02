@@ -38,6 +38,23 @@
 
 namespace {
 
+static uint16_t lowerPathInto(const char* data, uint16_t length, std::string& buffer) {
+    bool ascii = true;
+    for (uint16_t i = 0; i < length; ++i) {
+        if (static_cast<unsigned char>(data[i]) >= 0x80) {
+            ascii = false;
+            break;
+        }
+    }
+    if (ascii) {
+        buffer.assign(data, length);
+        me::simdToLowerAscii(buffer.data(), buffer.size());
+    } else {
+        buffer = me::toLower(std::string(data, length));
+    }
+    return static_cast<uint16_t>(std::min<size_t>(buffer.size(), UINT16_MAX));
+}
+
 /// Compare a numeric value against a filter's parsed operator and thresholds.
 static bool compareNumeric(uint64_t val, CompareOp op, uint64_t v1, uint64_t v2) {
     switch (op) {
@@ -173,6 +190,7 @@ static bool evalFilter(const QueryNode& node,
                        const char* nameData, uint16_t nameLen,
                        const char* pathData, uint16_t pathLen,
                        std::vector<char>& pathBuf) {
+    if (!node.filterValid) return false;
     const auto& name = node.filterName;
 
     // __pathseg: internal filter — structured path segment matching
@@ -309,12 +327,7 @@ static bool evalTerm(const QueryNode& node,
                 return anchoredNameMatch(origNameData, origNameLen, term, node.nameKind);
             }
             // Check name
-            if (origNameLen >= term.size()) {
-                for (size_t i = 0; i + term.size() <= origNameLen; ++i) {
-                    if (memcmp(origNameData + i, term.data(), term.size()) == 0)
-                        return true;
-                }
-            }
+            if (me::simdContains(origNameData, origNameLen, term.data(), term.size())) return true;
             // Check full path (original case: origPath + "/" + origName)
             if (node.nameOnly) return false;
             size_t fullLen = static_cast<size_t>(origPathLen) + 1 + origNameLen;
@@ -322,13 +335,7 @@ static bool evalTerm(const QueryNode& node,
             memcpy(pathBuf.data(), origPathData, origPathLen);
             pathBuf[origPathLen] = '/';
             memcpy(pathBuf.data() + origPathLen + 1, origNameData, origNameLen);
-            if (fullLen >= term.size()) {
-                for (size_t i = 0; i + term.size() <= fullLen; ++i) {
-                    if (memcmp(pathBuf.data() + i, term.data(), term.size()) == 0)
-                        return true;
-                }
-            }
-            return false;
+            return me::simdContains(pathBuf.data(), fullLen, term.data(), term.size());
         }
         // Case-insensitive (default): use lowercase nameData
         const auto& lower = node.textLower;
@@ -377,16 +384,20 @@ static bool evalTerm(const QueryNode& node,
     case MatchMode::REGEX: {
         auto it = regexCache.find(&node);
         if (it == regexCache.end()) return false;
+        const char* regexNameData = node.caseSensitive ? origNameData : nameData;
+        uint16_t regexNameLen = node.caseSensitive ? origNameLen : nameLen;
+        const char* regexPathData = node.caseSensitive ? origPathData : pathData;
+        uint16_t regexPathLen = node.caseSensitive ? origPathLen : pathLen;
         // Match against name using RE2 zero-copy StringPiece (no per-record allocation)
-        re2::StringPiece sp(nameData, nameLen);
+        re2::StringPiece sp(regexNameData, regexNameLen);
         if (RE2::PartialMatch(sp, *it->second)) return true;
         // If not nameOnly, also try full path match
         if (node.nameOnly) return false;
-        size_t fullLen = static_cast<size_t>(pathLen) + 1 + nameLen;
+        size_t fullLen = static_cast<size_t>(regexPathLen) + 1 + regexNameLen;
         if (pathBuf.size() < fullLen) pathBuf.resize(fullLen * 2);
-        memcpy(pathBuf.data(), pathData, pathLen);
-        pathBuf[pathLen] = '/';
-        memcpy(pathBuf.data() + pathLen + 1, nameData, nameLen);
+        memcpy(pathBuf.data(), regexPathData, regexPathLen);
+        pathBuf[regexPathLen] = '/';
+        memcpy(pathBuf.data() + regexPathLen + 1, regexNameData, regexNameLen);
         re2::StringPiece fullSp(pathBuf.data(), fullLen);
         return RE2::PartialMatch(fullSp, *it->second);
     }
@@ -775,22 +786,49 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         bool stageTooMany = false;
         if (!nameTrigramIndex_.empty()) {
             if (allTermKeys.size() > 1) {
-                // Multi-word: intersect candidates of each term independently
-                bool allOk = true;
+                // A plain term can match either the filename or any directory component.
+                // Build that union per term, then intersect the unions for AND semantics.
+                bool allCovered = true;
                 std::vector<uint32_t> intersected;
-                for (size_t ti = 0; ti < allTermKeys.size() && allOk; ti++) {
-                    bool found = false;
-                    auto termCands = intersectPostingLists(nameTrigramIndex_, allTermKeys[ti], found);
-                    if (!found) { allOk = false; break; }
-                    if (ti == 0) {
-                        intersected = std::move(termCands);
-                    } else {
-                        intersected = me::intersectSortedPostingLists(intersected, termCands);
+                for (size_t ti = 0; ti < allTermKeys.size() && allCovered; ++ti) {
+                    bool nameFound = false;
+                    auto termCands = intersectPostingLists(
+                        nameTrigramIndex_, allTermKeys[ti], nameFound);
+
+                    bool pathFound = false;
+                    if (!pathTrigramIndex_.empty()) {
+                        auto pathIdxCands = intersectPostingLists(
+                            pathTrigramIndex_, allTermKeys[ti], pathFound);
+                        std::vector<uint32_t> expanded;
+                        for (uint32_t pi : pathIdxCands) {
+                            if (pi >= pathIdxToRecords_.size()) continue;
+                            const auto& recIds = pathIdxToRecords_[pi];
+                            expanded.insert(expanded.end(), recIds.begin(), recIds.end());
+                        }
+                        sortUnique(expanded);
+                        unionSortedInto(termCands, expanded);
                     }
+
+                    bool pinyinFound = false;
+                    if (isAsciiAlphaNumericQuery(allTermKeys[ti]) &&
+                        !pinyinInitialsTrigramIndex_.empty()) {
+                        auto pinyinCands = intersectPostingLists(
+                            pinyinInitialsTrigramIndex_, allTermKeys[ti], pinyinFound);
+                        unionSortedInto(termCands, pinyinCands);
+                    }
+
+                    if ((!nameFound && !pathFound && !pinyinFound) ||
+                        termCands.size() > candidateThreshold) {
+                        allCovered = false;
+                        stageTooMany = true;
+                        break;
+                    }
+                    if (ti == 0) intersected = std::move(termCands);
+                    else intersected = me::intersectSortedPostingLists(intersected, termCands);
                 }
-                if (allOk && !intersected.empty()) {
+                if (allCovered) {
                     anyCovered = true;
-                    unionSortedInto(nameCands, intersected);
+                    nameCands = std::move(intersected);
                     stageTooMany = nameCands.size() > candidateThreshold;
                 }
             } else {
@@ -804,7 +842,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             }
         }
 
-        if (!stageTooMany && isAsciiAlphaNumericQuery(trigramKey) &&
+        if (allTermKeys.size() <= 1 && !stageTooMany &&
+            isAsciiAlphaNumericQuery(trigramKey) &&
             !pinyinInitialsTrigramIndex_.empty()) {
             bool pinyinAllFound = false;
             auto pinyinCands = intersectPostingLists(pinyinInitialsTrigramIndex_, trigramKey, pinyinAllFound);
@@ -815,7 +854,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             }
         }
 
-        if (!stageTooMany && !pathTrigramIndex_.empty()) {
+        if (allTermKeys.size() <= 1 && !stageTooMany && !pathTrigramIndex_.empty()) {
             bool pathAllFound = false;
             auto pathIdxCands = intersectPostingLists(pathTrigramIndex_, trigramKey, pathAllFound);
             if (pathAllFound) {
@@ -1053,13 +1092,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     uint32_t pi = pIndices[idx];
                     const char* opd = pathPool.data(pi);
                     uint16_t opl = pathPool.length(pi);
-                    lowerPathBuf.assign(opd, opl);
-                    me::simdToLowerAscii(lowerPathBuf.data(), opl);
+                    uint16_t lowerOpl = lowerPathInto(opd, opl, lowerPathBuf);
                     const char* ond = origNamePool.data(idx);
                     uint16_t onl = origNamePool.length(idx);
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
+                                  nd, nl, lowerPathBuf.data(), lowerOpl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
                     uint32_t sc = computeMultiTermScore(nd, nl, sTerms,
                                                         static_cast<uint32_t>(opl + 1 + nl));
@@ -1102,13 +1140,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 uint32_t pi = pathIndices_[idx];
                 const char* opd = pathPool_.data(pi);
                 uint16_t opl = pathPool_.length(pi);
-                smallLowerPathBuf.assign(opd, opl);
-                me::simdToLowerAscii(smallLowerPathBuf.data(), opl);
+                uint16_t lowerOpl = lowerPathInto(opd, opl, smallLowerPathBuf);
                 const char* ond = origNamePool_.data(idx);
                 uint16_t onl = origNamePool_.length(idx);
                 if (!evalNode(*ast, smallTypesPtr[idx], smallSizesPtr[idx],
                               static_cast<time_t>(smallModTimesPtr[idx]),
-                              nd, nl, smallLowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
+                              nd, nl, smallLowerPathBuf.data(), lowerOpl, pyd, pyl, ond, onl, opd, opl,
                               pathBuf, regexCache)) continue;
                 uint32_t sc = computeMultiTermScore(nd, nl, scoringTerms,
                                                     static_cast<uint32_t>(opl + 1 + nl));
@@ -1218,14 +1255,13 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     uint32_t pi = pIndices[idx];
                     const char* opd = pathPool.data(pi);
                     uint16_t opl = pathPool.length(pi);
-                    lowerPathBuf.assign(opd, opl);
-                    me::simdToLowerAscii(lowerPathBuf.data(), opl);
+                    uint16_t lowerOpl = lowerPathInto(opd, opl, lowerPathBuf);
                     const char* ond = origNamePool.data(static_cast<uint32_t>(idx));
                     uint16_t onl = origNamePool.length(static_cast<uint32_t>(idx));
 
                     if (!evalNode(*astPtr, typesPtr[idx], sizesPtr[idx],
                                   static_cast<time_t>(modTimesPtr[idx]),
-                                  nd, nl, lowerPathBuf.data(), opl, pyd, pyl, ond, onl, opd, opl,
+                                  nd, nl, lowerPathBuf.data(), lowerOpl, pyd, pyl, ond, onl, opd, opl,
                                   localPathBuf, regCache)) continue;
 
                     uint32_t sc = computeMultiTermScore(nd, nl, sTerms,

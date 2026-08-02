@@ -72,6 +72,7 @@ private:
         std::string origin;  // from Origin: header (lowercased)
         bool originPresent = false;
         std::string authorization;  // from Authorization: header (raw)
+        bool valid = true;
     };
 
     HttpRequest parseRequest(const std::string& raw);

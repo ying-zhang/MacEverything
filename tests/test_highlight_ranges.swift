@@ -69,6 +69,19 @@ func testSubstringMultiple() {
     assertEqual(o[1].1, 14, "second end")
 }
 
+func testCaseFoldExpansionUsesOriginalIndices() {
+    print("  test: Unicode case-fold expansion keeps original indices")
+    let text = "İD.png"
+    let hint = HighlightHint(text: "png", matchMode: .substring)
+    let ranges = computeRangesForHint(in: text, hint: hint)
+    assertEqual(ranges.count, 1, "should find suffix after expanding lowercase character")
+    if let range = ranges.first {
+        let o = offsets(text, [range])
+        assertEqual(o[0].0, 3, "suffix start uses original string")
+        assertEqual(o[0].1, 6, "suffix end uses original string")
+    }
+}
+
 func testSubstringCaseSensitive() {
     print("  test: substring case-sensitive — matches only exact case")
     let hint = HighlightHint(text: "Hello", matchMode: .substring, caseSensitive: true)
@@ -330,6 +343,7 @@ struct TestRunner {
         // computeRangesForHint
         testSubstringBasic()
         testSubstringMultiple()
+        testCaseFoldExpansionUsesOriginalIndices()
         testSubstringCaseSensitive()
         testSubstringNoMatch()
         testSubstringEmpty()

@@ -211,6 +211,7 @@ inline bool parseHttpResponse(const std::string& raw, HttpResponse& response,
 
 inline bool httpGet(uint16_t port, const std::string& target,
                     HttpResponse& response, std::string& error) {
+    static constexpr size_t kMaxHttpResponseBytes = 16 * 1024 * 1024;
     int socketFD = ::socket(AF_INET, SOCK_STREAM, 0);
     if (socketFD < 0) {
         error = std::string("socket: ") + std::strerror(errno);
@@ -261,6 +262,11 @@ inline bool httpGet(uint16_t port, const std::string& target,
     while (true) {
         ssize_t count = ::recv(socketFD, buffer, sizeof(buffer), 0);
         if (count > 0) {
+            if (static_cast<size_t>(count) > kMaxHttpResponseBytes - raw.size()) {
+                error = "MacEverything response exceeds the 16 MB limit";
+                ::close(socketFD);
+                return false;
+            }
             raw.append(buffer, static_cast<size_t>(count));
         } else if (count == 0) {
             break;

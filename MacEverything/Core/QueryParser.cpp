@@ -106,8 +106,14 @@ std::unique_ptr<QueryNode> QueryParser::parseAtom() {
 
     // Grouping: < or_expr >
     if (tok.type == TokenType::LANGLE) {
+        if (nestingDepth_ >= kMaxNestingDepth) {
+            advance();
+            return QueryNode::makeTerm("<");
+        }
         advance();
+        ++nestingDepth_;
         auto inner = parseOrExpr();
+        --nestingDepth_;
         // Consume closing '>' if present (tolerant of missing)
         match(TokenType::RANGLE);
         return inner;

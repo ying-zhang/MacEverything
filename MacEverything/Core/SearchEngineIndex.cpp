@@ -300,7 +300,13 @@ void SearchEngine::addExtensionForRecord(uint32_t idx) {
 
 void SearchEngine::removeExtensionForRecord(uint32_t idx) {
     if (idx >= namePool_.entryCount() || !namePool_.isLive(idx)) return;
-    std::string ext = extractExtFromName(namePool_.data(idx), namePool_.length(idx));
+    removeExtensionForRecord(idx, namePool_.data(idx), namePool_.length(idx));
+}
+
+void SearchEngine::removeExtensionForRecord(uint32_t idx,
+                                             const char* nameData,
+                                             uint16_t nameLen) {
+    std::string ext = extractExtFromName(nameData, nameLen);
     if (ext.empty()) return;
     auto it = extensionIndex_.find(ext);
     if (it != extensionIndex_.end()) {

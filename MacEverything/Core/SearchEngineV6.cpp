@@ -122,7 +122,8 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
     // Initialize dirty page bitmap
     uint32_t pageCount = (n + kRecordsPerPage - 1) / kRecordsPerPage;
     dirtyPages_.assign(pageCount, false);
-    fullRewriteNeeded_.store(false, std::memory_order_relaxed);
+    fullRewriteGeneration_.store(0, std::memory_order_relaxed);
+    acknowledgedRewriteGeneration_.store(0, std::memory_order_relaxed);
 
     LOG_INFO("SearchEngine", "loadRecordsV6: loaded " << n << " records (" << actualLive
              << " live), Phase 2 pending");
@@ -269,8 +270,11 @@ void SearchEngine::completePhase2() {
                 // Use snapshot name data (pre-tombstone) to find and remove stale trigram entries
                 if (i < snapNamePool.entryCount() && snapNamePool.isLive(i)) {
                     removeTrigramsForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
+                    removeExtensionForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
+                    removeCJKBigramsForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
                 }
                 removePinyinInitialsForRecord(i);
+                removePathTrigramsForRecord(i);
             }
         }
         recentCache_ = buildRecentCacheFromData(types_, modTimes_, kRecentCacheSize);

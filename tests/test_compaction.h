@@ -43,5 +43,64 @@ static void runCompactionTests() {
     engine.compactRecords();
     check(engine.recordCount() == 50, "Compact: no-op compaction preserves recordCount");
 
+    // Exercise repeated COW swaps while readers validate generation-stable results.
+    {
+        SearchEngine concurrentEngine;
+        std::vector<FileRecord> concurrentRecords;
+        for (int i = 0; i < 100; ++i) {
+            concurrentRecords.push_back({"survivor_marker_" + std::to_string(i) + ".txt",
+                                         "/stable", 1, 1, 1});
+        }
+        for (int i = 0; i < 4'000; ++i) {
+            concurrentRecords.push_back({"churn_" + std::to_string(i) + ".dat",
+                                         "/mutable", 1, 1, 1});
+        }
+        concurrentEngine.loadRecords(std::move(concurrentRecords));
+
+        std::atomic<bool> stopReaders{false};
+        std::atomic<bool> inconsistent{false};
+        std::atomic<uint64_t> stableReads{0};
+        std::vector<std::thread> readers;
+        for (int threadIndex = 0; threadIndex < 4; ++threadIndex) {
+            readers.emplace_back([&] {
+                while (!stopReaders.load(std::memory_order_acquire)) {
+                    uint64_t generation = concurrentEngine.compactionGeneration();
+                    auto indices = concurrentEngine.query("survivor_marker", 200);
+                    size_t visited = 0;
+                    bool validNames = true;
+                    bool stable = concurrentEngine.forEachRecordWithPathIfGeneration(
+                        indices, generation,
+                        [&](uint32_t, const FileRecord& record, const std::string&) {
+                            ++visited;
+                            if (record.name.rfind("survivor_marker_", 0) != 0) validNames = false;
+                        });
+                    if (stable) {
+                        stableReads.fetch_add(1, std::memory_order_relaxed);
+                        if (!validNames || visited != 100) {
+                            inconsistent.store(true, std::memory_order_release);
+                        }
+                    }
+                }
+            });
+        }
+
+        for (int round = 0; round < 6; ++round) {
+            for (int i = 0; i < 500; ++i) {
+                FileRecord replacement{"churn_" + std::to_string(i) + ".dat",
+                                       "/mutable", 1, static_cast<uint64_t>(round + 2), round + 2};
+                concurrentEngine.updateByPath("/mutable/churn_" + std::to_string(i) + ".dat",
+                                              std::move(replacement));
+            }
+            concurrentEngine.compactRecords();
+        }
+        stopReaders.store(true, std::memory_order_release);
+        for (auto& reader : readers) reader.join();
+
+        check(stableReads.load(std::memory_order_relaxed) > 0,
+              "Compact concurrent stress completed stable reader snapshots");
+        check(!inconsistent.load(std::memory_order_acquire),
+              "Compact concurrent stress preserved query consistency");
+    }
+
     std::cout << "\n";
 }

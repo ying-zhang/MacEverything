@@ -229,6 +229,13 @@ static void runQueryFilterTests() {
         check(ast->numVal2 == 1024ULL * 1024, "56.18d high = 1MB");
     }
 
+    // ── 56.18b Oversized values saturate without undefined conversion ──
+    {
+        auto ast = QueryParser::parse("size:>99999999999999999999gb");
+        check(ast != nullptr, "56.18d oversized size parses");
+        check(ast->numVal1 == UINT64_MAX, "56.18e oversized size saturates");
+    }
+
     // ── 56.19 Len parsing ──
     {
         auto ast = QueryParser::parse("len:>=10");

@@ -33,7 +33,11 @@ static void runContentIndexTests() {
 
     // isBinaryFile was removed — binary detection is handled internally during indexing
     ContentIndex ci;
-    ci.setExtensions({"txt", "bin"});
+    ci.setExtensions({"txt", "", "bin"});
+    auto configuredExtensions = ci.getExtensions();
+    check(std::find(configuredExtensions.begin(), configuredExtensions.end(), "") ==
+              configuredExtensions.end(),
+          "ContentIndex: empty extensions are discarded before persistence");
 
     auto indexed = ci.indexFile(0, tmpDir + "/text.txt");
     check(indexed == ContentIndexUpdate::Upserted, "ContentIndex: indexFile succeeds for text file");
@@ -54,6 +58,31 @@ static void runContentIndexTests() {
     auto noMatch = ci.query("zzzznotfound", 100, resolver);
     check(noMatch.empty(), "ContentIndex: query for non-existent keyword returns empty");
 
+    // Invalid UTF-8 elsewhere in a text-like file must not hide an ASCII match.
+    {
+        const std::string invalidPath = tmpDir + "/invalid-utf8.txt";
+        FILE* f = fopen(invalidPath.c_str(), "wb");
+        const unsigned char bytes[] = {
+            'p', 'r', 'e', 'f', 'i', 'x', ' ', 0xff, ' ',
+            'H', 'e', 'L', 'L', 'o', ' ', 's', 'u', 'f', 'f', 'i', 'x'
+        };
+        fwrite(bytes, 1, sizeof(bytes), f);
+        fclose(f);
+
+        ContentIndex invalidIndex;
+        invalidIndex.setExtensions({"txt"});
+        check(invalidIndex.indexFile(9, invalidPath) == ContentIndexUpdate::Upserted,
+              "ContentIndex: text-like invalid UTF-8 fixture indexed");
+        auto invalidMatches = invalidIndex.query("hello", 10,
+            [&](uint32_t idx, std::string& path) {
+                if (idx != 9) return false;
+                path = invalidPath;
+                return true;
+            });
+        check(invalidMatches.size() == 1,
+              "ContentIndex: ASCII match survives surrounding invalid UTF-8");
+    }
+
     // Test persistence
     std::string savePath = tmpDir + "/ci.bin";
     bool saved = ci.saveToFile(savePath);
@@ -66,6 +95,27 @@ static void runContentIndexTests() {
 
     auto matches2 = ci2.query("trigram", 100, resolver);
     check(!matches2.empty(), "ContentIndex: loaded index can query successfully");
+    check(ci2.getExtensions() == std::vector<std::string>{"txt", "bin"} ||
+          ci2.getExtensions() == std::vector<std::string>{"bin", "txt"},
+          "ContentIndex: persisted extension configuration is restored");
+
+    // Unicode lowercasing and canonical equivalence must agree between index and query.
+    {
+        const std::string unicodePath = tmpDir + "/unicode.txt";
+        { std::ofstream out(unicodePath); out << "CAF\xC3\x89 re\xCC\x81sume\xCC\x81"; }
+        ContentIndex unicodeIndex;
+        unicodeIndex.setExtensions({"txt"});
+        check(unicodeIndex.indexFile(7, unicodePath) == ContentIndexUpdate::Upserted,
+              "ContentIndex: Unicode fixture indexed");
+        auto unicodeMatches = unicodeIndex.query("caf\xC3\xA9 R\xC3\x89SUM\xC3\x89", 10,
+            [&](uint32_t idx, std::string& path) {
+                if (idx != 7) return false;
+                path = unicodePath;
+                return true;
+            });
+        check(unicodeMatches.size() == 1,
+              "ContentIndex: Unicode case and NFC/NFD variants match end to end");
+    }
 
     // Test: indexFile returns false for unchanged file (no spurious WAL writes)
     ContentIndex ci3;
@@ -75,6 +125,40 @@ static void runContentIndexTests() {
     auto second = ci3.indexFile(0, tmpDir + "/text.txt");
     check(second == ContentIndexUpdate::Unchanged, "ContentIndex: second indexFile (unchanged) returns unchanged");
     check(ci3.indexedFileCount() == 1, "ContentIndex: still 1 file indexed after duplicate call");
+
+    // A sparse but structurally valid file must be rejected by the preflight
+    // memory budget before any large trigram vectors are allocated.
+    {
+        const std::string oversizedPath = tmpDir + "/oversized-ci.bin";
+        FILE* f = fopen(oversizedPath.c_str(), "wb");
+        const char magic[4] = {'M', 'E', 'C', 'I'};
+        const uint32_t version = 4;
+        const uint64_t maxFileSize = 1024 * 1024;
+        const uint32_t extensionCount = 0;
+        const uint32_t fileCount = 1'000;
+        fwrite(magic, 1, sizeof(magic), f);
+        fwrite(&version, sizeof(version), 1, f);
+        fwrite(&maxFileSize, sizeof(maxFileSize), 1, f);
+        fwrite(&extensionCount, sizeof(extensionCount), 1, f);
+        fwrite(&fileCount, sizeof(fileCount), 1, f);
+        for (uint32_t i = 0; i < fileCount; ++i) {
+            const uint32_t pathLen = 0;
+            const uint64_t hash = 0;
+            const uint32_t triCount = 1'000'000;
+            const int64_t modTime = 0;
+            fwrite(&i, sizeof(i), 1, f);
+            fwrite(&pathLen, sizeof(pathLen), 1, f);
+            fwrite(&hash, sizeof(hash), 1, f);
+            fwrite(&triCount, sizeof(triCount), 1, f);
+            fseek(f, static_cast<long>(triCount * sizeof(Trigram)), SEEK_CUR);
+            fwrite(&modTime, sizeof(modTime), 1, f);
+        }
+        fclose(f);
+
+        ContentIndex oversizedIndex;
+        check(!oversizedIndex.loadFromFile(oversizedPath),
+              "ContentIndex: load rejects files exceeding the memory budget");
+    }
 
     fs::remove_all(tmpDir);
     std::cout << "\n";

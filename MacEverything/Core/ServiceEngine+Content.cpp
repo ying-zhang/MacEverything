@@ -135,17 +135,20 @@ void ServiceEngine::startContentIndexing() {
 
             const auto& entry = entries[i];
             if (this->isVolumeUnmounting(entry.fullPath)) return;
-            auto update = contentIndex->indexFile(entry.idx, entry.fullPath, entry.modTime);
+            auto mappingLease = contentIndex->acquireFileIndexMappingLease();
+            uint32_t fileIndex = engine->indexForPath(entry.fullPath);
+            if (fileIndex == UINT32_MAX) return;
+            auto update = contentIndex->indexFile(fileIndex, entry.fullPath, entry.modTime);
 
             if (update == ContentIndexUpdate::Upserted && contentPersistence) {
                 ContentFileInfo info;
-                if (contentIndex->getFileInfo(entry.idx, info)) {
-                    contentPersistence->walAppendAdd(entry.idx, entry.fullPath, info.contentHash,
+                if (contentIndex->getFileInfo(fileIndex, info)) {
+                    contentPersistence->walAppendAdd(fileIndex, entry.fullPath, info.contentHash,
                                                      info.trigrams, info.lastModTime);
                 }
             } else if (update == ContentIndexUpdate::Removed && contentPersistence) {
-                contentPersistence->walAppendRemove(entry.idx, entry.fullPath);
-            } else if (update == ContentIndexUpdate::Unchanged && contentIndex->isFileIndexed(entry.idx)) {
+                contentPersistence->walAppendRemove(fileIndex, entry.fullPath);
+            } else if (update == ContentIndexUpdate::Unchanged && contentIndex->isFileIndexed(fileIndex)) {
                 skipped->fetch_add(1, std::memory_order_relaxed);
             }
 
@@ -184,17 +187,98 @@ void ServiceEngine::startContentIndexing() {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::rebuildContentIndex() {
-    if (!safeConfig().contentIndexingEnabled) return;
+    contentRebuildRevision_.fetch_add(1, std::memory_order_acq_rel);
+    auto work = ^{
+        std::vector<std::string> extensions;
+        uint64_t maxFileSize = 0;
+        bool consumedPendingConfig = false;
+        {
+            std::lock_guard<std::mutex> lock(this->contentRebuildRequestMutex_);
+            if (this->hasPendingContentConfig_) {
+                extensions = this->pendingContentExtensions_;
+                maxFileSize = this->pendingContentMaxFileSize_;
+                this->hasPendingContentConfig_ = false;
+                consumedPendingConfig = true;
+            }
+        }
+        if (!consumedPendingConfig) {
+            auto contentIndex = this->safeContentIndex();
+            if (!contentIndex) return;
+            extensions = contentIndex->getExtensions();
+            maxFileSize = contentIndex->getMaxFileSize();
+        }
+        this->rebuildContentIndexOnMutationQueue(extensions, maxFileSize);
+    };
+    if (dispatch_get_specific(this) == this) work();
+    else dispatch_sync(mutationQueue_, work);
+}
+
+void ServiceEngine::rebuildContentIndex(const std::vector<std::string>& extensions,
+                                        uint64_t maxFileSize) {
+    {
+        std::lock_guard<std::mutex> lock(contentRebuildRequestMutex_);
+        pendingContentExtensions_ = extensions;
+        pendingContentMaxFileSize_ = maxFileSize;
+        hasPendingContentConfig_ = true;
+    }
+    contentRebuildRevision_.fetch_add(1, std::memory_order_acq_rel);
+    auto work = ^{ this->rebuildContentIndex(); };
+    if (dispatch_get_specific(this) == this) work();
+    else dispatch_sync(mutationQueue_, work);
+}
+
+void ServiceEngine::requestContentIndexRebuild(
+    const std::vector<std::string>& extensions, uint64_t maxFileSize) {
+    if (shuttingDown_.load(std::memory_order_acquire)) return;
+    {
+        std::lock_guard<std::mutex> lock(contentRebuildRequestMutex_);
+        pendingContentExtensions_ = extensions;
+        pendingContentMaxFileSize_ = maxFileSize;
+        hasPendingContentConfig_ = true;
+    }
+    const uint64_t revision = contentRebuildRevision_.fetch_add(1, std::memory_order_acq_rel) + 1;
+    dispatch_async(mutationQueue_, ^{
+        if (revision != this->contentRebuildRevision_.load(std::memory_order_acquire)) return;
+        std::vector<std::string> desiredExtensions;
+        uint64_t desiredMaxFileSize = 0;
+        {
+            std::lock_guard<std::mutex> lock(this->contentRebuildRequestMutex_);
+            if (!this->hasPendingContentConfig_) return;
+            desiredExtensions = this->pendingContentExtensions_;
+            desiredMaxFileSize = this->pendingContentMaxFileSize_;
+            this->hasPendingContentConfig_ = false;
+        }
+        this->rebuildContentIndexOnMutationQueue(desiredExtensions, desiredMaxFileSize);
+    });
+}
+
+void ServiceEngine::rebuildContentIndexOnMutationQueue(
+    const std::vector<std::string>& extensions, uint64_t maxFileSize) {
+    auto contentIndex = safeContentIndex();
+    if (!contentIndex) return;
+    if (!safeConfig().contentIndexingEnabled) {
+        contentIndex->setExtensions(extensions);
+        contentIndex->setMaxFileSize(maxFileSize);
+        return;
+    }
 
     auto engine = safeEngine();
-    auto contentIndex = safeContentIndex();
-    if (!engine || !contentIndex) return;
+    if (!engine) return;
 
     // Cancel in-flight content indexing and wait
     contentIndexGeneration_.fetch_add(1, std::memory_order_acq_rel);
     if (isContentIndexing_.load(std::memory_order_relaxed)) {
         cancelContentIndexing_.store(true, std::memory_order_relaxed);
         dispatch_group_wait(contentIndexingGroup_, DISPATCH_TIME_FOREVER);
+    }
+
+    // Detach from the main persistence object first. Its compaction mutex waits
+    // for a synchronous content compact already in progress and prevents new
+    // ones from retaining the old persistence object.
+    auto persistence = safePersistence();
+    if (persistence) {
+        persistence->setContentIndexPersistence(nullptr);
+        persistence->setContentIndex(nullptr);
     }
 
     // Stop old content persistence
@@ -208,15 +292,29 @@ void ServiceEngine::rebuildContentIndex() {
 
     // Replace contentIndex under exclusive lock
     {
-        auto exts = contentIndex->getExtensions();
-        auto maxSize = contentIndex->getMaxFileSize();
-
         auto newIndex = std::make_shared<ContentIndex>();
-        newIndex->setExtensions(exts);
-        newIndex->setMaxFileSize(maxSize);
+        newIndex->setExtensions(extensions);
+        newIndex->setMaxFileSize(maxFileSize);
 
         std::unique_lock lock(contentMutex_);
         contentIndex_ = newIndex;
+    }
+    if (persistence) persistence->setContentIndex(safeContentIndex());
+
+    // A configuration rebuild must not reload entries for extensions or file
+    // sizes that are no longer allowed.
+    std::string cacheDir = safeConfig().cachePath;
+    std::error_code ec;
+    fs::remove(cacheDir + "/content_index.bin", ec);
+    ec.clear();
+    fs::remove(cacheDir + "/content_index.wal", ec);
+    ec.clear();
+    for (const auto& entry : fs::directory_iterator(cacheDir, ec)) {
+        if (ec) break;
+        if (entry.path().filename().string().rfind("content_index.wal.seg.", 0) == 0) {
+            fs::remove(entry.path(), ec);
+            ec.clear();
+        }
     }
 
     // Re-setup persistence and re-index
@@ -225,6 +323,17 @@ void ServiceEngine::rebuildContentIndex() {
 }
 
 void ServiceEngine::clearContentIndex() {
+    contentRebuildRevision_.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> lock(contentRebuildRequestMutex_);
+        hasPendingContentConfig_ = false;
+    }
+    auto work = ^{ this->clearContentIndexOnMutationQueue(); };
+    if (dispatch_get_specific(this) == this) work();
+    else dispatch_sync(mutationQueue_, work);
+}
+
+void ServiceEngine::clearContentIndexOnMutationQueue() {
     auto contentIndex = safeContentIndex();
     if (!contentIndex) return;
 
@@ -236,6 +345,12 @@ void ServiceEngine::clearContentIndex() {
 
     std::vector<std::string> exts = contentIndex->getExtensions();
     uint64_t maxSize = contentIndex->getMaxFileSize();
+
+    auto persistence = safePersistence();
+    if (persistence) {
+        persistence->setContentIndexPersistence(nullptr);
+        persistence->setContentIndex(nullptr);
+    }
 
     {
         auto oldCP = safeContentPersistence();
@@ -267,6 +382,7 @@ void ServiceEngine::clearContentIndex() {
         std::unique_lock lock(contentMutex_);
         contentIndex_ = newIndex;
     }
+    if (persistence) persistence->setContentIndex(newIndex);
 
     if (safeConfig().contentIndexingEnabled) {
         setupContentPersistence();
@@ -296,6 +412,7 @@ void ServiceEngine::updateContentForPath(
     if (!engine || !contentIndex) return;
 
     auto contentPersistence = safeContentPersistence();
+    auto mappingLease = contentIndex->acquireFileIndexMappingLease();
 
     if (removed) {
         uint32_t fileIndex = engine->indexForPath(fullPath);

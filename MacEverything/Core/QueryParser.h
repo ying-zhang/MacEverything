@@ -35,4 +35,6 @@ private:
 
     std::vector<Token> tokens_;
     size_t pos_ = 0;
+    size_t nestingDepth_ = 0;
+    static constexpr size_t kMaxNestingDepth = 64;
 };

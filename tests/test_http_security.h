@@ -128,6 +128,17 @@ static void runHttpSecurityTests() {
     HttpServer server;
     server.setServerMetadata({"test", 1, "1.0.0-test"});
     server.setAuthToken("abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234");
+    auto configuredExtensions = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"txt"});
+    auto configuredMaxSize = std::make_shared<uint64_t>(1024 * 1024);
+    HttpServer::AdminCallbacks adminCallbacks;
+    adminCallbacks.onGetContentExtensions = [configuredExtensions] { return *configuredExtensions; };
+    adminCallbacks.onGetContentMaxFileSize = [configuredMaxSize] { return *configuredMaxSize; };
+    adminCallbacks.onSetContentConfig = [configuredExtensions, configuredMaxSize](
+        const std::vector<std::string>& exts, uint64_t size) {
+        *configuredExtensions = exts;
+        *configuredMaxSize = size;
+    };
+    server.setAdminCallbacks(std::move(adminCallbacks));
 
     uint16_t port = 19861; // non-default to avoid conflicts
     bool started = server.start(port,
@@ -191,6 +202,15 @@ static void runHttpSecurityTests() {
         auto resp = httpSendRaw(port, mkGet(port, "/api/status", hostPort, lowerScheme));
         check(httpStatus(resp) == 200, "Bearer authentication scheme is case-insensitive");
     }
+    {
+        std::string req = "GET /api/status HTTP/1.1\r\n"
+                          "Host: " + hostPort + "\r\n"
+                          "Authorization: " + goodToken + "\r\n"
+                          "Authorization: " + goodToken + "\r\n"
+                          "Connection: close\r\n\r\n";
+        auto resp = httpSendRaw(port, req);
+        check(httpStatus(resp) == 400, "Duplicate Authorization header → 400");
+    }
 
     // Admin endpoints (POST) — token required
     {
@@ -201,6 +221,57 @@ static void runHttpSecurityTests() {
                           "Connection: close\r\n\r\n" + body;
         auto resp = httpSendRaw(port, req);
         check(httpStatus(resp) == 401, "POST /api/index/rebuild without token → 401");
+    }
+    {
+        std::string body = R"({"maxFileSize":18446744073709551615})";
+        std::string req = "POST /api/content/config HTTP/1.1\r\n"
+                          "Host: " + hostPort + "\r\n"
+                          "Authorization: " + goodToken + "\r\n"
+                          "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                          "Connection: close\r\n\r\n" + body;
+        auto resp = httpSendRaw(port, req);
+        check(httpStatus(resp) == 400, "Oversized content maxFileSize → 400");
+    }
+    {
+        std::string body = R"({"extensions":["a\"b","json"],"maxFileSize":2097152})";
+        std::string req = "POST /api/content/config HTTP/1.1\r\n"
+                          "Host: " + hostPort + "\r\n"
+                          "Authorization: " + goodToken + "\r\n"
+                          "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                          "Connection: close\r\n\r\n" + body;
+        auto resp = httpSendRaw(port, req);
+        check(httpStatus(resp) == 200 && configuredExtensions->size() == 2 &&
+              configuredExtensions->front() == "a\"b" && *configuredMaxSize == 2097152,
+              "Strict content config JSON decodes escaped strings");
+    }
+    {
+        std::string body = R"({"extensions":["txt",],"maxFileSize":1})";
+        std::string req = "POST /api/content/config HTTP/1.1\r\n"
+                          "Host: " + hostPort + "\r\n"
+                          "Authorization: " + goodToken + "\r\n"
+                          "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                          "Connection: close\r\n\r\n" + body;
+        check(httpStatus(httpSendRaw(port, req)) == 400,
+              "Malformed content config JSON is rejected");
+    }
+    {
+        std::string body = "{\"extensions\":[";
+        for (int i = 0; i < 257; ++i) {
+            if (i > 0) body += ',';
+            body += "\"x" + std::to_string(i) + "\"";
+        }
+        body += "]}";
+        std::string req = "POST /api/content/config HTTP/1.1\r\n"
+                          "Host: " + hostPort + "\r\n"
+                          "Authorization: " + goodToken + "\r\n"
+                          "Content-Length: " + std::to_string(body.size()) + "\r\n"
+                          "Connection: close\r\n\r\n" + body;
+        check(httpStatus(httpSendRaw(port, req)) == 400,
+              "Excessive content extension count is rejected");
+    }
+    {
+        auto resp = httpSendRaw(port, mkGet(port, "/api/health?q=%GG", hostPort));
+        check(httpStatus(resp) == 400, "Invalid percent encoding is rejected");
     }
 
     // Malformed Authorization header

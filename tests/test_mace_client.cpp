@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <string>
+#include <thread>
 
 namespace {
 int failures = 0;
@@ -60,6 +61,50 @@ int main() {
            "HTTP response parser accepts valid response");
     expect(response.status == 200 && response.body == "{}", "HTTP response fields");
     expect(!mace::parseHttpResponse("broken", response, error), "invalid HTTP response rejected");
+
+    // A peer that streams an oversized response must be cut off at the client limit.
+    int listener = ::socket(AF_INET, SOCK_STREAM, 0);
+    expect(listener >= 0, "oversized response test creates listener");
+    if (listener >= 0) {
+        sockaddr_in address{};
+        address.sin_family = AF_INET;
+        address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
+        address.sin_port = 0;
+        bool bound = ::bind(listener, reinterpret_cast<sockaddr*>(&address), sizeof(address)) == 0;
+        expect(bound, "oversized response test binds listener");
+        if (!bound) {
+            ::close(listener);
+        } else {
+            socklen_t addressLength = sizeof(address);
+            ::getsockname(listener, reinterpret_cast<sockaddr*>(&address), &addressLength);
+            ::listen(listener, 1);
+
+            std::thread server([listener] {
+                int client = ::accept(listener, nullptr, nullptr);
+                if (client >= 0) {
+                    char request[4096];
+                    (void)::recv(client, request, sizeof(request), 0);
+                    const std::string header =
+                        "HTTP/1.1 200 OK\r\nContent-Length: 20971520\r\n\r\n";
+                    (void)::send(client, header.data(), header.size(), MSG_NOSIGNAL);
+                    std::string chunk(64 * 1024, 'x');
+                    for (int i = 0; i < 321; ++i) {
+                        if (::send(client, chunk.data(), chunk.size(), MSG_NOSIGNAL) <= 0) break;
+                    }
+                    ::close(client);
+                }
+                ::close(listener);
+            });
+
+            mace::HttpResponse oversizedResponse;
+            std::string oversizedError;
+            bool oversizedOK = mace::httpGet(ntohs(address.sin_port), "/oversized",
+                                              oversizedResponse, oversizedError);
+            expect(!oversizedOK && oversizedError.find("16 MB") != std::string::npos,
+                   "HTTP client rejects oversized streamed response");
+            server.join();
+        }
+    }
 
     if (failures != 0) return 1;
     std::cout << "mace client tests passed\n";

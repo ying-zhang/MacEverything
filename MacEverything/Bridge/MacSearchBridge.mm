@@ -127,7 +127,8 @@ static std::string AppBundleVersion() {
         config.httpPort = 19860;
         _serviceEngine = std::make_shared<ServiceEngine>(config);
 
-        // Pre-install admin callbacks so HttpServer has them when auto-started
+        // Install callbacks once, before any background work can read them.
+        [self _installCallbacks];
         [self _installAdminCallbacks];
     }
     return self;
@@ -259,8 +260,6 @@ static std::string AppBundleVersion() {
 
 - (void)startScanFrom:(NSString *)rootPath
            completion:(void (^)(uint32_t totalRecords))completion {
-    [self _installCallbacks];
-
     auto engine = _serviceEngine;
     _serviceEngine->startFullScan([completion, engine](uint32_t count, bool) {
         if (engine->isStartupFatal()) return;
@@ -274,8 +273,6 @@ static std::string AppBundleVersion() {
                    cachePath:(NSString *)cachePath
                      walPath:(NSString *)walPath
                   completion:(void (^)(uint32_t totalRecords, BOOL didFullScan))completion {
-    [self _installCallbacks];
-
     auto engine = _serviceEngine;
     _serviceEngine->startIncremental([completion, engine](uint32_t count, bool didFullScan) {
         if (engine->isStartupFatal()) return;
@@ -286,7 +283,6 @@ static std::string AppBundleVersion() {
 }
 
 - (void)rebuildIndexWithCompletion:(void (^)(uint32_t totalRecords))completion {
-    [self _installCallbacks];
     auto engine = _serviceEngine;
     _serviceEngine->rebuildIndex([completion, engine](uint32_t count, bool) {
         if (engine->isStartupFatal()) return;
@@ -322,10 +318,7 @@ static std::string AppBundleVersion() {
     callbacks.onSetContentConfig = [weakSelf](const std::vector<std::string>& exts, uint64_t maxSize) {
         MacSearchBridge *strongSelf = weakSelf;
         if (!strongSelf) return;
-        auto ci = strongSelf->_serviceEngine->safeContentIndex();
-        if (!ci) return;
-        ci->setExtensions(exts);
-        ci->setMaxFileSize(maxSize);
+        strongSelf->_serviceEngine->requestContentIndexRebuild(exts, maxSize);
     };
 
     callbacks.onGetContentExtensions = [weakSelf]() -> std::vector<std::string> {
@@ -414,79 +407,32 @@ static std::string AppBundleVersion() {
 //  Query methods — type conversion layer
 // ═══════════════════════════════════════════════════════
 
-- (NSArray<NSNumber *> *)queryIndices:(NSString *)keyword
-                           maxResults:(uint32_t)maxResults {
-    auto engine = _serviceEngine->safeEngine();
-    if (!engine) return @[];
-
-    std::string key([keyword UTF8String]);
-    auto indices = engine->query(key, maxResults);
-
-    NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:indices.size()];
-    for (uint32_t idx : indices) {
-        [result addObject:@(idx)];
-    }
-    return result;
-}
-
-- (NSArray<MEFileResult *> *)recordsAtIndices:(NSArray<NSNumber *> *)indices {
-    auto engine = _serviceEngine->safeEngine();
-    if (!engine) return @[];
-
-    std::vector<uint32_t> idxVec;
-    idxVec.reserve(indices.count);
-    for (NSNumber *num in indices) {
-        idxVec.push_back([num unsignedIntValue]);
-    }
-
-    NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.count];
-    engine->forEachRecordWithPath(idxVec, [&](uint32_t, const FileRecord& r, const std::string& path) {
-        NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-        NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-        if (!nsName || !nsPath) return;
-        [results addObject:[[MEFileResult alloc] initWithName:nsName
-                                                        path:nsPath
-                                                        type:r.type
-                                                        size:r.size
-                                                     modTime:r.modTime]];
-    });
-    return results;
-}
-
-- (NSArray<NSNumber *> *)recentIndices:(uint32_t)count {
-    auto engine = _serviceEngine->safeEngine();
-    if (!engine) return @[];
-
-    auto indices = engine->recentIndices(count);
-
-    NSMutableArray<NSNumber *> *result = [NSMutableArray arrayWithCapacity:indices.size()];
-    for (uint32_t idx : indices) {
-        [result addObject:@(idx)];
-    }
-    return result;
-}
-
 - (NSArray<MEFileResult *> *)queryResults:(NSString *)keyword
                                maxResults:(uint32_t)maxResults {
     auto engine = _serviceEngine->safeEngine();
     if (!engine) return @[];
 
     std::string key([keyword UTF8String]);
-    auto indices = engine->query(key, maxResults);
-    if (indices.empty()) return @[];
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t generation = engine->compactionGeneration();
+        auto indices = engine->query(key, maxResults);
+        if (indices.empty()) return @[];
 
-    NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
-    engine->forEachRecordWithPath(indices, [&](uint32_t, const FileRecord& r, const std::string& path) {
-        NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-        NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-        if (!nsName || !nsPath) return;
-        [results addObject:[[MEFileResult alloc] initWithName:nsName
-                                                        path:nsPath
-                                                        type:r.type
-                                                        size:r.size
-                                                     modTime:r.modTime]];
-    });
-    return results;
+        NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
+        bool stable = engine->forEachRecordWithPathIfGeneration(
+            indices, generation, [&](uint32_t, const FileRecord& r, const std::string& path) {
+                NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
+                NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
+                if (!nsName || !nsPath) return;
+                [results addObject:[[MEFileResult alloc] initWithName:nsName
+                                                                path:nsPath
+                                                                type:r.type
+                                                                size:r.size
+                                                             modTime:r.modTime]];
+            });
+        if (stable) return results;
+    }
+    return @[];
 }
 
 - (NSArray<MEFileResult *> *)queryResults:(NSString *)keyword
@@ -500,25 +446,31 @@ static std::string AppBundleVersion() {
 
     std::string key([keyword UTF8String]);
     uint32_t liveCount = engine->liveRecordCount();
-    auto indices = engine->query(key, maxResults, true, sessionId);
-    if (indices.empty()) {
-        LOG_INFO("MacSearchBridge", "queryResults('" << key << "'): 0 results from "
-                 << liveCount << " live records");
-        return @[];
-    }
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t generation = engine->compactionGeneration();
+        auto indices = engine->query(key, maxResults, true, sessionId);
+        if (indices.empty()) {
+            LOG_INFO("MacSearchBridge", "queryResults('" << key << "'): 0 results from "
+                     << liveCount << " live records");
+            return @[];
+        }
 
-    NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
-    engine->forEachRecordWithPath(indices, [&](uint32_t, const FileRecord& r, const std::string& path) {
-        NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-        NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-        if (!nsName || !nsPath) return;
-        [results addObject:[[MEFileResult alloc] initWithName:nsName
-                                                        path:nsPath
-                                                        type:r.type
-                                                        size:r.size
-                                                     modTime:r.modTime]];
-    });
-    return results;
+        NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
+        bool stable = engine->forEachRecordWithPathIfGeneration(
+            indices, generation, [&](uint32_t, const FileRecord& r, const std::string& path) {
+                NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
+                NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
+                if (!nsName || !nsPath) return;
+                [results addObject:[[MEFileResult alloc] initWithName:nsName
+                                                                path:nsPath
+                                                                type:r.type
+                                                                size:r.size
+                                                             modTime:r.modTime]];
+            });
+        if (stable) return results;
+    }
+    LOG_WARN("MacSearchBridge", "queryResults: compaction changed indices during retries");
+    return @[];
 }
 
 - (void)cancelSession:(uint64_t)sessionId {
@@ -527,25 +479,37 @@ static std::string AppBundleVersion() {
     engine->cancelSession(sessionId);
 }
 
+- (void)releaseSession:(uint64_t)sessionId {
+    auto engine = _serviceEngine->safeEngine();
+    if (!engine) return;
+    engine->releaseSession(sessionId);
+}
+
 - (NSArray<MEFileResult *> *)recentResults:(uint32_t)count {
     auto engine = _serviceEngine->safeEngine();
     if (!engine) return @[];
 
-    auto indices = engine->recentIndices(count);
-    if (indices.empty()) return @[];
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t generation = engine->compactionGeneration();
+        auto indices = engine->recentIndices(count);
+        if (indices.empty()) return @[];
 
-    NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
-    engine->forEachRecordWithPath(indices, [&](uint32_t, const FileRecord& r, const std::string& path) {
-        NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-        NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-        if (!nsName || !nsPath) return;
-        [results addObject:[[MEFileResult alloc] initWithName:nsName
-                                                        path:nsPath
-                                                        type:r.type
-                                                        size:r.size
-                                                     modTime:r.modTime]];
-    });
-    return results;
+        NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
+        bool stable = engine->forEachRecordWithPathIfGeneration(
+            indices, generation, [&](uint32_t, const FileRecord& r, const std::string& path) {
+                NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
+                NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
+                if (!nsName || !nsPath) return;
+                [results addObject:[[MEFileResult alloc] initWithName:nsName
+                                                                path:nsPath
+                                                                type:r.type
+                                                                size:r.size
+                                                             modTime:r.modTime]];
+            });
+        if (stable) return results;
+    }
+    LOG_WARN("MacSearchBridge", "recentResults: compaction changed indices during retries");
+    return @[];
 }
 
 - (NSArray<MEHighlightHint *> *)parseHighlightHints:(NSString *)query {

@@ -179,5 +179,14 @@ static void runQueryParserTests() {
         check(ast->children[1]->text == "!", "55.18 text is !");
     }
 
+    // 55.19 Adversarial grouping is bounded and remains parseable.
+    {
+        std::string deeplyNested(10'000, '<');
+        deeplyNested += "needle";
+        deeplyNested.append(10'000, '>');
+        auto ast = QueryParser::parse(deeplyNested);
+        check(ast != nullptr, "55.19 deeply nested query is bounded");
+    }
+
     std::cout << "  Passed: " << localPassed << "  Failed: " << localFailed << "\n\n";
 }

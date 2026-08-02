@@ -12,6 +12,15 @@ private func expect(_ actual: [ResultClickAction],
     }
 }
 
+private func expect(_ actual: ResultReturnAction,
+                    _ expected: ResultReturnAction,
+                    _ message: String) {
+    if actual != expected {
+        fputs("FAIL: \(message): expected \(expected), got \(actual)\n", stderr)
+        failures += 1
+    }
+}
+
 private func expect(_ actual: Int?, _ expected: Int?, _ message: String) {
     if actual != expected {
         fputs("FAIL: \(message): expected \(String(describing: expected)), got \(String(describing: actual))\n", stderr)
@@ -43,6 +52,13 @@ private func expect(_ actual: CGFloat, _ expected: CGFloat, _ message: String) {
 @main
 struct ResultInteractionTests {
     static func main() {
+        expect(ResultReturnResolver.action(modifiers: []), .open,
+               "plain Return keeps the default open action")
+        expect(ResultReturnResolver.action(modifiers: [.command]), .reveal,
+               "Command-Return reveals the selected result in Finder")
+        expect(ResultReturnResolver.action(modifiers: [.command, .shift]), .reveal,
+               "Command-Shift-Return retains the Finder reveal action")
+
         expect(ResultClickResolver.actions(clickCount: 1, modifiers: [], supportsSelection: true),
                [.selectExclusive], "plain single click selects immediately")
         expect(ResultClickResolver.actions(clickCount: 1, modifiers: [.command], supportsSelection: true),

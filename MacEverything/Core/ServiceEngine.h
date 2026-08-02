@@ -15,6 +15,7 @@
 #include <chrono>
 #include <functional>
 #include <string>
+#include <mutex>
 #include <dispatch/dispatch.h>
 
 /// Configuration for ServiceEngine.
@@ -79,6 +80,10 @@ public:
     void removeSubtree(const std::string& pathPrefix,
                        std::function<void(uint32_t)> completion = nullptr);
     void rebuildContentIndex();
+    void rebuildContentIndex(const std::vector<std::string>& extensions,
+                             uint64_t maxFileSize);
+    void requestContentIndexRebuild(const std::vector<std::string>& extensions,
+                                    uint64_t maxFileSize);
     void clearContentIndex();
     void compactIndex();
 
@@ -123,6 +128,9 @@ private:
     void setEngine(std::shared_ptr<SearchEngine> engine);
     void setPersistence(std::shared_ptr<IndexPersistence> persistence);
     void setContentPersistence(std::shared_ptr<ContentIndexPersistence> persistence);
+    void rebuildContentIndexOnMutationQueue(const std::vector<std::string>& extensions,
+                                            uint64_t maxFileSize);
+    void clearContentIndexOnMutationQueue();
     void backgroundSyncEngine(std::shared_ptr<SearchEngine> engine,
                               std::shared_ptr<IndexPersistence> persistence,
                               uint64_t lastEventId,
@@ -142,7 +150,7 @@ private:
     void stopMonitoring();
     void restartMonitoring();
     void scheduleRescanForPaths(const std::vector<std::string>& paths);
-    void flushPendingRescans();
+    void flushPendingRescans(dispatch_source_t firingTimer = nullptr);
 
     // ── Content methods (ServiceEngine+Content.cpp) ──
     void startContentIndexing();
@@ -213,6 +221,11 @@ private:
     std::atomic<bool> isSyncing_{false};
     std::atomic<bool> cancelContentIndexing_{false};
     std::atomic<uint64_t> contentIndexGeneration_{0};
+    std::atomic<uint64_t> contentRebuildRevision_{0};
+    std::mutex contentRebuildRequestMutex_;
+    std::vector<std::string> pendingContentExtensions_;
+    uint64_t pendingContentMaxFileSize_ = 0;
+    bool hasPendingContentConfig_ = false;
     std::atomic<uint64_t> lifecycleGeneration_{1};
     std::atomic<bool> rebuilding_{false};
 

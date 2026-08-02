@@ -44,7 +44,7 @@ struct MacEverythingApp: App {
 
                 Divider()
 
-                Toggle(L10n.tr("Regex"), isOn: $searchOptions.isRegex)
+                Toggle(L10n.tr("Use Regular Expression (Advanced)"), isOn: $searchOptions.isRegex)
                     .keyboardShortcut("r", modifiers: [.command])
                 Toggle(L10n.tr("Case Sensitive"), isOn: $searchOptions.isCaseSensitive)
                     .keyboardShortcut("c", modifiers: [.command, .shift])
@@ -52,13 +52,6 @@ struct MacEverythingApp: App {
                     .keyboardShortcut("w", modifiers: [.command, .shift])
                 Toggle(L10n.tr("Match Filename"), isOn: $searchOptions.isMatchFilename)
                     .keyboardShortcut("f", modifiers: [.command, .shift])
-
-                Divider()
-
-                Button(L10n.tr("Copy Path")) {
-                    SearchViewModel.copySelectedPathsInActiveWindow()
-                }
-                .keyboardShortcut("c", modifiers: [.command, .option])
 
                 Divider()
 

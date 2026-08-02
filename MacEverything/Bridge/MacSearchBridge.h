@@ -90,16 +90,6 @@ NS_ASSUME_NONNULL_BEGIN
 /// Compact the index: write new base snapshot, clear WAL.
 - (void)compactIndex;
 
-/// Perform a case-insensitive substring search. Returns matching record indices.
-- (NSArray<NSNumber *> *)queryIndices:(NSString *)keyword
-                           maxResults:(uint32_t)maxResults;
-
-/// Fetch multiple records by indices (batch).
-- (NSArray<MEFileResult *> *)recordsAtIndices:(NSArray<NSNumber *> *)indices;
-
-/// Return indices of the most recently modified files, sorted by modTime descending.
-- (NSArray<NSNumber *> *)recentIndices:(uint32_t)count;
-
 /// P-4: Perform query and return results directly, eliminating NSNumber boxing overhead.
 - (NSArray<MEFileResult *> *)queryResults:(NSString *)keyword maxResults:(uint32_t)maxResults;
 
@@ -110,6 +100,9 @@ NS_ASSUME_NONNULL_BEGIN
 
 /// Cancel in-flight queries for the given session.
 - (void)cancelSession:(uint64_t)sessionId;
+
+/// Cancel in-flight queries and release state retained for the session.
+- (void)releaseSession:(uint64_t)sessionId;
 
 /// P-4: Return most recently modified files as results directly.
 - (NSArray<MEFileResult *> *)recentResults:(uint32_t)count;

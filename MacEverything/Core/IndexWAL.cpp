@@ -1,5 +1,6 @@
 #include "IndexWAL.h"
 #include "Logger.h"
+#include "PathUtils.h"
 #include <cstring>
 #include <unistd.h>
 #include <array>
@@ -64,7 +65,7 @@ static const std::array<std::array<uint32_t, 256>, 4>& getCRC32Tables() {
 }
 
 uint32_t IndexWAL::crc32(const void* data, size_t len) {
-    auto tables = getCRC32Tables();
+    const auto& tables = getCRC32Tables();
     auto* p = static_cast<const uint8_t*>(data);
     uint32_t crc = 0xFFFFFFFF;
 
@@ -99,12 +100,54 @@ bool IndexWAL::open(const std::string& walPath) {
     if (file_) return false;
 
     path_ = walPath;
+    size_t existingSize = 0;
+    if (FILE* existing = fopen(walPath.c_str(), "rb")) {
+        if (fseek(existing, 0, SEEK_END) != 0) {
+            fclose(existing);
+            return false;
+        }
+        long end = ftell(existing);
+        if (end < 0) {
+            fclose(existing);
+            return false;
+        }
+        existingSize = static_cast<size_t>(end);
+        if (existingSize > 0) {
+            uint32_t magic = 0, version = 0;
+            rewind(existing);
+            bool compatible = existingSize >= 2 * sizeof(uint32_t) &&
+                fread(&magic, sizeof(magic), 1, existing) == 1 &&
+                fread(&version, sizeof(version), 1, existing) == 1 &&
+                magic == kMagic && version == kVersion;
+            fclose(existing);
+            if (!compatible) {
+                LOG_ERROR("IndexWAL", "Refusing to append to incompatible WAL: " << walPath);
+                return false;
+            }
+        } else {
+            fclose(existing);
+        }
+    }
+    if (existingSize > 2 * sizeof(uint32_t)) {
+        size_t validBytes = 2 * sizeof(uint32_t);
+        entryCount_ = readAll(walPath, &validBytes).size();
+        dirty_.store(entryCount_ > 0, std::memory_order_relaxed);
+        if (validBytes < existingSize) {
+            LOG_WARN("IndexWAL", "Truncating invalid WAL tail from " << existingSize
+                     << " to " << validBytes << " bytes: " << walPath);
+            if (truncate(walPath.c_str(), static_cast<off_t>(validBytes)) != 0) return false;
+            existingSize = validBytes;
+        }
+    } else {
+        entryCount_ = 0;
+        dirty_.store(false, std::memory_order_relaxed);
+    }
+
     file_ = fopen(walPath.c_str(), "ab");
     if (!file_) return false;
 
     // H-3: Write magic+version header if this is a new (empty) file
-    long pos = ftell(file_);
-    if (pos == 0) {
+    if (existingSize == 0) {
         uint32_t magic = kMagic;
         uint32_t version = kVersion;
         if (fwrite(&magic, sizeof(uint32_t), 1, file_) != 1 ||
@@ -113,23 +156,44 @@ bool IndexWAL::open(const std::string& walPath) {
             file_ = nullptr;
             return false;
         }
-        fflush(file_);
+        if (fflush(file_) != 0) {
+            fclose(file_);
+            file_ = nullptr;
+            return false;
+        }
+        if (fsync(fileno(file_)) != 0) {
+            fclose(file_);
+            file_ = nullptr;
+            return false;
+        }
+        int directorySyncError = 0;
+        if (!PathUtils::syncParentDirectory(walPath, &directorySyncError)) {
+            if (!PathUtils::isUnsupportedDirectorySyncError(directorySyncError)) {
+                fclose(file_);
+                file_ = nullptr;
+                return false;
+            }
+            LOG_WARN("IndexWAL", "Parent directory does not support fsync; continuing: "
+                     << walPath);
+        }
         currentSize_ = 2 * sizeof(uint32_t); // header: magic + version
     } else {
-        currentSize_ = static_cast<size_t>(pos);
+        currentSize_ = existingSize;
     }
 
-    entryCount_ = 0;
+    failed_ = false;
     return true;
 }
 
 bool IndexWAL::append(WALOp op, const std::string& fullPath, const FileRecord& record) {
     std::lock_guard<std::mutex> lock(mutex_);
-    if (!file_) return false;
+    if (!file_ || failed_) return false;
 
-    // H-6: Check WAL file size limit before writing
+    // The limit is an operational compaction threshold, never a reason to lose
+    // an already-applied in-memory mutation. Keep appending until persistence
+    // rotates/compacts the WAL.
     if (currentSize_ >= kMaxWALSize) {
-        return false;
+        LOG_WARN("IndexWAL", "WAL exceeded soft size limit; preserving mutation at " << path_);
     }
 
     // Build entry into a buffer for CRC32 computation
@@ -160,40 +224,53 @@ bool IndexWAL::append(WALOp op, const std::string& fullPath, const FileRecord& r
     }
 
     // Write entry + CRC32
-    if (fwrite(buf.data(), 1, buf.size(), file_) != buf.size()) return false;
+    if (fwrite(buf.data(), 1, buf.size(), file_) != buf.size()) {
+        failed_ = true;
+        return false;
+    }
     uint32_t checksum = crc32(buf.data(), buf.size());
-    if (fwrite(&checksum, sizeof(uint32_t), 1, file_) != 1) return false;
+    if (fwrite(&checksum, sizeof(uint32_t), 1, file_) != 1 || fflush(file_) != 0) {
+        failed_ = true;
+        return false;
+    }
 
     currentSize_ += buf.size() + sizeof(uint32_t);
 
-    fflush(file_);
     entryCount_++;
     unflushedCount_++;
     dirty_.store(true, std::memory_order_relaxed);
 
     // Batch fsync: only fsync every syncInterval_ entries
     if (syncInterval_ > 0 && unflushedCount_ >= syncInterval_) {
-        fsync(fileno(file_));
+        if (fsync(fileno(file_)) != 0) {
+            failed_ = true;
+            return false;
+        }
         unflushedCount_ = 0;
     }
 
     return true;
 }
 
-std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath) {
+std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath, size_t* validBytes) {
     std::vector<WALEntry> entries;
 
     FILE* f = fopen(walPath.c_str(), "rb");
-    if (!f) return entries;
+    if (!f) {
+        if (validBytes) *validBytes = 0;
+        return entries;
+    }
 
     // H-3: Verify magic+version header
     uint32_t magic = 0, version = 0;
-    if (fread(&magic, sizeof(uint32_t), 1, f) != 1 ||
-        fread(&version, sizeof(uint32_t), 1, f) != 1 ||
-        magic != kMagic || version != kVersion) {
+    bool hasHeader = fread(&magic, sizeof(uint32_t), 1, f) == 1 &&
+        fread(&version, sizeof(uint32_t), 1, f) == 1 &&
+        magic == kMagic && version == kVersion;
+    if (!hasHeader) {
         // Legacy WAL without header — try reading from the beginning
         fseek(f, 0, SEEK_SET);
     }
+    size_t lastValidOffset = hasHeader ? 2 * sizeof(uint32_t) : 0;
 
     while (true) {
         // Record the start position to re-read the raw bytes for CRC verification
@@ -240,17 +317,23 @@ std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath) {
         }
 
         entries.push_back(std::move(entry));
+        lastValidOffset = static_cast<size_t>(afterCRC);
     }
 
     fclose(f);
+    if (validBytes) *validBytes = lastValidOffset;
     return entries;
 }
 
 void IndexWAL::sync() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (file_ && unflushedCount_ > 0) {
-        fsync(fileno(file_));
-        unflushedCount_ = 0;
+        if (fflush(file_) != 0 || fsync(fileno(file_)) != 0) {
+            failed_ = true;
+            LOG_ERROR("IndexWAL", "Failed to sync WAL: " << path_);
+        } else {
+            unflushedCount_ = 0;
+        }
     }
 }
 
@@ -258,8 +341,11 @@ void IndexWAL::close() {
     std::lock_guard<std::mutex> lock(mutex_);
     if (file_) {
         if (unflushedCount_ > 0) {
-            fsync(fileno(file_));
-            unflushedCount_ = 0;
+            if (fflush(file_) != 0 || fsync(fileno(file_)) != 0) {
+                LOG_ERROR("IndexWAL", "Failed to sync WAL before close: " << path_);
+            } else {
+                unflushedCount_ = 0;
+            }
         }
         fclose(file_);
         file_ = nullptr;
@@ -273,7 +359,7 @@ void IndexWAL::closeAndDelete() {
         file_ = nullptr;
     }
     if (!path_.empty()) {
-        remove(path_.c_str());
+        if (remove(path_.c_str()) == 0) PathUtils::syncParentDirectory(path_);
     }
 }
 

@@ -1,5 +1,6 @@
 #include "IndexPersistence.h"
 #include "Logger.h"
+#include "PathUtils.h"
 #include <cerrno>
 #include <cstring>
 #include <cmath>
@@ -27,6 +28,14 @@ std::vector<std::string> walSegments(const std::string& base) {
     std::vector<std::string> paths;
     for (auto& pth : found) paths.push_back(std::move(pth.second));
     return paths;
+}
+
+void removeWalSegmentsExcept(const std::string& base, const std::string& keep = {}) {
+    bool removed = false;
+    for (const auto& segment : walSegments(base)) {
+        if (segment != keep && std::remove(segment.c_str()) == 0) removed = true;
+    }
+    if (removed) PathUtils::syncParentDirectory(base);
 }
 
 std::string nextWalSegment(const std::string& base) {
@@ -65,6 +74,17 @@ IndexPersistence::~IndexPersistence() {
     }
 }
 
+void IndexPersistence::setContentIndex(std::shared_ptr<ContentIndex> ci) {
+    std::lock_guard<std::mutex> lock(compactionMutex_);
+    contentIndex_ = std::move(ci);
+}
+
+void IndexPersistence::setContentIndexPersistence(
+        std::shared_ptr<ContentIndexPersistence> cp) {
+    std::lock_guard<std::mutex> lock(compactionMutex_);
+    contentPersistence_ = std::move(cp);
+}
+
 uint64_t IndexPersistence::load() {
     return load("");
 }
@@ -84,7 +104,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 LOG_WARN("IndexPersistence", "Ignoring v6 index because config changed");
                 engine_->loadRecords({});
                 std::remove(v6Path_.c_str());
-                for (const auto& segment : walSegments(walPath_)) std::remove(segment.c_str());
+                removeWalSegmentsExcept(walPath_);
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
@@ -104,7 +124,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
             if (!expectedConfigSignature.empty()) {
                 LOG_WARN("IndexPersistence", "Ignoring paged index because config signature is unavailable");
                 engine_->loadRecords({});
-                for (const auto& segment : walSegments(walPath_)) std::remove(segment.c_str());
+                removeWalSegmentsExcept(walPath_);
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
@@ -129,7 +149,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
             if (!expectedConfigSignature.empty()) {
                 LOG_WARN("IndexPersistence", "Ignoring legacy index because config signature is unavailable");
                 engine_->loadRecords({});
-                for (const auto& segment : walSegments(walPath_)) std::remove(segment.c_str());
+                removeWalSegmentsExcept(walPath_);
                 loaded = false;
             } else {
                 LOG_INFO("IndexPersistence", "Loaded legacy index, lastEventId=" << lastEventId
@@ -162,13 +182,21 @@ void IndexPersistence::attachWAL() {
     auto newWal = std::make_shared<IndexWAL>();
     auto segments = walSegments(walPath_);
     std::string activePath = segments.empty() ? walPath_ : segments.back();
-    if (newWal->open(activePath)) {
+    bool opened = newWal->open(activePath);
+    if (!opened) {
+        // Preserve an incompatible/corrupt segment for diagnosis and continue
+        // durability on a fresh segment. A successful base rewrite later removes it.
+        activePath = nextWalSegment(walPath_);
+        newWal = std::make_shared<IndexWAL>();
+        opened = newWal->open(activePath);
+    }
+    if (opened) {
         {
             std::lock_guard<std::mutex> lock(walMutex_);
             wal_ = newWal;
         }
         engine_->attachWAL(newWal);
-        LOG_INFO("IndexPersistence", "WAL attached at " << walPath_);
+        LOG_INFO("IndexPersistence", "WAL attached at " << activePath);
     } else {
         LOG_ERROR("IndexPersistence", "Failed to open WAL at " << walPath_);
     }
@@ -193,26 +221,50 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
     {
         std::lock_guard<std::mutex> lock(walMutex_);
         const bool pendingSegments = walSegments(walPath_).size() > 1;
+        const bool forceRewrite = engine_->needsFullRewrite();
         if (!wal_) {
             LOG_INFO("IndexPersistence", "Skipping flush — no WAL");
             return;
         }
         if (force) {
-            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments && flatWriter_->exists()) {
+            if (wal_->currentSize() <= kWALHeaderSize && !pendingSegments &&
+                flatWriter_->exists() && !forceRewrite) {
                 LOG_INFO("IndexPersistence", "Skipping flush — WAL is empty");
                 return;
             }
         } else {
-            if (!wal_->isDirty() && !pendingSegments) {
+            if (!wal_->isDirty() && !pendingSegments && !forceRewrite) {
                 LOG_INFO("IndexPersistence", "Skipping flush — no mutations since last flush");
                 return;
             }
-            if (wal_->entryCount() < kCompactThreshold && !pendingSegments) {
+            if (wal_->entryCount() < kCompactThreshold && !pendingSegments && !forceRewrite) {
                 LOG_INFO("IndexPersistence", "Skipping flush — only "
                           << wal_->entryCount() << " entries (threshold=" << kCompactThreshold << ")");
                 return;
             }
         }
+    }
+
+    // After a base write failure, retry against the existing active WAL instead
+    // of opening another segment on every timer tick. The retained WAL may
+    // replay operations already present in the new base, which is safe because
+    // WAL mutations are path-idempotent.
+    if (previousBaseWriteFailed_) {
+        std::shared_ptr<IndexWAL> activeWal;
+        {
+            std::lock_guard<std::mutex> lock(walMutex_);
+            activeWal = wal_;
+        }
+        const uint64_t rewriteGeneration = engine_->fullRewriteGeneration();
+        if (!activeWal || !flatWriter_->fullRewrite(*engine_, metadata)) {
+            LOG_ERROR("IndexPersistence", "Base rewrite retry failed — retaining existing WAL segments");
+            return;
+        }
+        engine_->acknowledgeFullRewrite(rewriteGeneration);
+        removeWalSegmentsExcept(walPath_, activeWal->path());
+        previousBaseWriteFailed_ = false;
+        LOG_INFO("IndexPersistence", "Base rewrite retry succeeded without rotating WAL");
+        return;
     }
 
     // Check if full compaction is needed (tombstone ratio)
@@ -247,20 +299,22 @@ void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
     engine_->attachWAL(newWal);
 
     // 3. Full rewrite v6 flat format
+    const uint64_t rewriteGeneration = engine_->fullRewriteGeneration();
     bool writeOk = flatWriter_->fullRewrite(*engine_, metadata);
 
     if (writeOk) {
+        previousBaseWriteFailed_ = false;
+        engine_->acknowledgeFullRewrite(rewriteGeneration);
         LOG_INFO("IndexPersistence", "Flushed v6 flat index, lastEventId=" << metadata.lastEventId
                   << ", liveRecords=" << engine_->liveRecordCount());
     } else {
         LOG_ERROR("IndexPersistence", "Failed to flush index — retaining WAL segments");
+        previousBaseWriteFailed_ = true;
         return;
     }
 
     if (oldWal) oldWal->close();
-    for (const auto& segment : walSegments(walPath_)) {
-        if (segment != newWalPath) std::remove(segment.c_str());
-    }
+    removeWalSegmentsExcept(walPath_, newWalPath);
 }
 
 void IndexPersistence::fullCompact(const IndexMetadata& metadata) {
@@ -286,7 +340,10 @@ void IndexPersistence::fullCompactLocked(const IndexMetadata& metadata) {
     }
     engine_->attachWAL(newWal);
 
-    // 3. Compact in-memory records (remove tombstones)
+    // 3. Compact in-memory records (remove tombstones). Mark the entire
+    // cross-index transition so readers cannot observe new engine indices with
+    // the old content-index mapping.
+    if (contentIndex_) contentIndex_->beginFileIndexRemap();
     uint32_t beforeTotal = engine_->recordCount();
     uint32_t beforeLive = engine_->liveRecordCount();
     auto remap = engine_->compactRecords();
@@ -304,20 +361,23 @@ void IndexPersistence::fullCompactLocked(const IndexMetadata& metadata) {
             contentPersistence_->compact(true);
         }
     }
+    if (contentIndex_) contentIndex_->endFileIndexRemap();
 
     // 4. Full rewrite v6 flat format
+    const uint64_t rewriteGeneration = engine_->fullRewriteGeneration();
     if (flatWriter_->fullRewrite(*engine_, metadata)) {
+        previousBaseWriteFailed_ = false;
+        engine_->acknowledgeFullRewrite(rewriteGeneration);
         LOG_INFO("IndexPersistence", "Full compaction done, lastEventId=" << metadata.lastEventId
                   << ", liveRecords=" << engine_->liveRecordCount());
     } else {
         LOG_ERROR("IndexPersistence", "Failed to write full compaction — retaining WAL segments");
+        previousBaseWriteFailed_ = true;
         return;
     }
 
     if (oldWal) oldWal->close();
-    for (const auto& segment : walSegments(walPath_)) {
-        if (segment != newWalPath) std::remove(segment.c_str());
-    }
+    removeWalSegmentsExcept(walPath_, newWalPath);
 }
 
 double IndexPersistence::computeAdaptiveInterval() const {

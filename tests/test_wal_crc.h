@@ -8,6 +8,7 @@ inline void runWalCrcTests() {
     std::cout << "╚══════════════════════════════════════════╝\n\n";
 
     auto tmpDir = fs::temp_directory_path() / "mac_everything_test_walcrc";
+    fs::remove_all(tmpDir);
     fs::create_directories(tmpDir);
 
     // --- Test 15.1: CRC32 known value ---
@@ -190,36 +191,97 @@ inline void runWalCrcTests() {
         fs::remove(walPath);
     }
 
-    // --- Test 15.8: WAL size limit enforcement ---
+    // --- Test 15.8: WAL soft limit preserves mutations ---
     {
         auto walPath = (tmpDir / "test_sizelimit.wal").string();
         fs::remove(walPath);
 
-        // Create a file that's already at the size limit
+        // Create a compatible sparse WAL that's already at the soft limit.
         {
             FILE* f = fopen(walPath.c_str(), "wb");
+            uint32_t magic = IndexWAL::kMagic;
+            uint32_t version = IndexWAL::kVersion;
+            fwrite(&magic, sizeof(magic), 1, f);
+            fwrite(&version, sizeof(version), 1, f);
             ftruncate(fileno(f), IndexWAL::kMaxWALSize);
             fclose(f);
         }
 
         IndexWAL wal;
         wal.setSyncInterval(0);
-        wal.open(walPath);
+        check(wal.open(walPath), "15.8a compatible WAL at soft limit opens");
         FileRecord r{"test.txt", "/tmp", 1, 10, 100, 1, 1};
         bool result = wal.append(WALOp::Add, "/tmp/test.txt", r);
-        check(!result, "15.8a append rejected when WAL at size limit");
+        check(result, "15.8b append is preserved when WAL exceeds soft limit");
         wal.close();
 
-        // Verify small WAL still accepts writes
+        // Verify incompatible existing WALs are never appended to.
         fs::remove(walPath);
+        { std::ofstream invalid(walPath, std::ios::binary); invalid << "legacy"; }
         IndexWAL wal2;
-        wal2.setSyncInterval(0);
-        wal2.open(walPath);
-        result = wal2.append(WALOp::Add, "/tmp/test.txt", r);
-        check(result, "15.8b append succeeds on fresh WAL");
-        wal2.close();
+        check(!wal2.open(walPath), "15.8c incompatible WAL header is rejected");
+
+        auto engine = std::make_shared<SearchEngine>();
+        {
+            IndexPersistence persistence(
+                engine,
+                (tmpDir / "fallback.bin").string(), walPath,
+                (tmpDir / "fallback.pages").string(),
+                (tmpDir / "fallback.ptable").string(),
+                (tmpDir / "fallback.v6").string());
+            persistence.attachWAL();
+            engine->addRecord({"durable.txt", "/tmp", 1, 10, 100, 1, 1});
+        }
+        auto fallbackEntries = IndexWAL::readAll(walPath + ".seg.1");
+        check(fallbackEntries.size() == 1,
+              "15.8d persistence falls back to a fresh WAL segment");
 
         fs::remove(walPath);
+    }
+
+    // --- Test 15.9: reopening truncates a damaged tail before new appends ---
+    {
+        auto walPath = (tmpDir / "recover_append.wal").string();
+        IndexWAL first;
+        first.setSyncInterval(0);
+        check(first.open(walPath), "15.9a WAL opens for tail recovery fixture");
+        FileRecord r{"first.txt", "/tmp", 1, 1, 1, 1, 1};
+        check(first.append(WALOp::Add, "/tmp/first.txt", r), "15.9b valid prefix appended");
+        first.close();
+        { std::ofstream out(walPath, std::ios::binary | std::ios::app); out << "damaged-tail"; }
+
+        IndexWAL reopened;
+        reopened.setSyncInterval(0);
+        check(reopened.open(walPath), "15.9c WAL with damaged tail reopens");
+        FileRecord r2{"second.txt", "/tmp", 1, 2, 2, 2, 1};
+        check(reopened.append(WALOp::Add, "/tmp/second.txt", r2),
+              "15.9d append after recovered tail succeeds");
+        reopened.close();
+        auto entries = IndexWAL::readAll(walPath);
+        check(entries.size() == 2 && entries[1].fullPath == "/tmp/second.txt",
+              "15.9e recovered WAL retains prefix and new entry");
+    }
+
+    // --- Test 15.10: content WAL also recovers its damaged tail ---
+    {
+        auto walPath = (tmpDir / "content_recover_append.wal").string();
+        ContentIndexWAL first;
+        first.setSyncInterval(0);
+        check(first.open(walPath), "15.10a content WAL opens");
+        check(first.appendAdd(1, "/tmp/first.txt", 1, {0x616263}),
+              "15.10b content WAL valid prefix appended");
+        first.close();
+        { std::ofstream out(walPath, std::ios::binary | std::ios::app); out << "bad-tail"; }
+
+        ContentIndexWAL reopened;
+        reopened.setSyncInterval(0);
+        check(reopened.open(walPath), "15.10c damaged content WAL reopens");
+        check(reopened.appendRemove(1, "/tmp/first.txt"),
+              "15.10d content append after recovery succeeds");
+        reopened.close();
+        auto entries = ContentIndexWAL::readAll(walPath);
+        check(entries.size() == 2 && entries[1].op == ContentIndexWAL::Entry::Remove,
+              "15.10e content WAL retains prefix and new entry");
     }
 
     // Cleanup

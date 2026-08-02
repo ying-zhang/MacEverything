@@ -34,7 +34,9 @@ std::string toLower(const std::string& s) {
     }
     CFMutableStringRef mutable_ = CFStringCreateMutableCopy(kCFAllocatorDefault, 0, cfStr);
     CFRelease(cfStr);
-    CFStringLowercase(mutable_, CFLocaleGetSystem());
+    CFLocaleRef stableLocale = CFLocaleCreate(kCFAllocatorDefault, CFSTR("en_US_POSIX"));
+    CFStringLowercase(mutable_, stableLocale);
+    if (stableLocale) CFRelease(stableLocale);
 
     CFIndex len = CFStringGetLength(mutable_);
     CFIndex maxBuf = CFStringGetMaximumSizeForEncoding(len, kCFStringEncodingUTF8) + 1;

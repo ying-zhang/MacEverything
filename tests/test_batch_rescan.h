@@ -219,6 +219,19 @@ static void runBatchRescanTests() {
         check(engine3.liveRecordCount() == 1, "edge: all-match liveRecordCount == 1");
         res = engine3.query("survivor");
         check(res.size() == 1, "edge: replacement record queryable after full prefix removal");
+
+        // 4d: Exact file paths retain the historical prefix-removal behavior.
+        SearchEngine engine4;
+        std::vector<FileRecord> initial4;
+        initial4.push_back({"exact.txt", "/exact", 1, 1, 1});
+        initial4.push_back({"keep.txt", "/exact", 1, 1, 1});
+        engine4.loadRecords(std::move(initial4));
+        check(engine4.removeByPathPrefix("/exact/exact.txt") == 1,
+              "edge: exact file path removes one record");
+        check(engine4.query("exact.txt").empty(),
+              "edge: exact file path record removed");
+        check(engine4.query("keep.txt").size() == 1,
+              "edge: sibling of exact file path remains");
     }
 
     std::cout << "\n";

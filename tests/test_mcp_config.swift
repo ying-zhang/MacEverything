@@ -7,9 +7,9 @@ enum AppLogger {
     }
 }
 
-private var failures = 0
+@MainActor private var failures = 0
 
-private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
+@MainActor private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
     if !condition() {
         fputs("FAIL: \(message)\n", stderr)
         failures += 1
@@ -17,6 +17,7 @@ private func expect(_ condition: @autoclosure () -> Bool, _ message: String) {
 }
 
 @main
+@MainActor
 struct MCPConfigTests {
     static func main() throws {
         let home = FileManager.default.temporaryDirectory

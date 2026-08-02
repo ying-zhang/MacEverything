@@ -42,7 +42,8 @@ public:
         std::vector<Trigram> trigrams; // only for Add
         time_t lastModTime = 0; // only for Add
     };
-    static std::vector<Entry> readAll(const std::string& walPath);
+    static std::vector<Entry> readAll(const std::string& walPath,
+                                      size_t* validBytes = nullptr);
 
     /// Force fsync to disk. Call when you need durability guarantees.
     void sync();
@@ -78,6 +79,7 @@ private:
     uint64_t entryCount_ = 0;     // total entries appended
     size_t currentSize_ = 0;      // in-memory file size tracking
     std::atomic<bool> dirty_{false}; // set on append, cleared on compact
+    bool failed_ = false;
     std::mutex mutex_;
 };
 
@@ -137,8 +139,11 @@ private:
     ContentIndex::IndexResolver resolveIndex_;
     std::mutex compactionMutex_;
     std::mutex walMutex_;
+    std::mutex queueMutex_;
     dispatch_queue_t compactionQueue_ = nullptr;
+    dispatch_source_t compactionTimer_ = nullptr;
     std::atomic<bool> compactionScheduled_{false};
+    std::atomic<bool> forceCompactionNeeded_{false};
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
 
     /// Schedule a compaction after kCompactionDelaySec. Called from walAppend*.

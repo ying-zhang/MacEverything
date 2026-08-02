@@ -10,7 +10,7 @@ RE2_CFLAGS = -I$(RE2_PREFIX)/include
 RE2_LDFLAGS = -L$(RE2_PREFIX)/lib -Wl,-rpath,$(RE2_PREFIX)/lib -lre2
 
 # === Build targets ===
-.PHONY: test test-fast lint-localizations lint-docs test-mace-client test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n test-slow test-all test-asan test-tsan build clean app dmg cli benchmark-trigram-simd benchmark-posting-simd help
+.PHONY: test test-fast lint-localizations lint-docs test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n test-slow test-all test-asan test-tsan build clean app dmg cli benchmark-trigram-simd benchmark-posting-simd help
 
 test_all: test_all.cpp $(CORE_SRCS) $(CORE_HEADERS) $(TEST_HEADERS)
 	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) \
@@ -56,18 +56,24 @@ test-asan: test_all.cpp $(CORE_SRCS)
 test-tsan: test_all.cpp $(CORE_SRCS)
 	mkdir -p build/tests
 	$(CXX) -std=c++20 -O1 -g -fsanitize=thread $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) -IMacEverything/Core $^ -o build/tests/test_all_tsan
-	./build/tests/test_all_tsan --fast --quiet
+	./build/tests/test_all_tsan --fast --part 5 --quiet
 
 # === Test targets ===
 test: test-fast
 
-test-fast: test_all lint-bridge lint-localizations lint-docs test-mace-client test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n
+test-fast: test_all lint-bridge lint-localizations lint-docs test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n
 	./test_all --fast --quiet
 
 test-mace-client:
 	mkdir -p build/tests
 	$(CXX) $(CXXFLAGS) tests/test_mace_client.cpp -o build/tests/test_mace_client
 	./build/tests/test_mace_client
+
+test-swift-content-roots:
+	mkdir -p build/tests
+	xcrun swiftc MacEverything/App/ContentRootPolicy.swift tests/test_content_root_policy.swift \
+		-o build/tests/test_content_root_policy
+	./build/tests/test_content_root_policy
 
 test-swift-cli-install:
 	mkdir -p build/tests

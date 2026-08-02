@@ -47,11 +47,167 @@ static std::string jsonEscapeString(const std::string& s) {
     return out;
 }
 
-static std::string urlDecode(const std::string& s) {
-    std::string out;
+struct ContentConfigUpdate {
+    bool hasExtensions = false;
+    bool hasMaxFileSize = false;
+    std::vector<std::string> extensions;
+    uint64_t maxFileSize = 0;
+};
+
+class ContentConfigJsonParser {
+public:
+    explicit ContentConfigJsonParser(const std::string& input) : input_(input) {}
+
+    bool parse(ContentConfigUpdate& update) {
+        skipWhitespace();
+        if (!consume('{')) return false;
+        skipWhitespace();
+        if (consume('}')) return atEnd();
+        while (true) {
+            std::string key;
+            if (!parseString(key)) return false;
+            skipWhitespace();
+            if (!consume(':')) return false;
+            skipWhitespace();
+            if (key == "extensions") {
+                if (update.hasExtensions || !parseStringArray(update.extensions)) return false;
+                update.hasExtensions = true;
+            } else if (key == "maxFileSize") {
+                if (update.hasMaxFileSize || !parseUInt(update.maxFileSize)) return false;
+                update.hasMaxFileSize = true;
+            } else {
+                return false;
+            }
+            skipWhitespace();
+            if (consume('}')) return atEnd();
+            if (!consume(',')) return false;
+            skipWhitespace();
+        }
+    }
+
+private:
+    const std::string& input_;
+    size_t pos_ = 0;
+
+    void skipWhitespace() {
+        while (pos_ < input_.size() &&
+               (input_[pos_] == ' ' || input_[pos_] == '\t' ||
+                input_[pos_] == '\r' || input_[pos_] == '\n')) ++pos_;
+    }
+    bool consume(char c) {
+        if (pos_ >= input_.size() || input_[pos_] != c) return false;
+        ++pos_;
+        return true;
+    }
+    bool atEnd() {
+        skipWhitespace();
+        return pos_ == input_.size();
+    }
+    static int hexValue(char c) {
+        if (c >= '0' && c <= '9') return c - '0';
+        if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+        if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+        return -1;
+    }
+    bool parseHex4(uint32_t& value) {
+        if (pos_ + 4 > input_.size()) return false;
+        value = 0;
+        for (int i = 0; i < 4; ++i) {
+            int digit = hexValue(input_[pos_++]);
+            if (digit < 0) return false;
+            value = (value << 4) | static_cast<uint32_t>(digit);
+        }
+        return true;
+    }
+    static bool appendUtf8(uint32_t codePoint, std::string& out) {
+        if (codePoint > 0x10FFFF || (codePoint >= 0xD800 && codePoint <= 0xDFFF)) return false;
+        if (codePoint <= 0x7F) out.push_back(static_cast<char>(codePoint));
+        else if (codePoint <= 0x7FF) {
+            out.push_back(static_cast<char>(0xC0 | (codePoint >> 6)));
+            out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+        } else if (codePoint <= 0xFFFF) {
+            out.push_back(static_cast<char>(0xE0 | (codePoint >> 12)));
+            out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+        } else {
+            out.push_back(static_cast<char>(0xF0 | (codePoint >> 18)));
+            out.push_back(static_cast<char>(0x80 | ((codePoint >> 12) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | ((codePoint >> 6) & 0x3F)));
+            out.push_back(static_cast<char>(0x80 | (codePoint & 0x3F)));
+        }
+        return true;
+    }
+    bool parseString(std::string& out) {
+        skipWhitespace();
+        if (!consume('"')) return false;
+        out.clear();
+        while (pos_ < input_.size()) {
+            unsigned char c = static_cast<unsigned char>(input_[pos_++]);
+            if (c == '"') return true;
+            if (c < 0x20) return false;
+            if (c != '\\') {
+                out.push_back(static_cast<char>(c));
+                continue;
+            }
+            if (pos_ >= input_.size()) return false;
+            char escape = input_[pos_++];
+            switch (escape) {
+                case '"': out.push_back('"'); break;
+                case '\\': out.push_back('\\'); break;
+                case '/': out.push_back('/'); break;
+                case 'b': out.push_back('\b'); break;
+                case 'f': out.push_back('\f'); break;
+                case 'n': out.push_back('\n'); break;
+                case 'r': out.push_back('\r'); break;
+                case 't': out.push_back('\t'); break;
+                case 'u': {
+                    uint32_t codePoint = 0;
+                    if (!parseHex4(codePoint)) return false;
+                    if (codePoint >= 0xD800 && codePoint <= 0xDBFF) {
+                        if (pos_ + 2 > input_.size() || input_[pos_] != '\\' ||
+                            input_[pos_ + 1] != 'u') return false;
+                        pos_ += 2;
+                        uint32_t low = 0;
+                        if (!parseHex4(low) || low < 0xDC00 || low > 0xDFFF) return false;
+                        codePoint = 0x10000 + ((codePoint - 0xD800) << 10) + (low - 0xDC00);
+                    }
+                    if (!appendUtf8(codePoint, out)) return false;
+                    break;
+                }
+                default: return false;
+            }
+        }
+        return false;
+    }
+    bool parseStringArray(std::vector<std::string>& values) {
+        if (!consume('[')) return false;
+        skipWhitespace();
+        if (consume(']')) return true;
+        while (true) {
+            std::string value;
+            if (!parseString(value)) return false;
+            values.push_back(std::move(value));
+            skipWhitespace();
+            if (consume(']')) return true;
+            if (!consume(',')) return false;
+            skipWhitespace();
+        }
+    }
+    bool parseUInt(uint64_t& value) {
+        size_t start = pos_;
+        while (pos_ < input_.size() && input_[pos_] >= '0' && input_[pos_] <= '9') ++pos_;
+        if (start == pos_) return false;
+        auto conversion = std::from_chars(input_.data() + start, input_.data() + pos_, value);
+        return conversion.ec == std::errc{} && conversion.ptr == input_.data() + pos_;
+    }
+};
+
+static bool urlDecode(const std::string& s, std::string& out) {
+    out.clear();
     out.reserve(s.size());
     for (size_t i = 0; i < s.size(); ++i) {
-        if (s[i] == '%' && i + 2 < s.size()) {
+        if (s[i] == '%') {
+            if (i + 2 >= s.size()) return false;
             int hi = 0, lo = 0;
             auto hexVal = [](char c) -> int {
                 if (c >= '0' && c <= '9') return c - '0';
@@ -66,6 +222,7 @@ static std::string urlDecode(const std::string& s) {
                 i += 2;
                 continue;
             }
+            return false;
         }
         if (s[i] == '+') {
             out += ' ';
@@ -73,7 +230,7 @@ static std::string urlDecode(const std::string& s) {
             out += s[i];
         }
     }
-    return out;
+    return true;
 }
 
 static std::string trimOptionalWhitespace(std::string value) {
@@ -471,8 +628,12 @@ HttpServer::HttpRequest HttpServer::parseRequest(const std::string& raw) {
 
             size_t eqPos = pair.find('=');
             if (eqPos != std::string::npos) {
-                std::string key = urlDecode(pair.substr(0, eqPos));
-                std::string val = urlDecode(pair.substr(eqPos + 1));
+                std::string key, val;
+                if (!urlDecode(pair.substr(0, eqPos), key) ||
+                    !urlDecode(pair.substr(eqPos + 1), val)) {
+                    req.valid = false;
+                    return req;
+                }
                 req.query[key] = val;
             }
             pos = (ampPos == std::string::npos) ? qs.size() : ampPos + 1;
@@ -549,6 +710,7 @@ HttpServer::HttpRequest HttpServer::parseRequest(const std::string& raw) {
 // ---------------------------------------------------------------------------
 
 std::string HttpServer::route(const HttpRequest& req) {
+    if (!req.valid) return errorResponse(400, "Invalid percent encoding");
     // ── Host: strict loopback + port validation (DNS rebinding mitigation) ──
     // Reject duplicate, empty, or missing Host.
     if (req.host == "__DUPLICATE__") {
@@ -680,17 +842,19 @@ std::string HttpServer::handleSearch(
     if (!engine) return errorResponse(503, "Engine not available");
 
     auto start = std::chrono::steady_clock::now();
-    QueryTimingInfo timing;
-    auto indices = engine->query(keyword, limit, useTrigram, timing);
-
-    std::ostringstream json;
-    json << "{\"results\":[";
-
-    bool first = true;
-    engine->forEachRecordWithPath(indices,
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t generation = engine->compactionGeneration();
+        QueryTimingInfo timing;
+        auto indices = engine->query(keyword, limit, useTrigram, timing);
+        std::ostringstream json;
+        json << "{\"results\":[";
+        bool first = true;
+        size_t resultCount = 0;
+        bool stable = engine->forEachRecordWithPathIfGeneration(indices, generation,
         [&](uint32_t /*idx*/, const FileRecord& r, const std::string& dirPath) {
             if (!first) json << ',';
             first = false;
+            ++resultCount;
             std::string fullPath = SearchEngine::makeFullPath(dirPath, r.name);
             json << "{\"name\":\"" << jsonEscapeString(r.name) << "\""
                  << ",\"path\":\"" << jsonEscapeString(fullPath) << "\""
@@ -699,12 +863,12 @@ std::string HttpServer::handleSearch(
                  << ",\"modTime\":" << r.modTime
                  << "}";
         });
+        if (!stable) continue;
 
-    auto elapsed = std::chrono::steady_clock::now() - start;
-    double ms = std::chrono::duration<double, std::milli>(elapsed).count();
-
-    json << std::fixed << std::setprecision(2);
-    json << "],\"count\":" << indices.size()
+        auto elapsed = std::chrono::steady_clock::now() - start;
+        double ms = std::chrono::duration<double, std::milli>(elapsed).count();
+        json << std::fixed << std::setprecision(2);
+        json << "],\"count\":" << resultCount
          << ",\"queryTimeMs\":" << ms
          << ",\"timing\":{"
          << "\"totalMs\":" << timing.totalMs
@@ -720,10 +884,11 @@ std::string HttpServer::handleSearch(
          << ",\"pathMatches\":" << timing.pathMatches
          << ",\"resultCount\":" << timing.resultCount
          << ",\"usedTrigram\":" << (timing.usedTrigram ? "true" : "false")
-         << ",\"searchPath\":\"" << timing.searchPath << "\""
-         << "}}";
-
-    return jsonResponse(200, json.str());
+         << ",\"searchPath\":\"" << jsonEscapeString(timing.searchPath) << "\""
+             << "}}";
+        return jsonResponse(200, json.str());
+    }
+    return errorResponse(503, "Index compacted repeatedly; retry the query");
 }
 
 std::string HttpServer::handleContentSearch(
@@ -739,7 +904,7 @@ std::string HttpServer::handleContentSearch(
     if (lIt != params.end()) {
         char* endptr = nullptr;
         long v = std::strtol(lIt->second.c_str(), &endptr, 10);
-        if (endptr != lIt->second.c_str() && v > 0) limit = static_cast<uint32_t>(std::min(v, 10000L));
+        if (endptr != lIt->second.c_str() && v > 0) limit = static_cast<uint32_t>(std::min(v, 200L));
     }
 
     auto contentIndex = getContentIndex_();
@@ -749,35 +914,45 @@ std::string HttpServer::handleContentSearch(
     auto engine = getEngine_();
     if (!engine) return errorResponse(503, "Engine not available");
 
-    auto matches = contentIndex->query(keyword, limit,
-        [engine](uint32_t fileIndex, std::string& fullPath) {
-            auto record = engine->getRecord(fileIndex);
-            if (record.type != 1) return false;
-            fullPath = SearchEngine::makeFullPath(record.path, record.name);
-            return true;
-        });
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t contentGeneration = contentIndex->mappingGeneration();
+        if ((contentGeneration & 1U) != 0) continue;
+        uint64_t generation = engine->compactionGeneration();
+        auto matches = contentIndex->query(keyword, limit,
+            [](uint32_t, std::string& fullPath) {
+                return !fullPath.empty();
+            });
+        if (contentIndex->mappingGeneration() != contentGeneration) continue;
 
-    std::ostringstream json;
-    json << "{\"results\":[";
-
-    bool first = true;
-    for (const auto& match : matches) {
-        FileRecord rec = engine->getRecord(match.fileIndex);
-        if (rec.type == 0) continue; // tombstoned
-        std::string dirPath = engine->resolveRecordPath(match.fileIndex);
-        std::string fullPath = SearchEngine::makeFullPath(dirPath, rec.name);
-
-        if (!first) json << ',';
-        first = false;
-        json << "{\"fileName\":\"" << jsonEscapeString(rec.name) << "\""
-             << ",\"filePath\":\"" << jsonEscapeString(fullPath) << "\""
-             << ",\"snippet\":\"" << jsonEscapeString(match.snippet) << "\""
-             << ",\"matchOffset\":" << match.matchOffset
-             << "}";
+        std::unordered_map<uint32_t, const ContentMatch*> byIndex;
+        std::vector<uint32_t> indices;
+        for (const auto& match : matches) {
+            indices.push_back(match.fileIndex);
+            byIndex[match.fileIndex] = &match;
+        }
+        std::ostringstream json;
+        json << "{\"results\":[";
+        bool first = true;
+        size_t resultCount = 0;
+        bool stable = engine->forEachRecordWithPathIfGeneration(
+            indices, generation, [&](uint32_t idx, const FileRecord& rec, const std::string& dirPath) {
+                auto it = byIndex.find(idx);
+                if (it == byIndex.end()) return;
+                const auto& match = *it->second;
+                if (!first) json << ',';
+                first = false;
+                ++resultCount;
+                std::string fullPath = SearchEngine::makeFullPath(dirPath, rec.name);
+                json << "{\"fileName\":\"" << jsonEscapeString(rec.name) << "\""
+                     << ",\"filePath\":\"" << jsonEscapeString(fullPath) << "\""
+                     << ",\"snippet\":\"" << jsonEscapeString(match.snippet) << "\""
+                     << ",\"matchOffset\":" << match.matchOffset << "}";
+            });
+        if (!stable || contentIndex->mappingGeneration() != contentGeneration) continue;
+        json << "],\"count\":" << resultCount << "}";
+        return jsonResponse(200, json.str());
     }
-
-    json << "],\"count\":" << matches.size() << "}";
-    return jsonResponse(200, json.str());
+    return errorResponse(503, "Index compacted repeatedly; retry the query");
 }
 
 std::string HttpServer::handleRecent(
@@ -793,16 +968,18 @@ std::string HttpServer::handleRecent(
     auto engine = getEngine_();
     if (!engine) return errorResponse(503, "Engine not available");
 
-    auto indices = engine->recentIndices(limit);
-
-    std::ostringstream json;
-    json << "{\"results\":[";
-
-    bool first = true;
-    engine->forEachRecordWithPath(indices,
+    for (int attempt = 0; attempt < 3; ++attempt) {
+        uint64_t generation = engine->compactionGeneration();
+        auto indices = engine->recentIndices(limit);
+        std::ostringstream json;
+        json << "{\"results\":[";
+        bool first = true;
+        size_t resultCount = 0;
+        bool stable = engine->forEachRecordWithPathIfGeneration(indices, generation,
         [&](uint32_t /*idx*/, const FileRecord& r, const std::string& dirPath) {
             if (!first) json << ',';
             first = false;
+            ++resultCount;
             std::string fullPath = SearchEngine::makeFullPath(dirPath, r.name);
             json << "{\"name\":\"" << jsonEscapeString(r.name) << "\""
                  << ",\"path\":\"" << jsonEscapeString(fullPath) << "\""
@@ -811,9 +988,11 @@ std::string HttpServer::handleRecent(
                  << ",\"modTime\":" << r.modTime
                  << "}";
         });
-
-    json << "],\"count\":" << indices.size() << "}";
-    return jsonResponse(200, json.str());
+        if (!stable) continue;
+        json << "],\"count\":" << resultCount << "}";
+        return jsonResponse(200, json.str());
+    }
+    return errorResponse(503, "Index compacted repeatedly; retry the query");
 }
 
 std::string HttpServer::handleStatus() {
@@ -961,61 +1140,32 @@ std::string HttpServer::handleSetContentConfig(const std::string& body) {
         return errorResponse(503, "Admin callbacks not configured");
     }
 
-    // Simple JSON parsing for {"extensions":["a","b"],"maxFileSize":123}
-    // Supports partial updates: only set fields present in the body.
     auto currentExts = callbacks.onGetContentExtensions();
     uint64_t currentMaxSize = callbacks.onGetContentMaxFileSize();
-
-    bool hasExtensions = false;
-    std::vector<std::string> newExts;
-
-    // Parse "extensions":[...]
-    auto extPos = body.find("\"extensions\"");
-    if (extPos != std::string::npos) {
-        auto arrStart = body.find('[', extPos);
-        auto arrEnd = body.find(']', arrStart);
-        if (arrStart != std::string::npos && arrEnd != std::string::npos) {
-            hasExtensions = true;
-            std::string arrContent = body.substr(arrStart + 1, arrEnd - arrStart - 1);
-            // Extract quoted strings
-            size_t pos = 0;
-            while (pos < arrContent.size()) {
-                auto qStart = arrContent.find('"', pos);
-                if (qStart == std::string::npos) break;
-                auto qEnd = arrContent.find('"', qStart + 1);
-                if (qEnd == std::string::npos) break;
-                newExts.push_back(arrContent.substr(qStart + 1, qEnd - qStart - 1));
-                pos = qEnd + 1;
-            }
+    ContentConfigUpdate update;
+    if (!ContentConfigJsonParser(body).parse(update)) {
+        return errorResponse(400, "Invalid content configuration JSON");
+    }
+    static constexpr uint64_t kMaxContentFileSize = 100ULL * 1024 * 1024;
+    static constexpr size_t kMaxContentExtensions = 256;
+    if (update.hasMaxFileSize &&
+        (update.maxFileSize == 0 || update.maxFileSize > kMaxContentFileSize)) {
+        return errorResponse(400, "maxFileSize must be between 1 and 104857600 bytes");
+    }
+    if (update.hasExtensions && update.extensions.size() > kMaxContentExtensions) {
+        return errorResponse(400, "At most 256 content extensions are allowed");
+    }
+    for (const auto& ext : update.extensions) {
+        if (ext.empty() || ext.size() > 64 || ext.front() == '.' ||
+            std::any_of(ext.begin(), ext.end(), [](unsigned char c) {
+                return c <= 0x20 || c == '/' || c == '\\';
+            })) {
+            return errorResponse(400, "Invalid file extension");
         }
     }
 
-    // Parse "maxFileSize":number
-    uint64_t newMaxSize = currentMaxSize;
-    auto msPos = body.find("\"maxFileSize\"");
-    if (msPos != std::string::npos) {
-        auto colonPos = body.find(':', msPos + 13);
-        if (colonPos != std::string::npos) {
-            size_t numStart = colonPos + 1;
-            while (numStart < body.size() && body[numStart] == ' ') ++numStart;
-            size_t numEnd = numStart;
-            while (numEnd < body.size() && body[numEnd] >= '0' && body[numEnd] <= '9') ++numEnd;
-            if (numEnd > numStart) {
-                uint64_t parsed = 0;
-                const char* begin = body.data() + numStart;
-                const char* end = body.data() + numEnd;
-                auto conversion = std::from_chars(begin, end, parsed);
-                if (conversion.ec != std::errc{} || conversion.ptr != end) {
-                    return errorResponse(400, "Invalid maxFileSize");
-                }
-                newMaxSize = parsed;
-            } else {
-                return errorResponse(400, "Invalid maxFileSize");
-            }
-        }
-    }
-
-    const auto& finalExts = hasExtensions ? newExts : currentExts;
+    const auto& finalExts = update.hasExtensions ? update.extensions : currentExts;
+    uint64_t newMaxSize = update.hasMaxFileSize ? update.maxFileSize : currentMaxSize;
     callbacks.onSetContentConfig(finalExts, newMaxSize);
 
     // Build response

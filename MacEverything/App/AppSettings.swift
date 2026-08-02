@@ -32,7 +32,7 @@ enum StartupDisplayMode: String, CaseIterable, Codable, Identifiable {
     }
 }
 
-enum SortField: String, CaseIterable, Codable, Identifiable {
+enum SortField: String, CaseIterable, Codable, Identifiable, Sendable {
     case relevance
     case name
     case ext
@@ -404,7 +404,7 @@ final class AppSettings: ObservableObject {
         showModifiedDate = defaults.object(forKey: Key.showModifiedDate) as? Bool ?? false
         showContentSnippets = defaults.object(forKey: Key.showContentSnippets) as? Bool ?? true
         resultDensity = ResultDensity(rawValue: defaults.string(forKey: Key.resultDensity) ?? "") ?? .comfortable
-        httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? true
+        httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? false
         httpAuthenticationEnabled = defaults.object(forKey: Key.httpAuthenticationEnabled) as? Bool ?? false
         httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
         recentPathFilters = Array(normalizedExistingPaths(
@@ -438,7 +438,7 @@ final class AppSettings: ObservableObject {
 
     var snapshot: AppSettingsSnapshot {
         AppSettingsSnapshot(
-            indexRoots: normalizedExistingPaths(indexRoots),
+            indexRoots: normalizedPaths(indexRoots),
             excludedPaths: normalizedPaths(excludedPaths),
             excludedPatterns: excludedPatterns,
             indexHiddenFiles: indexHiddenFiles,
@@ -459,9 +459,13 @@ final class AppSettings: ObservableObject {
             contentIndexingEnabled: contentIndexingEnabled,
             contentSearchUsesIndexRoots: contentSearchUsesIndexRoots,
             contentSearchUsesIndexExclusions: contentSearchUsesIndexExclusions,
-            contentSearchRoots: normalizedExistingPaths(contentSearchUsesIndexRoots ? indexRoots : contentSearchRoots),
+            contentSearchRoots: normalizedPaths(contentSearchUsesIndexRoots ? indexRoots : contentSearchRoots),
             contentSearchExcludedPaths: normalizedPaths(contentSearchUsesIndexExclusions ? excludedPaths : contentSearchExcludedPaths),
-            contentIndexRoots: normalizedExistingPaths(contentSearchUsesIndexRoots ? indexRoots : contentSearchRoots),
+            contentIndexRoots: normalizedPaths(ContentRootPolicy.runtimeRoots(
+                useMainIndexRoots: contentSearchUsesIndexRoots,
+                indexRoots: indexRoots,
+                customRoots: contentSearchRoots
+            )),
             contentExcludedPaths: normalizedPaths(contentSearchUsesIndexExclusions ? excludedPaths : contentSearchExcludedPaths),
             contentMaxFileSizeMB: min(max(contentMaxFileSizeMB, 0.1), 100.0),
             searchHistoryEnabled: searchHistoryEnabled,
@@ -594,7 +598,7 @@ final class AppSettings: ObservableObject {
     }
 
     private func saveArray(_ value: [String], _ key: String) {
-        defaults.set(sortedSettingsList(normalizedPaths(value)), forKey: key)
+        defaults.set(normalizedPaths(value), forKey: key)
     }
 
     private static func defaultIndexRoots() -> [String] {
@@ -673,12 +677,6 @@ func normalizedPaths(_ paths: [String]) -> [String] {
         result.append(standardized)
     }
     return result
-}
-
-func sortedSettingsList(_ values: [String]) -> [String] {
-    values.sorted { lhs, rhs in
-        lhs.localizedStandardCompare(rhs) == .orderedAscending
-    }
 }
 
 func normalizedExistingPaths(_ paths: [String]) -> [String] {

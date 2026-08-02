@@ -9,6 +9,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
     private var statusItem: NSStatusItem?
     private var launchAtLoginItem: NSMenuItem?
     private var hideDockItem: NSMenuItem?
+    private var regexMenuItem: NSMenuItem?
     private var mcpMenuItems: [MCPClient: NSMenuItem] = [:]
     private(set) var activeSearchWindow: NSWindow?
     private var auxiliarySearchWindows: [NSWindow] = []
@@ -100,6 +101,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
                                    keyEquivalent: "n",
                                    modifiers: [.command, .shift]))
         menu.addItem(.separator())
+        let regexItem = NSMenuItem(title: L10n.tr("Use Regular Expression (Advanced)"),
+                                   action: #selector(toggleRegex),
+                                   keyEquivalent: "")
+        regexMenuItem = regexItem
+        menu.addItem(regexItem)
         menu.addItem(NSMenuItem(title: L10n.tr("Settings..."), action: #selector(openSettings), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Rebuild Index"), action: #selector(rebuildIndex), keyEquivalent: ""))
         menu.addItem(NSMenuItem(title: L10n.tr("Shortcut Settings..."), action: #selector(openShortcutSettings), keyEquivalent: ""))
@@ -200,6 +206,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         }
         launchAtLoginItem?.state = SMAppService.mainApp.status == .enabled ? .on : .off
         hideDockItem?.state = isDockIconHidden ? .on : .off
+        regexMenuItem?.state = SearchOptions.shared.isRegex ? .on : .off
         for (client, item) in mcpMenuItems {
             item.state = MCPIntegrationModel.shared.isEnabled(client) ? .on : .off
             item.isEnabled = !MCPIntegrationModel.shared.updating.contains(client)
@@ -297,6 +304,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate, NSWindowDele
         Task { @MainActor in
             RegexHelpWindowController.shared.showWindow()
         }
+    }
+
+    @objc private func toggleRegex() {
+        SearchOptions.shared.isRegex.toggle()
+        regexMenuItem?.state = SearchOptions.shared.isRegex ? .on : .off
     }
 
     @objc private func toggleMCPClient(_ sender: NSMenuItem) {

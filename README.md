@@ -4,7 +4,7 @@
 
 <h1 align="center">MacEverything</h1>
 
-<p align="center">当前版本：1.7.25 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+<p align="center">当前版本：1.7.30 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
 
 <p align="center">
   <b>macOS 极速文件搜索工具</b> — 在数百万文件中毫秒级定位任意文件。<br/>
@@ -196,7 +196,7 @@ ln -sf /Applications/MacEverything.app/Contents/MacOS/mace ~/.local/bin/mace
 
 #### 发布状态与下载
 
-当前稳定版本为 **1.7.25**。
+当前稳定版本为 **1.7.30**。
 
 使用 Homebrew Cask 安装或升级：
 

@@ -8,6 +8,7 @@
 #include <mutex>
 #include <cstdio>
 #include <functional>
+#include <atomic>
 
 /// A trigram is 3 consecutive lowercase ASCII bytes packed into the low 24 bits of a uint32_t.
 using Trigram = uint32_t;
@@ -60,7 +61,9 @@ public:
     // --- Querying ---
 
     /// Search for files containing the keyword. Returns matches with snippets.
-    /// Uses trigram intersection for keywords >= 3 chars, brute-force for shorter.
+    /// The callback receives the stable path captured from ContentFileInfo while
+    /// the index lock is held. It may reject the path or fill it for legacy
+    /// entries that predate path-keyed persistence.
     using PathResolver = std::function<bool(uint32_t fileIndex, std::string& fullPath)>;
     std::vector<ContentMatch> query(const std::string& keyword, uint32_t maxResults,
                                     const PathResolver& resolvePath) const;
@@ -108,10 +111,25 @@ public:
     /// Remap fileIndices after SearchEngine compaction. Thread-safe.
     void remapFileIndices(const std::unordered_map<uint32_t, uint32_t>& remap);
 
+    /// Mark the interval in which SearchEngine indices and content indices may differ.
+    /// Callers must begin before compacting SearchEngine and end after remapping this index.
+    void beginFileIndexRemap();
+    bool tryBeginFileIndexRemap();
+    void endFileIndexRemap();
+    std::shared_lock<std::shared_mutex> acquireFileIndexMappingLease() {
+        return std::shared_lock<std::shared_mutex>(remapMutex_);
+    }
+    uint64_t mappingGeneration() const {
+        return mappingGeneration_.load(std::memory_order_acquire);
+    }
+
     /// Remove content entries whose fileIndex points to a non-regular-file record
     /// in the search engine (e.g., after search engine compaction shifted indices).
     /// Returns the number of pruned entries.
     uint32_t pruneStaleEntries(const std::unordered_set<uint32_t>& validFileIndices);
+
+    std::vector<std::pair<uint32_t, ContentFileInfo>> removeByPathPrefix(
+        const std::string& pathPrefix);
 
     /// Return the list of fileIndex keys currently in the content index. Thread-safe.
     std::vector<uint32_t> getIndexedFileIndices() const;
@@ -151,6 +169,9 @@ private:
     uint64_t maxFileSize_ = 1 * 1024 * 1024; // 1MB
 
     mutable std::shared_mutex mutex_;
+    std::shared_mutex remapMutex_;
+    // Even values are stable; odd values mean a cross-index remap is in progress.
+    std::atomic<uint64_t> mappingGeneration_{0};
 
     // Lock-free version for internal use (caller must hold mutex_)
     bool hasAllowedExtensionLocked(const std::string& filename) const;

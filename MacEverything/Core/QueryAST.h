@@ -46,6 +46,7 @@ struct QueryNode {
     std::string filterArg;   // raw argument string
     CompareOp op = CompareOp::EQ;
     uint64_t numVal1 = 0, numVal2 = 0;
+    bool filterValid = true;
     std::vector<std::string> extList;  // for ext: filter
 
     // --- Path segment constraint (for __pathseg internal filter) ---

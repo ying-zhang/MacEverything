@@ -99,6 +99,11 @@ struct FileInspectorPanel: View {
                 ) { FileActions.copyFiles(items) }
             }
             HStack(spacing: 8) {
+                actionButton(L10n.tr("Open With..."), symbol: "square.grid.2x2") {
+                    FileActions.showOpenWithMenu(
+                        for: items.map { URL(fileURLWithPath: $0.fullPath) }
+                    )
+                }
                 actionButton(
                     fileActionTitle("Reveal in Finder", multi: "Reveal %d Items in Finder", count: count),
                     symbol: "folder"

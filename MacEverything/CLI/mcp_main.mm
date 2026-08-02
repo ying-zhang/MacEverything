@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 #include <cerrno>
+#include <exception>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
@@ -115,6 +116,7 @@ struct HttpResponse {
 
 static HttpResponse httpGet(const std::string& path) {
     HttpResponse resp;
+    static constexpr size_t kMaxHttpResponseBytes = 16 * 1024 * 1024;
 
     int fd = socket(AF_INET, SOCK_STREAM, 0);
     if (fd < 0) {
@@ -167,6 +169,11 @@ static HttpResponse httpGet(const std::string& path) {
     while (true) {
         ssize_t count = recv(fd, buf, sizeof(buf), 0);
         if (count > 0) {
+            if (static_cast<size_t>(count) > kMaxHttpResponseBytes - raw.size()) {
+                close(fd);
+                resp.body = "MacEverything response exceeds the 16 MB limit";
+                return resp;
+            }
             raw.append(buf, static_cast<size_t>(count));
         } else if (count == 0) {
             break;
@@ -223,6 +230,14 @@ static std::vector<std::string>*& activeResponseCollector() {
     return collector;
 }
 
+class ResponseCollectorScope {
+public:
+    explicit ResponseCollectorScope(std::vector<std::string>& responses) {
+        activeResponseCollector() = &responses;
+    }
+    ~ResponseCollectorScope() { activeResponseCollector() = nullptr; }
+};
+
 static void sendResponse(const std::string& json) {
     if (activeResponseCollector()) {
         activeResponseCollector()->push_back(json);
@@ -263,7 +278,7 @@ static void sendToolResult(const std::string& id, const std::string& text, bool 
 static std::string toolDefinitions() {
     return R"JSON({"tools":[)JSON"
         R"JSON({"name":"search_files","description":"Search for files and directories by name. Supports substring matching with trigram acceleration for fast results across millions of files.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"Search keyword (substring match, case-insensitive)"},"limit":{"type":"integer","description":"Maximum number of results (default 100, max 10000)","default":100}},"required":["query"]},"annotations":{"readOnlyHint":true}},)JSON"
-        R"JSON({"name":"search_content","description":"Full-text content search across indexed files. Returns matching file paths with context snippets.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"Content search keyword"},"limit":{"type":"integer","description":"Maximum number of results (default 100, max 10000)","default":100}},"required":["query"]},"annotations":{"readOnlyHint":true}},)JSON"
+        R"JSON({"name":"search_content","description":"Full-text content search across indexed files. Returns matching file paths with context snippets.","inputSchema":{"type":"object","properties":{"query":{"type":"string","description":"Content search keyword"},"limit":{"type":"integer","description":"Maximum number of results (default 100, max 200)","default":100,"maximum":200}},"required":["query"]},"annotations":{"readOnlyHint":true}},)JSON"
         R"JSON({"name":"recent_files","description":"List recently modified files.","inputSchema":{"type":"object","properties":{"limit":{"type":"integer","description":"Maximum number of results (default 100, max 10000)","default":100}},"required":[]},"annotations":{"readOnlyHint":true}},)JSON"
         R"JSON({"name":"index_status","description":"Get the current index status including record count and content index stats.","inputSchema":{"type":"object","properties":{},"required":[]},"annotations":{"readOnlyHint":true}})JSON"
         R"JSON(]})JSON";
@@ -273,54 +288,55 @@ static std::string toolDefinitions() {
 //  Tool handlers
 // ═══════════════════════════════════════════════════════
 
-static long argumentLimit(NSDictionary* args) {
+static long argumentLimit(NSDictionary* args, long maximum = 10000) {
     id value = args[@"limit"];
     if (![value isKindOfClass:[NSNumber class]]) return -1;
     long limit = [static_cast<NSNumber*>(value) longValue];
     if (limit <= 0) return -1;
-    return std::min(limit, 10000L);
+    return std::min(limit, maximum);
 }
 
-static std::string handleSearchFiles(NSDictionary* args) {
+struct ToolHandlerResult {
+    std::string text;
+    bool isError = false;
+};
+
+static ToolHandlerResult handleSearchFiles(NSDictionary* args) {
     std::string query = cppString(args[@"query"]);
-    if (query.empty()) return "Error: missing required parameter 'query'";
+    if (query.empty()) return {"Error: missing required parameter 'query'", true};
 
     long limit = argumentLimit(args);
     std::string path = "/api/search?q=" + mace::urlEncode(query);
     if (limit > 0) path += "&limit=" + std::to_string(limit);
 
     auto resp = httpGet(path);
-    if (!resp.ok) return resp.body;
-    return resp.body;
+    return {resp.body, !resp.ok};
 }
 
-static std::string handleSearchContent(NSDictionary* args) {
+static ToolHandlerResult handleSearchContent(NSDictionary* args) {
     std::string query = cppString(args[@"query"]);
-    if (query.empty()) return "Error: missing required parameter 'query'";
+    if (query.empty()) return {"Error: missing required parameter 'query'", true};
 
-    long limit = argumentLimit(args);
+    long limit = argumentLimit(args, 200);
     std::string path = "/api/search/content?q=" + mace::urlEncode(query);
     if (limit > 0) path += "&limit=" + std::to_string(limit);
 
     auto resp = httpGet(path);
-    if (!resp.ok) return resp.body;
-    return resp.body;
+    return {resp.body, !resp.ok};
 }
 
-static std::string handleRecentFiles(NSDictionary* args) {
+static ToolHandlerResult handleRecentFiles(NSDictionary* args) {
     long limit = argumentLimit(args);
     std::string path = "/api/recent";
     if (limit > 0) path += "?limit=" + std::to_string(limit);
 
     auto resp = httpGet(path);
-    if (!resp.ok) return resp.body;
-    return resp.body;
+    return {resp.body, !resp.ok};
 }
 
-static std::string handleIndexStatus() {
+static ToolHandlerResult handleIndexStatus() {
     auto resp = httpGet("/api/status");
-    if (!resp.ok) return resp.body;
-    return resp.body;
+    return {resp.body, !resp.ok};
 }
 
 // ═══════════════════════════════════════════════════════
@@ -397,34 +413,20 @@ static void handleRequest(NSDictionary* request) {
         NSDictionary* args = [argumentsValue isKindOfClass:[NSDictionary class]]
             ? static_cast<NSDictionary*>(argumentsValue) : @{};
 
-        std::string resultText;
-        bool isError = false;
+        ToolHandlerResult toolResult;
 
         if (toolName == "search_files") {
-            resultText = handleSearchFiles(args);
+            toolResult = handleSearchFiles(args);
         } else if (toolName == "search_content") {
-            resultText = handleSearchContent(args);
+            toolResult = handleSearchContent(args);
         } else if (toolName == "recent_files") {
-            resultText = handleRecentFiles(args);
+            toolResult = handleRecentFiles(args);
         } else if (toolName == "index_status") {
-            resultText = handleIndexStatus();
+            toolResult = handleIndexStatus();
         } else {
-            resultText = "Unknown tool: " + toolName;
-            isError = true;
+            toolResult = {"Unknown tool: " + toolName, true};
         }
-
-        // Check if result looks like an HTTP error
-        if (resultText.find("Cannot connect") != std::string::npos ||
-            resultText.find("Failed to create socket") != std::string::npos ||
-            resultText.find("Failed to send request") != std::string::npos ||
-            resultText.find("Failed to receive response") != std::string::npos ||
-            resultText.find("Timed out waiting") != std::string::npos ||
-            resultText.find("Empty response") != std::string::npos ||
-            resultText.rfind("Error:", 0) == 0) {
-            isError = true;
-        }
-
-        sendToolResult(requestID, resultText, isError);
+        sendToolResult(requestID, toolResult.text, toolResult.isError);
         return;
     }
 
@@ -489,8 +491,25 @@ int main(int argc, char* argv[]) {
             g_httpPort);
 
     // Main loop: read newline-delimited JSON-RPC from stdin
+    static constexpr size_t kMaxInputLineBytes = 1024 * 1024;
     std::string line;
-    while (std::getline(std::cin, line)) {
+    bool inputComplete = false;
+    while (!inputComplete) {
+        line.clear();
+        bool oversized = false;
+        char ch = 0;
+        while (std::cin.get(ch)) {
+            if (ch == '\n') break;
+            if (line.size() < kMaxInputLineBytes) line.push_back(ch);
+            else oversized = true;
+        }
+        inputComplete = !std::cin && ch != '\n';
+        if (line.empty() && !oversized && inputComplete) break;
+        if (oversized) {
+            sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
+                         "\"error\":{\"code\":-32700,\"message\":\"Input exceeds 1 MB limit\"}}");
+            continue;
+        }
         // Skip empty lines
         if (line.empty() || line.find_first_not_of(" \t\r\n") == std::string::npos) {
             continue;
@@ -522,16 +541,22 @@ int main(int argc, char* argv[]) {
                 }
 
                 std::vector<std::string> responses;
-                activeResponseCollector() = &responses;
-                for (id item in batch) {
-                    if ([item isKindOfClass:[NSDictionary class]]) {
-                        handleRequest(static_cast<NSDictionary*>(item));
-                    } else {
-                        sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
-                                     "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
+                try {
+                    ResponseCollectorScope collectorScope(responses);
+                    for (id item in batch) {
+                        if ([item isKindOfClass:[NSDictionary class]]) {
+                            handleRequest(static_cast<NSDictionary*>(item));
+                        } else {
+                            sendResponse("{\"jsonrpc\":\"2.0\",\"id\":null,"
+                                         "\"error\":{\"code\":-32600,\"message\":\"Invalid Request\"}}");
+                        }
                     }
+                } catch (const std::exception& error) {
+                    fprintf(stderr, "[MCP] Failed to build batch response: %s\n", error.what());
+                    sendResponse("[{\"jsonrpc\":\"2.0\",\"id\":null,"
+                                 "\"error\":{\"code\":-32603,\"message\":\"Internal error\"}}]");
+                    continue;
                 }
-                activeResponseCollector() = nullptr;
                 if (!responses.empty()) {
                     std::ostringstream batchResponse;
                     batchResponse << '[';

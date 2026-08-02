@@ -33,11 +33,15 @@ static void runThreadSafetyTest() {
             int queries = 0;
             while (running.load(std::memory_order_relaxed)) {
                 try {
-                    auto res = engine.query("stress_" + std::to_string(queries % 1000), 100);
+                    std::string needle = "stress_" + std::to_string(queries % 1000);
+                    auto res = engine.query(needle, 100);
+                    if (res.empty()) errorDetected.store(true);
                     // Access returned records
                     for (uint32_t idx : res) {
                         const auto& r = engine.getRecord(idx);
-                        (void)r.name;
+                        if (r.name.find(needle) == std::string::npos) {
+                            errorDetected.store(true);
+                        }
                     }
                     // Also read live count
                     (void)engine.liveRecordCount();

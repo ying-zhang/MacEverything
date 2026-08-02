@@ -294,11 +294,17 @@ struct MCPConfigManager {
     private static func writeJSON(_ dict: [String: Any], to url: URL) throws {
         let dir = url.deletingLastPathComponent()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let existingMode = (try? FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions])
+            as? NSNumber
         let data = try JSONSerialization.data(
             withJSONObject: dict,
             options: [.prettyPrinted, .sortedKeys]
         )
         try data.write(to: url, options: .atomic)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: existingMode ?? NSNumber(value: 0o600)],
+            ofItemAtPath: url.path
+        )
     }
 
     enum MCPError: LocalizedError {
@@ -359,18 +365,23 @@ final class MCPIntegrationModel: ObservableObject {
         updating.insert(client)
         errors[client] = nil
 
-        DispatchQueue.global(qos: .userInitiated).async {
-            let result = Result { try MCPConfigManager.setEnabled(desired, for: client) }
-            DispatchQueue.main.async {
-                self.updating.remove(client)
-                switch result {
-                case .success:
-                    self.enabled[client] = MCPConfigManager.isEnabled(for: client)
-                case .failure(let error):
-                    self.enabled[client] = previous
-                    self.errors[client] = error.localizedDescription
-                    AppLogger.error("MCP", "Failed to update \(client.displayName) config: \(error)")
+        Task { @MainActor in
+            let errorMessage = await Task.detached(priority: .userInitiated) {
+                do {
+                    try MCPConfigManager.setEnabled(desired, for: client)
+                    return nil as String?
+                } catch {
+                    return error.localizedDescription
                 }
+            }.value
+
+            updating.remove(client)
+            if let errorMessage {
+                enabled[client] = previous
+                errors[client] = errorMessage
+                AppLogger.error("MCP", "Failed to update \(client.displayName) config: \(errorMessage)")
+            } else {
+                enabled[client] = MCPConfigManager.isEnabled(for: client)
             }
         }
     }

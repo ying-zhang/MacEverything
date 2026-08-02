@@ -62,6 +62,7 @@ struct ContentResultRow: View {
         }
         .contextMenu {
             Button(L10n.tr("Open")) { openFile() }
+            OpenWithMenu(urls: [URL(fileURLWithPath: item.filePath)])
             Button(L10n.tr("Reveal in Finder")) { revealInFinder() }
             Button(L10n.tr("Quick Look")) { quickLook() }
             Divider()

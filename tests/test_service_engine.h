@@ -35,6 +35,36 @@ static bool runPart40() {
         check(engine->recordCount() == 0, "Initial recordCount is 0");
         check(!engine->isScanning(), "Not scanning initially");
         check(!engine->isMonitoring(), "Not monitoring initially");
+
+        engine->rebuildContentIndex({"md", "txt"}, 12'345);
+        auto content = engine->safeContentIndex();
+        auto extensions = content ? content->getExtensions() : std::vector<std::string>{};
+        std::sort(extensions.begin(), extensions.end());
+        check(extensions == std::vector<std::string>({"md", "txt"}),
+              "Content rebuild applies its explicit extension snapshot");
+        check(content && content->getMaxFileSize() == 12'345,
+              "Content rebuild applies its explicit size snapshot");
+
+        engine->requestContentIndexRebuild({"old"}, 111);
+        engine->requestContentIndexRebuild({"json"}, 22'222);
+        bool latestApplied = false;
+        for (int attempt = 0; attempt < 200; ++attempt) {
+            auto latest = engine->safeContentIndex();
+            if (latest && latest->getExtensions() == std::vector<std::string>{"json"} &&
+                latest->getMaxFileSize() == 22'222) {
+                latestApplied = true;
+                break;
+            }
+            std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        }
+        check(latestApplied, "Queued content rebuilds preserve the latest configuration");
+
+        engine->requestContentIndexRebuild({"pending"}, 33'333);
+        engine->rebuildContentIndex();
+        auto rebuilt = engine->safeContentIndex();
+        check(rebuilt && rebuilt->getExtensions() == std::vector<std::string>{"pending"} &&
+                  rebuilt->getMaxFileSize() == 33'333,
+              "Manual rebuild consumes a pending HTTP configuration intent");
     }
 
     // Test 2: Full scan on tmpdir
