@@ -189,6 +189,17 @@ bool IndexWAL::append(WALOp op, const std::string& fullPath, const FileRecord& r
     std::lock_guard<std::mutex> lock(mutex_);
     if (!file_ || failed_) return false;
 
+    // Enforce the same length caps the reader applies. Writing an entry longer
+    // than the cap would record a valid CRC but be rejected as corrupt on
+    // replay, silently dropping the mutation.
+    constexpr size_t kMaxEntryStringLen = 65536;
+    if (fullPath.size() > kMaxEntryStringLen ||
+        ((op == WALOp::Add || op == WALOp::Update) &&
+         (record.name.size() > kMaxEntryStringLen || record.path.size() > kMaxEntryStringLen))) {
+        LOG_ERROR("IndexWAL", "Refusing to append over-length WAL entry at " << path_);
+        return false;
+    }
+
     // The limit is an operational compaction threshold, never a reason to lose
     // an already-applied in-memory mutation. Keep appending until persistence
     // rotates/compacts the WAL.

@@ -243,9 +243,12 @@ std::string ContentIndex::generateSnippet(const std::string& path,
             break;
         }
 
-        // Advance with overlap to catch keywords spanning chunk boundaries
+        // Advance with overlap to catch keywords spanning chunk boundaries.
         if (bytesRead < kChunkSize) break; // last chunk, no more data
-        size_t advance = bytesRead - overlapSize;
+        // Guard against a keyword >= chunk size: overlapSize == bytesRead makes
+        // advance == 0 and the loop would spin forever re-reading the first chunk.
+        size_t advance = (overlapSize >= bytesRead) ? bytesRead
+                                                    : (bytesRead - overlapSize);
         fileOffset += advance;
         fseek(f, static_cast<long>(fileOffset), SEEK_SET);
     }

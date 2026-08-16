@@ -469,6 +469,11 @@ static bool evalNode(const QueryNode& node,
 
         case QueryNodeType::NOT:
             if (node.children.empty()) return true;
+            // An invalid filter evaluates to false; NOT must not turn that into
+            // "match everything" (invalid filters must not broaden results).
+            if (node.children[0]->type == QueryNodeType::FILTER &&
+                !node.children[0]->filterValid)
+                return false;
             return !evalNode(*node.children[0], recType, recSize, recModTime,
                              nameData, nameLen, pathData, pathLen,
                              pinyinData, pinyinLen,
@@ -923,9 +928,40 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                     cjkCands = me::intersectSortedPostingLists(cjkCands, *postings[i]);
                 }
                 if (!cjkCands.empty() && cjkCands.size() <= totalSize / 4) {
-                    nameCands = std::move(cjkCands);
-                    nameOk = true;
-                    stage1AllFound = true;
+                    // The CJK bigram index covers filenames only. Records whose
+                    // name doesn't match but whose PATH contains the term must
+                    // not be dropped, so union in path-trigram candidates (as
+                    // Stage 1 does for single terms). If the union overflows the
+                    // threshold, fall back to the linear scan below.
+                    bool pathComplete = true;
+                    if (!pathTrigramIndex_.empty()) {
+                        bool pathFound = false;
+                        auto pathIdxCands = intersectPostingLists(
+                            pathTrigramIndex_, trigramKey, pathFound);
+                        if (pathFound) {
+                            std::vector<uint32_t> expandedPathCands;
+                            for (uint32_t pi : pathIdxCands) {
+                                if (pi >= pathIdxToRecords_.size()) continue;
+                                const auto& recIds = pathIdxToRecords_[pi];
+                                if (!appendUntilThreshold(expandedPathCands, recIds,
+                                                          totalSize / 4)) {
+                                    expandedPathCands.clear();
+                                    pathComplete = false;
+                                    break;
+                                }
+                            }
+                            if (pathComplete) {
+                                sortUnique(expandedPathCands);
+                                unionSortedInto(cjkCands, expandedPathCands);
+                            }
+                        }
+                    }
+                    if (pathComplete && !cjkCands.empty() &&
+                        cjkCands.size() <= totalSize / 4) {
+                        nameCands = std::move(cjkCands);
+                        nameOk = true;
+                        stage1AllFound = true;
+                    }
                 }
             }
         }

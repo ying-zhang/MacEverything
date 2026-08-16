@@ -119,10 +119,13 @@ std::unique_ptr<QueryNode> QueryParser::parseAtom() {
         return inner;
     }
 
-    // Quoted phrase
+    // Quoted phrase — literal text, must not be reinterpreted by the
+    // slash/glob transforms.
     if (tok.type == TokenType::QUOTED) {
         advance();
-        return QueryNode::makeTerm(tok.value);
+        auto n = QueryNode::makeTerm(tok.value);
+        n->quoted = true;
+        return n;
     }
 
     // Filter: ext:cpp, size:>1mb, etc.

@@ -292,15 +292,15 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
         fclose(f); remove(tmpPath.c_str()); return false;
     }
 
-    // Compute and write header CRC (over first 60 bytes, excluding headerCRC field)
+    // Compute and write header CRC over the first 36 bytes (magic(4)+version(4)
+    // +recordCount(4)+liveCount(4)+timestamp(8)+lastEventId(8)+sectionCount(4)),
+    // excluding the headerCRC field itself. headerCRC lives at offset 36,
+    // reserved at offset 40.
     fseek(f, 0, SEEK_SET);
     uint8_t headerBytes[kHeaderSize];
     if (fread(headerBytes, 1, kHeaderSize, f) != kHeaderSize) {
         fclose(f); remove(tmpPath.c_str()); return false;
     }
-    // headerCRC is at offset 44 (after magic(4)+version(4)+recordCount(4)+liveCount(4)
-    //   +timestamp(8)+lastEventId(8)+sectionCount(4) = 36, then headerCRC at 40)
-    // Actually: 4+4+4+4+8+8+4 = 36, headerCRC at offset 36, reserved at 40
     uint32_t hdrCRC = IndexWAL::crc32(headerBytes, 36);
     header.headerCRC = hdrCRC;
     fseek(f, 0, SEEK_SET);

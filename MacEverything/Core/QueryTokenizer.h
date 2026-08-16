@@ -117,6 +117,13 @@ public:
                                     || ch == '"') {
                                     break;
                                 }
+                                // Allow < > only as the leading char of the arg
+                                // (size:>100kb, depth:<3). Elsewhere they are
+                                // group-close/stray operators and must terminate
+                                // the arg instead of being swallowed.
+                                if ((ch == '<' || ch == '>') && !arg.empty()) {
+                                    break;
+                                }
                                 arg += ch;
                                 i++;
                             }

@@ -32,6 +32,7 @@ struct QueryNode {
     std::string textLower;  // pre-computed lowercase of text (avoids per-record toLower)
     MatchMode mode = MatchMode::SUBSTRING;
     bool caseSensitive = false;
+    bool quoted = false;     // came from a "..." phrase — treat literally (no slash/glob transform)
     bool matchPath = false;  // path: modifier
     bool nameOnly = false;   // match name only (set by transformSlashTerms)
     bool useNameKind = false; // apply anchored slash-query name semantics
@@ -118,6 +119,7 @@ struct QueryNode {
                     os << " mode=" << static_cast<int>(mode);
                 }
                 if (caseSensitive) os << " case";
+                if (quoted) os << " quoted";
                 if (matchPath) os << " path";
                 if (nameOnly) os << " nameOnly";
                 if (useNameKind) os << " nameKind=" << static_cast<int>(nameKind);

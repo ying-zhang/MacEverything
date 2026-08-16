@@ -27,6 +27,7 @@ inline std::unique_ptr<QueryNode> transformSlashTerms(std::unique_ptr<QueryNode>
     // Only transform SUBSTRING TERM nodes whose text contains '/'
     if (node->type != QueryNodeType::TERM) return node;
     if (node->mode != MatchMode::SUBSTRING) return node;
+    if (node->quoted) return node; // quoted phrases are literal, not paths
     if (node->text.find('/') == std::string::npos) return node;
 
     // Parse the slash-containing text as a structured query (use pre-lowered text)
@@ -54,7 +55,20 @@ inline std::unique_ptr<QueryNode> transformSlashTerms(std::unique_ptr<QueryNode>
 
     // 2. Name term (the last component)
     if (!pq.namePattern.empty()) {
-        auto nameTerm = QueryNode::makeTerm(pq.namePattern, pq.namePattern, MatchMode::SUBSTRING);
+        // parseQuery lowercases the name pattern; for case-sensitive queries we
+        // must keep the original-case name as `text` (textLower stays lowered).
+        std::string nameText = pq.namePattern;
+        if (node->caseSensitive) {
+            std::string t = node->text;
+            if (t.size() >= 2 && t.back() == '*' && t[t.size() - 2] == '/')
+                t = t.substr(0, t.size() - 2);
+            else if (!t.empty() && t.back() == '/')
+                t = t.substr(0, t.size() - 1);
+            if (!t.empty() && t.front() == '/') t = t.substr(1);
+            size_t slash = t.rfind('/');
+            nameText = (slash == std::string::npos) ? t : t.substr(slash + 1);
+        }
+        auto nameTerm = QueryNode::makeTerm(nameText, pq.namePattern, MatchMode::SUBSTRING);
         nameTerm->caseSensitive = node->caseSensitive;
         nameTerm->nameOnly = true; // match only name, not full path
         nameTerm->useNameKind = true;

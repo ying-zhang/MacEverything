@@ -190,6 +190,7 @@ void SearchEngine::completePhase2() {
     std::vector<uint32_t> snapPathIndices;
     uint32_t snapPathPoolSize;
     uint32_t snapSize;
+    uint64_t snapCompactionGen = 0;
     {
         std::shared_lock lock(mutex_);
         snapTypes = types_;
@@ -200,6 +201,7 @@ void SearchEngine::completePhase2() {
         snapPathIndices = pathIndices_;
         snapPathPoolSize = pathPool_.entryCount();
         snapSize = static_cast<uint32_t>(types_.size());
+        snapCompactionGen = compactionGen_.load(std::memory_order_relaxed);
     }
 
     // Build all indices without holding any lock (~3s)
@@ -225,6 +227,17 @@ void SearchEngine::completePhase2() {
     // Swap under unique lock and replay mutations that occurred during build
     {
         std::unique_lock lock(mutex_);
+
+        // A COW compaction may have completed while we built the indices above.
+        // It renumbers records, rebuilds every secondary index against the new
+        // numbering, and clears phase2Pending_. Installing our pre-compaction
+        // snapshot indices now would reference stale record indices (OOB reads),
+        // so discard them and keep the compaction's fresh indices.
+        if (!phase2Pending_.load(std::memory_order_acquire) ||
+            compactionGen_.load(std::memory_order_relaxed) != snapCompactionGen) {
+            LOG_INFO("SearchEngine", "Phase 2: compaction completed during index build, discarding stale indices");
+            return;
+        }
 
         nameTrigramIndex_ = std::move(trigramIndex);
         pinyinInitialsPool_ = std::move(pinyinInitialsPool);

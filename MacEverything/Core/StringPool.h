@@ -16,6 +16,10 @@ public:
     struct Entry {
         uint32_t offset;
         uint16_t length;
+        // Explicit padding keeps sizeof(Entry)==8 for the on-disk format while
+        // ensuring the bytes serialized to disk are deterministic (no stale heap
+        // disclosure). Aggregate init {offset, length} zero-initializes this.
+        uint16_t padding = 0;
     };
 
     StringPool() = default;
@@ -56,11 +60,18 @@ public:
         }
     }
 
+    /// Whether an entry's [offset, offset+length) range fits inside bufferSize.
+    /// Uses 64-bit arithmetic to avoid uint32 wrap-around for corrupt offsets.
+    static bool entryInBounds(const Entry& e, size_t bufferSize) {
+        return static_cast<uint64_t>(e.offset) + static_cast<uint64_t>(e.length)
+            <= static_cast<uint64_t>(bufferSize);
+    }
+
     /// Pointer to the string data for entry idx.
     const char* data(size_t idx) const {
         if (idx >= entries_.size()) return "";
         auto& e = entries_[idx];
-        if (e.offset + e.length > buffer_.size()) return "";
+        if (!entryInBounds(e, buffer_.size())) return "";
         return buffer_.data() + e.offset;
     }
 
@@ -68,20 +79,21 @@ public:
     uint16_t length(size_t idx) const {
         if (idx >= entries_.size()) return 0;
         auto& e = entries_[idx];
-        if (e.offset + e.length > buffer_.size()) return 0;
+        if (!entryInBounds(e, buffer_.size())) return 0;
         return e.length;
     }
 
-    /// Whether entry idx is live (not tombstoned).
+    /// Whether entry idx is live (not tombstoned and not corrupt).
     bool isLive(size_t idx) const {
-        return idx < entries_.size() && entries_[idx].length > 0;
+        return idx < entries_.size() && entries_[idx].length > 0 &&
+               entryInBounds(entries_[idx], buffer_.size());
     }
 
     /// Get a string_view for entry idx.
     std::string_view view(size_t idx) const {
         if (idx >= entries_.size()) return {};
         auto& e = entries_[idx];
-        if (e.offset + e.length > buffer_.size()) return {};
+        if (!entryInBounds(e, buffer_.size())) return {};
         return {buffer_.data() + e.offset, e.length};
     }
 
@@ -89,7 +101,7 @@ public:
     std::string str(size_t idx) const {
         if (idx >= entries_.size()) return {};
         auto& e = entries_[idx];
-        if (e.offset + e.length > buffer_.size()) return {};
+        if (!entryInBounds(e, buffer_.size())) return {};
         return std::string(buffer_.data() + e.offset, e.length);
     }
 
@@ -172,14 +184,16 @@ inline StringPool::CompactResult StringPool::compact(const std::vector<bool>& li
     size_t liveBytes = 0;
     size_t liveCount = 0;
     for (size_t i = 0; i < entries_.size(); i++) {
-        if (i < liveMask.size() && liveMask[i] && entries_[i].length > 0) {
+        if (i < liveMask.size() && liveMask[i] && entries_[i].length > 0 &&
+            entryInBounds(entries_[i], buffer_.size())) {
             liveBytes += entries_[i].length;
             liveCount++;
         }
     }
     result.compacted.reserve(liveBytes, liveCount);
     for (size_t i = 0; i < entries_.size(); i++) {
-        if (i < liveMask.size() && liveMask[i] && entries_[i].length > 0) {
+        if (i < liveMask.size() && liveMask[i] && entries_[i].length > 0 &&
+            entryInBounds(entries_[i], buffer_.size())) {
             uint32_t newIdx = result.compacted.append(
                 buffer_.data() + entries_[i].offset, entries_[i].length);
             result.remap[i] = newIdx;

@@ -136,6 +136,16 @@ bool ContentIndexWAL::appendAdd(uint32_t fileIndex, const std::string& fullPath,
     std::lock_guard<std::mutex> lock(mutex_);
     if (!file_ || failed_) return false;
 
+    // Enforce the same caps the reader applies (pathLen <= 1 MiB, trigram count
+    // <= 1M). Over-cap entries would be written with a valid CRC but rejected as
+    // corrupt on replay, silently dropping the mutation.
+    constexpr size_t kMaxPathLen = 1024 * 1024;
+    constexpr size_t kMaxTrigramCount = 1000000;
+    if (fullPath.size() > kMaxPathLen || trigrams.size() > kMaxTrigramCount) {
+        LOG_ERROR("ContentIndexWAL", "Refusing to append over-length add entry");
+        return false;
+    }
+
     // H-6: Check WAL file size limit (in-memory tracking)
     if (currentSize_ >= kMaxWALSize) {
         LOG_WARN("ContentIndexWAL", "WAL exceeded soft size limit; preserving add mutation");
@@ -193,6 +203,14 @@ bool ContentIndexWAL::appendAdd(uint32_t fileIndex, const std::string& fullPath,
 bool ContentIndexWAL::appendRemove(uint32_t fileIndex, const std::string& fullPath) {
     std::lock_guard<std::mutex> lock(mutex_);
     if (!file_ || failed_) return false;
+
+    // Match the reader's path-length cap so an over-cap entry can't be written
+    // with a valid CRC but rejected on replay.
+    constexpr size_t kMaxPathLen = 1024 * 1024;
+    if (fullPath.size() > kMaxPathLen) {
+        LOG_ERROR("ContentIndexWAL", "Refusing to append over-length remove entry");
+        return false;
+    }
 
     // H-6: Check WAL file size limit (in-memory tracking)
     if (currentSize_ >= kMaxWALSize) {

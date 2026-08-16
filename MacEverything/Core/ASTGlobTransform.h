@@ -20,6 +20,7 @@ inline std::unique_ptr<QueryNode> transformGlobTerms(std::unique_ptr<QueryNode> 
     // Only transform SUBSTRING TERM nodes whose text contains '*' or '?'
     if (node->type != QueryNodeType::TERM) return node;
     if (node->mode != MatchMode::SUBSTRING) return node;
+    if (node->quoted) return node; // quoted phrases are literal
     if (node->text.find('*') == std::string::npos &&
         node->text.find('?') == std::string::npos) return node;
 

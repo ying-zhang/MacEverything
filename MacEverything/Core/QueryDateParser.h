@@ -30,6 +30,18 @@ class QueryDateParser {
         if (month == 2 && isLeapYear(year)) maxDay = 29;
         return day <= maxDay;
     }
+
+    /// Days in the given month (month is 0-based; year is a full year e.g. 2024).
+    static int daysInMonth(int year, int month) {
+        static constexpr int daysPerMonth[] = {
+            31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31
+        };
+        if (month < 0) month = 0;
+        if (month > 11) month = 11;
+        int maxDay = daysPerMonth[month];
+        if (month == 1 && isLeapYear(year)) maxDay = 29;
+        return maxDay;
+    }
     static int safeStoi(const std::string& s, bool& ok) {
         try { ok = true; return std::stoi(s); }
         catch (...) { ok = false; return 0; }
@@ -106,8 +118,8 @@ public:
         if (cmpOp == CompareOp::GE || cmpOp == CompareOp::GT ||
             cmpOp == CompareOp::LE || cmpOp == CompareOp::LT) {
             node.op = cmpOp;
-            // For GT/GE: compare against the start of the period
-            // For LT/LE: compare against the end of the period
+            // GT: strictly after the period end; GE: on/after the period start.
+            // LT: strictly before the period start; LE: on/before the period end.
             if (cmpOp == CompareOp::GT) {
                 node.numVal1 = toEpoch(end);
             } else if (cmpOp == CompareOp::GE) {
@@ -270,6 +282,8 @@ private:
         bool ok = false;
         int n = safeStoi(s.substr(0, numEnd), ok);
         if (!ok || n <= 0) return {0, 0};
+        // Reject absurd magnitudes to keep day arithmetic inside int range.
+        if (n > 100'000'000) return {0, 0};
         std::string unit = s.substr(numEnd);
 
         time_t now = ::time(nullptr);
@@ -281,9 +295,18 @@ private:
         } else if (unit == "weeks" || unit == "week") {
             t.tm_mday -= n * 7;
         } else if (unit == "months" || unit == "month") {
-            t.tm_mon -= n;
+            // Normalize the target month first, then clamp the day so mktime
+            // cannot drift forward (e.g. Feb 31 → Mar 2) at month boundaries.
+            int monthIndex = t.tm_year * 12 + t.tm_mon - n;
+            t.tm_year = monthIndex / 12;
+            t.tm_mon = monthIndex % 12;
+            if (t.tm_mon < 0) { t.tm_mon += 12; t.tm_year -= 1; }
+            int maxDay = daysInMonth(t.tm_year + 1900, t.tm_mon);
+            if (t.tm_mday > maxDay) t.tm_mday = maxDay;
         } else if (unit == "years" || unit == "year") {
             t.tm_year -= n;
+            int maxDay = daysInMonth(t.tm_year + 1900, t.tm_mon);
+            if (t.tm_mday > maxDay) t.tm_mday = maxDay;
         } else {
             return {0, 0};
         }

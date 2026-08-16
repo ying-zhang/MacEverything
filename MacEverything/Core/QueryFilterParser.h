@@ -27,9 +27,11 @@ public:
             parseSize(node, arg);
         } else if (name == "len" || name == "depth") {
             parseNumeric(node, arg);
-        } else if (name == "file" || name == "folder" || name == "type") {
-            // No argument parsing needed for file:/folder:
-            // type: arg is stored as-is in filterArg
+        } else if (name == "file" || name == "folder") {
+            // No argument parsing needed for file:/folder: (boolean filters).
+        } else if (name == "type") {
+            // type:file / type:folder / type:dir — lowercase for case-insensitive match.
+            node.filterArg = me::toLower(arg);
         } else if (name == "dm" || name == "datemodified" ||
                    name == "dc" || name == "datecreated" ||
                    name == "da" || name == "dateaccessed") {
@@ -119,12 +121,15 @@ private:
     static void parseNumericWithUnits(QueryNode& node, const std::string& arg) {
         if (arg.empty()) return;
 
-        // Check for range: N..M
+        // Check for range: N..M (open-ended endpoints supported, like date ranges)
         auto dotdot = arg.find("..");
         if (dotdot != std::string::npos) {
             node.op = CompareOp::RANGE;
-            node.numVal1 = parseValueWithUnit(arg.substr(0, dotdot));
-            node.numVal2 = parseValueWithUnit(arg.substr(dotdot + 2));
+            std::string left = arg.substr(0, dotdot);
+            std::string right = arg.substr(dotdot + 2);
+            node.numVal1 = left.empty() ? 0 : parseValueWithUnit(left);
+            node.numVal2 = right.empty() ? std::numeric_limits<uint64_t>::max()
+                                         : parseValueWithUnit(right);
             return;
         }
 
