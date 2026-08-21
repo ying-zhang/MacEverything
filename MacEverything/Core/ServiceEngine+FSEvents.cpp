@@ -1,0 +1,422 @@
+#include "ServiceEngine.h"
+#include "DirectoryScanner.h"
+#include "RescanDebounce.h"
+#include "Logger.h"
+#include <sys/stat.h>
+
+// ═══════════════════════════════════════════════════════
+//  FSEvents application (replay path)
+// ═══════════════════════════════════════════════════════
+
+void ServiceEngine::applyFSEvents(
+    const std::vector<FileSystemWatcher::Event>& events,
+    std::shared_ptr<SearchEngine> engine)
+{
+    auto cfg = safeConfig();
+
+    // Collect all mutation ops first, then apply in a single batch lock
+    std::vector<SearchEngine::MutationOp> ops;
+    ops.reserve(events.size());
+
+    // Content index updates are collected separately (they use their own lock)
+    std::vector<std::string> contentRemovals;
+    std::vector<std::string> contentUpserts;
+
+    for (const auto& event : events) {
+        const std::string& path = event.path;
+        FSEventStreamEventFlags flags = event.flags;
+
+        if (!isPathAllowedByConfig(path, false)) continue;
+        if (!cfg.includeAppBundleContents && isInsideAppBundle(path)) continue;
+
+        bool itemRemoved = (flags & kFSEventStreamEventFlagItemRemoved) != 0;
+        bool itemRenamed = (flags & kFSEventStreamEventFlagItemRenamed) != 0;
+
+        struct stat st;
+        bool exists = (lstat(path.c_str(), &st) == 0);
+
+        if (itemRemoved || (itemRenamed && !exists)) {
+            if (cfg.contentIndexingEnabled) {
+                contentRemovals.push_back(path);
+            }
+            ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
+        } else if (exists) {
+            std::string dirPath, fileName;
+            size_t lastSlash = path.rfind('/');
+            if (lastSlash != std::string::npos) {
+                dirPath = path.substr(0, lastSlash);
+                fileName = path.substr(lastSlash + 1);
+            } else {
+                dirPath = ".";
+                fileName = path;
+            }
+            if (fileName.empty()) continue;
+
+            uint8_t type = 4;
+            if (S_ISREG(st.st_mode))       type = 1;
+            else if (S_ISDIR(st.st_mode))   type = pathEndsWithApp(path) ? 5 : 2;
+            else if (S_ISLNK(st.st_mode))   type = 3;
+
+            FileRecord record;
+            record.name = fileName;
+            record.path = dirPath;
+            record.type = type;
+            record.size = S_ISREG(st.st_mode) ? static_cast<uint64_t>(st.st_size) : 0;
+            record.modTime = st.st_mtime;
+            record.inode = st.st_ino;
+            record.devId = static_cast<int32_t>(st.st_dev);
+
+            ops.push_back({SearchEngine::MutationOp::UPDATE, path, std::move(record)});
+
+            if (type == 1 && cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
+                contentUpserts.push_back(path);
+            }
+        }
+    }
+
+    // Removals need the old fileIndex, while upserts need the new record metadata.
+    for (const auto& path : contentRemovals) {
+        updateContentForPath(path, true, engine);
+    }
+    engine->batchMutate(std::move(ops));
+    for (const auto& path : contentUpserts) {
+        updateContentForPath(path, false, engine);
+    }
+}
+
+// ═══════════════════════════════════════════════════════
+//  Live monitoring
+// ═══════════════════════════════════════════════════════
+
+void ServiceEngine::startMonitoring() {
+    if (isMonitoring_.load(std::memory_order_relaxed)) return;
+
+    auto roots = effectiveScanRoots();
+
+    // Exclude app's own cache directory from FSEvents
+    auto cfg = safeConfig();
+    std::vector<std::string> exclusions = scanConfigForRoots(roots).excludedPaths;
+    std::string cacheExclusion = cfg.cachePath;
+    if (cacheExclusion.empty()) {
+        const char* home = std::getenv("HOME");
+        if (home) cacheExclusion = std::string(home) + "/Library/Caches/com.maceverything.app";
+    }
+    if (!cacheExclusion.empty()) {
+        exclusions.push_back(cacheExclusion);
+    }
+    if (!exclusions.empty()) {
+        watcher_->setExclusionPaths(exclusions);
+    }
+
+    watcher_->start(roots, [this](std::vector<FileSystemWatcher::Event> events) {
+        if (shuttingDown_.load(std::memory_order_relaxed)) return;
+        uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+        dispatch_async(mutationQueue_, ^{
+            if (!this->isGenerationCurrent(generation)) return;
+            auto engine = this->safeEngine();
+            if (!engine) return;
+
+            std::vector<FileSystemWatcher::Event> directEvents;
+            std::vector<std::string> rescanDirs;
+            for (const auto& event : events) {
+                if (event.flags & kFSEventStreamEventFlagMustScanSubDirs) {
+                    rescanDirs.push_back(event.path);
+                } else {
+                    directEvents.push_back(event);
+                }
+            }
+            if (!directEvents.empty()) this->applyFSEvents(directEvents, engine);
+            if (!rescanDirs.empty()) this->scheduleRescanForPaths(rescanDirs);
+            if (!directEvents.empty() && this->onIndexChanged) this->onIndexChanged();
+        });
+    });
+
+    isMonitoring_.store(true, std::memory_order_relaxed);
+}
+
+void ServiceEngine::restartMonitoring() {
+    if (!isMonitoring_.load(std::memory_order_relaxed)) return;
+    LOG_INFO("ServiceEngine", "Restarting monitoring (scan roots changed)");
+    stopMonitoring();
+    startMonitoring();
+    if (safeConfig().automaticMaintenanceEnabled) {
+        auto persistence = safePersistence();
+        if (persistence) {
+            persistence->startAutoCompaction(300.0, watcher_);
+        }
+    }
+}
+
+void ServiceEngine::stopMonitoring() {
+    watcher_->stop();
+
+    {
+        std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+        if (rescanDebounceTimer_) {
+            dispatch_source_cancel(rescanDebounceTimer_);
+            dispatch_release(rescanDebounceTimer_);
+            rescanDebounceTimer_ = nullptr;
+        }
+        pendingRescanPaths_.clear();
+        lastRescanTime_.clear();
+    }
+
+    auto persistence = safePersistence();
+    if (persistence) {
+        persistence->stopAutoCompactionAndWait();
+    }
+    auto cp = safeContentPersistence();
+    if (cp) {
+        cp->stopAutoCompactionAndWait();
+    }
+    isMonitoring_.store(false, std::memory_order_relaxed);
+}
+
+// ═══════════════════════════════════════════════════════
+//  Rescan debounce
+// ═══════════════════════════════════════════════════════
+
+void ServiceEngine::scheduleRescanForPaths(const std::vector<std::string>& paths) {
+    std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+
+    pendingRescanPaths_ = mergeRescanPaths(pendingRescanPaths_, minimizeRescanPaths(paths));
+
+    LOG_INFO("FSWatcher", "Debounce: " << pendingRescanPaths_.size()
+             << " pending rescan path(s), scheduling " << kRescanDebounceDelaySec << "s delay");
+
+    if (rescanDebounceTimer_) {
+        dispatch_source_cancel(rescanDebounceTimer_);
+        dispatch_release(rescanDebounceTimer_);
+        rescanDebounceTimer_ = nullptr;
+    }
+
+    rescanDebounceTimer_ = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_TIMER, 0, 0, mutationQueue_);
+
+    uint64_t delaySec = static_cast<uint64_t>(kRescanDebounceDelaySec * NSEC_PER_SEC);
+    dispatch_source_set_timer(rescanDebounceTimer_, dispatch_time(DISPATCH_TIME_NOW, delaySec),
+                              DISPATCH_TIME_FOREVER, NSEC_PER_SEC / 10);
+
+    dispatch_source_t scheduledTimer = rescanDebounceTimer_;
+    dispatch_source_set_event_handler(scheduledTimer, ^{
+        this->flushPendingRescans(scheduledTimer);
+    });
+    dispatch_resume(rescanDebounceTimer_);
+}
+
+void ServiceEngine::flushPendingRescans(dispatch_source_t firingTimer) {
+    std::set<std::string> pathsToRescan;
+    std::set<std::string> throttledPaths;
+    {
+        std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+        if (firingTimer && rescanDebounceTimer_ != firingTimer) return;
+        for (const auto& path : pendingRescanPaths_) {
+            if (shouldThrottleRescan(path, lastRescanTime_, kRescanThrottleIntervalSec)) {
+                throttledPaths.insert(path);
+                LOG_INFO("FSWatcher", "Throttled rescan for: " << path
+                         << " (within " << kRescanThrottleIntervalSec << "s window)");
+            } else {
+                pathsToRescan.insert(path);
+            }
+        }
+        pendingRescanPaths_ = throttledPaths;
+
+        if (rescanDebounceTimer_) {
+            dispatch_source_cancel(rescanDebounceTimer_);
+            dispatch_release(rescanDebounceTimer_);
+            rescanDebounceTimer_ = nullptr;
+        }
+    }
+
+    if (pathsToRescan.empty() && throttledPaths.empty()) return;
+
+    LOG_INFO("FSWatcher", "Flushing debounced rescan: " << pathsToRescan.size()
+             << " path(s) to rescan, " << throttledPaths.size() << " throttled");
+
+    for (const auto& path : pathsToRescan) {
+        rescanSubtree(path);
+
+        std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+        lastRescanTime_[path] = std::chrono::steady_clock::now();
+    }
+
+    // Clean up old entries in lastRescanTime_ (> 2x throttle interval)
+    {
+        std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+        auto now = std::chrono::steady_clock::now();
+        for (auto it = lastRescanTime_.begin(); it != lastRescanTime_.end(); ) {
+            auto elapsed = std::chrono::duration<double>(now - it->second).count();
+            if (elapsed > kRescanThrottleIntervalSec * 2.0) {
+                it = lastRescanTime_.erase(it);
+            } else {
+                ++it;
+            }
+        }
+    }
+
+    // If there are throttled paths, schedule a retry when throttle expires
+    if (!throttledPaths.empty()) {
+        std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+        if (!rescanDebounceTimer_) {
+            rescanDebounceTimer_ = dispatch_source_create(
+                DISPATCH_SOURCE_TYPE_TIMER, 0, 0, mutationQueue_);
+            uint64_t delay = static_cast<uint64_t>(kRescanThrottleIntervalSec * NSEC_PER_SEC);
+            dispatch_source_set_timer(rescanDebounceTimer_,
+                                      dispatch_time(DISPATCH_TIME_NOW, delay),
+                                      DISPATCH_TIME_FOREVER, NSEC_PER_SEC);
+            dispatch_source_t retryTimer = rescanDebounceTimer_;
+            dispatch_source_set_event_handler(retryTimer, ^{
+                this->flushPendingRescans(retryTimer);
+            });
+            dispatch_resume(rescanDebounceTimer_);
+        }
+    }
+}
+
+void ServiceEngine::rescanSubtree(const std::string& dir,
+                                   std::function<void()> completion) {
+    auto engine = safeEngine();
+    if (!engine) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(); });
+        }
+        return;
+    }
+
+    // Copy dir to avoid dangling reference — the caller's temporary may be
+    // destroyed before the async block executes.
+    std::string dirCopy = dir;
+    auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
+    uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+
+    dispatch_async(mutationQueue_, ^{
+        if (!this->isGenerationCurrent(generation)) return;
+
+        auto scanner = std::make_shared<DirectoryScanner>();
+        if (!this->registerScanner(scanner, generation)) return;
+        std::vector<std::string> roots{dirCopy};
+        scanner->scan(roots, this->scanConfigForRoots(roots));
+        this->unregisterScanner(scanner);
+        auto freshRecords = scanner->takeResults();
+        LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): scanned "
+                 << freshRecords.size() << " records");
+
+        if (!this->isGenerationCurrent(generation)) return;
+
+        std::vector<std::string> contentPaths;
+        contentPaths.reserve(freshRecords.size());
+        for (const auto& record : freshRecords) {
+            if (record.type != 1) continue;
+            auto fullPath = SearchEngine::makeFullPath(record.path, record.name);
+            if (this->isPathAllowedByConfig(fullPath, true)) {
+                contentPaths.push_back(std::move(fullPath));
+            }
+        }
+
+        auto ci = this->safeContentIndex();
+        auto cp = this->safeContentPersistence();
+        if (ci) {
+            auto mappingLease = ci->acquireFileIndexMappingLease();
+            auto oldEntries = ci->removeByPathPrefix(dirCopy);
+            if (cp) {
+                for (const auto& [oldIndex, info] : oldEntries) {
+                    cp->walAppendRemove(oldIndex, info.fullPath);
+                }
+            }
+        }
+
+        uint32_t removed = engine->batchRescanPrefix(dirCopy, std::move(freshRecords));
+
+        // Compact if tombstones exceed 30%
+        uint32_t total = engine->recordCount();
+        uint32_t live  = engine->liveRecordCount();
+        LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): removed="
+                 << removed << " total=" << total << " live=" << live);
+        if (total > live && (total - live) > total * 3 / 10) {
+            if (ci) ci->beginFileIndexRemap();
+            auto remap = engine->compactRecords();
+            if (!remap.empty() && ci) ci->remapFileIndices(remap);
+            if (ci) ci->endFileIndexRemap();
+        }
+
+        for (const auto& path : contentPaths) {
+            this->updateContentForPath(path, false, engine);
+        }
+
+        if (onIndexChanged) {
+            onIndexChanged();
+        }
+
+        if (completionCopy) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                (*completionCopy)();
+            });
+        }
+    });
+}
+
+void ServiceEngine::refreshRenamedPath(const std::string& oldPath,
+                                       const std::string& newPath) {
+    auto engine = safeEngine();
+    if (!engine || oldPath.empty() || newPath.empty() || oldPath == newPath) return;
+
+    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+    const std::string oldPathCopy = oldPath;
+    const std::string newPathCopy = newPath;
+    dispatch_async(mutationQueue_, ^{
+        if (!this->isGenerationCurrent(generation)) return;
+        std::vector<FileSystemWatcher::Event> events{
+            {oldPathCopy, kFSEventStreamEventFlagItemRemoved},
+            {newPathCopy, kFSEventStreamEventFlagItemRenamed}
+        };
+        this->applyFSEvents(events, engine);
+        if (this->onIndexChanged) this->onIndexChanged();
+    });
+}
+
+void ServiceEngine::removeSubtree(const std::string& pathPrefix,
+                                   std::function<void(uint32_t)> completion) {
+    auto engine = safeEngine();
+    if (!engine) {
+        if (completion) {
+            dispatch_async(dispatch_get_main_queue(), ^{ completion(0); });
+        }
+        return;
+    }
+
+    // Copy pathPrefix to avoid dangling reference.
+    std::string prefixCopy = pathPrefix;
+    auto completionCopy = completion ? std::make_shared<std::function<void(uint32_t)>>(std::move(completion)) : nullptr;
+
+    dispatch_async(mutationQueue_, ^{
+        if (shuttingDown_.load(std::memory_order_relaxed)) return;
+
+        auto ci = safeContentIndex();
+        auto mappingLease = ci ? ci->acquireFileIndexMappingLease()
+                               : std::shared_lock<std::shared_mutex>();
+        std::vector<uint32_t> removedIndices;
+        uint32_t removed = engine->removeByPathPrefixCollectingIndices(prefixCopy, &removedIndices);
+        if (safeConfig().contentIndexingEnabled) {
+            if (ci) {
+                auto cp = safeContentPersistence();
+                for (uint32_t idx : removedIndices) {
+                    ContentFileInfo info;
+                    bool hadContent = ci->getFileInfo(idx, info);
+                    ci->removeFile(idx);
+                    if (cp && hadContent) cp->walAppendRemove(idx, info.fullPath);
+                }
+            }
+        }
+        LOG_INFO("ServiceEngine", "removeSubtree(" << prefixCopy << "): removed " << removed << " records");
+
+        if (onIndexChanged) {
+            onIndexChanged();
+        }
+
+        if (completionCopy) {
+            dispatch_async(dispatch_get_main_queue(), ^{
+                (*completionCopy)(removed);
+            });
+        }
+    });
+}

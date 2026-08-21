@@ -1,0 +1,102 @@
+{
+  "description": "MacEverything search benchmark test queries",
+  "version": "1.0",
+  "categories": [
+    {
+      "name": "short_linear",
+      "description": "1-2 char queries, force linear scan (no trigram)",
+      "queries": [
+        {"q": "a", "label": "single-char-common"},
+        {"q": "z", "label": "single-char-rare"},
+        {"q": "ab", "label": "two-char"},
+        {"q": ".h", "label": "two-char-ext"},
+        {"q": "中", "label": "single-cjk"}
+      ]
+    },
+    {
+      "name": "medium_trigram",
+      "description": "3-8 char queries, trigram-accelerated",
+      "queries": [
+        {"q": "main", "label": "4-char-common"},
+        {"q": "test", "label": "4-char-common2"},
+        {"q": "config", "label": "6-char"},
+        {"q": "readme", "label": "6-char-exact"},
+        {"q": "swift", "label": "5-char-ext"},
+        {"q": "image", "label": "5-char"},
+        {"q": "src", "label": "3-char-min-trigram"},
+        {"q": "cpp", "label": "3-char-ext"}
+      ]
+    },
+    {
+      "name": "long_trigram",
+      "description": "9+ char queries, trigram with selective candidates",
+      "queries": [
+        {"q": "application", "label": "11-char"},
+        {"q": "node_modules", "label": "12-char"},
+        {"q": "package.json", "label": "12-char-dotted"},
+        {"q": "screenshot", "label": "10-char"},
+        {"q": "preferences", "label": "11-char"},
+        {"q": "requirements.txt", "label": "16-char-full-name"},
+        {"q": "dockerfile", "label": "10-char"},
+        {"q": "contributing", "label": "12-char-rare"}
+      ]
+    },
+    {
+      "name": "glob_patterns",
+      "description": "Glob patterns (always linear scan)",
+      "queries": [
+        {"q": "*.swift", "label": "glob-ext-swift"},
+        {"q": "*.py", "label": "glob-ext-py"},
+        {"q": "*.cpp", "label": "glob-ext-cpp"},
+        {"q": "test_*", "label": "glob-prefix"},
+        {"q": "*.json", "label": "glob-ext-json"},
+        {"q": "*config*", "label": "glob-contains"},
+        {"q": "*test*.cpp", "label": "glob-multi-wildcard"}
+      ]
+    },
+    {
+      "name": "path_queries",
+      "description": "Slash-separated path queries",
+      "queries": [
+        {"q": "usr/local", "label": "path-2seg"},
+        {"q": "usr/bin", "label": "path-2seg-common"},
+        {"q": "Library/Application", "label": "path-long-seg"},
+        {"q": "src/main", "label": "path-dev"},
+        {"q": ".git/config", "label": "path-dotdir"},
+        {"q": "/usr", "label": "path-abs-short"},
+        {"q": "/usr/local", "label": "path-abs-2seg"},
+        {"q": "/Library/Application", "label": "path-abs-long"}
+      ]
+    },
+    {
+      "name": "cjk_queries",
+      "description": "Chinese/CJK character queries",
+      "queries": [
+        {"q": "文档", "label": "cjk-2char-doc"},
+        {"q": "下载", "label": "cjk-2char-download"},
+        {"q": "桌面", "label": "cjk-2char-desktop"},
+        {"q": "项目", "label": "cjk-2char-project"},
+        {"q": "数据库", "label": "cjk-3char"}
+      ]
+    },
+    {
+      "name": "no_results",
+      "description": "Queries expected to return 0 or very few results",
+      "queries": [
+        {"q": "xyzzyplugh", "label": "no-match-10char"},
+        {"q": "zzzzqqqq", "label": "no-match-8char"},
+        {"q": "qw", "label": "no-match-2char-rare"}
+      ]
+    },
+    {
+      "name": "linear_forced",
+      "description": "Trigram-eligible queries forced to linear scan for comparison",
+      "queries": [
+        {"q": "config", "trigram": "0", "label": "linear-6char"},
+        {"q": "application", "trigram": "0", "label": "linear-11char"},
+        {"q": "readme", "trigram": "0", "label": "linear-6char-2"},
+        {"q": "node_modules", "trigram": "0", "label": "linear-12char"}
+      ]
+    }
+  ]
+}

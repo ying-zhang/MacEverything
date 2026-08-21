@@ -1,0 +1,713 @@
+import Foundation
+import Combine
+import SwiftUI
+
+enum AppearanceMode: String, CaseIterable, Codable, Identifiable {
+    case system
+    case light
+    case dark
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .system: return L10n.tr("Follow System")
+        case .light: return L10n.tr("Light")
+        case .dark: return L10n.tr("Dark")
+        }
+    }
+}
+
+enum StartupDisplayMode: String, CaseIterable, Codable, Identifiable {
+    case empty
+    case recent
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .empty: return L10n.tr("Empty List")
+        case .recent: return L10n.tr("Recent Changes")
+        }
+    }
+}
+
+enum SortField: String, CaseIterable, Codable, Identifiable, Sendable {
+    case relevance
+    case name
+    case ext
+    case path
+    case size
+    case modified
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .relevance: return L10n.tr("Relevance")
+        case .name: return L10n.tr("Name")
+        case .ext: return L10n.tr("Extension")
+        case .path: return L10n.tr("Path")
+        case .size: return L10n.tr("Size")
+        case .modified: return L10n.tr("Modified Date")
+        }
+    }
+}
+
+enum RefreshMode: String, CaseIterable, Codable, Identifiable {
+    case realtime
+    case manual
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .realtime: return L10n.tr("Realtime")
+        case .manual: return L10n.tr("Manual")
+        }
+    }
+}
+
+enum ResultDensity: String, CaseIterable, Codable, Identifiable {
+    case comfortable
+    case compact
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .comfortable: return L10n.tr("Comfortable")
+        case .compact: return L10n.tr("Compact")
+        }
+    }
+}
+
+enum ResultDisplayMode: String, CaseIterable, Codable, Identifiable {
+    case list
+    case grid
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .list: return L10n.tr("List")
+        case .grid: return L10n.tr("Grid")
+        }
+    }
+}
+
+enum InspectorDisplayMode: String, CaseIterable, Codable, Identifiable {
+    case adaptive
+    case hidden
+    case always
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .adaptive: return L10n.tr("Adaptive")
+        case .hidden: return L10n.tr("Never Show")
+        case .always: return L10n.tr("Always Show")
+        }
+    }
+}
+
+enum EnterKeyAction: String, CaseIterable, Codable, Identifiable {
+    case openFile
+    case rename
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .openFile: return L10n.tr("Open File")
+        case .rename: return L10n.tr("Rename")
+        }
+    }
+}
+
+struct AppSettingsSnapshot {
+    var indexRoots: [String]
+    var excludedPaths: [String]
+    var excludedPatterns: [String]
+    var indexHiddenFiles: Bool
+    var indexSystemFiles: Bool
+    var indexAppBundleContents: Bool
+    var refreshMode: RefreshMode
+    var startupDisplayMode: StartupDisplayMode
+    var autoResetQuickFilterOnEmptyResults: Bool
+    var searchAsYouType: Bool
+    var defaultRegex: Bool
+    var defaultCaseSensitive: Bool
+    var defaultWholeWord: Bool
+    var defaultMatchFilename: Bool
+    var maxResults: Int
+    var contentSearchMaxResults: Int
+    var sortField: SortField
+    var sortAscending: Bool
+    var contentIndexingEnabled: Bool
+    var contentSearchUsesIndexRoots: Bool
+    var contentSearchUsesIndexExclusions: Bool
+    var contentSearchRoots: [String]
+    var contentSearchExcludedPaths: [String]
+    var contentIndexRoots: [String]
+    var contentExcludedPaths: [String]
+    var contentMaxFileSizeMB: Double
+    var searchHistoryEnabled: Bool
+    var searchHistoryLimit: Int
+    var showPath: Bool
+    var showExtension: Bool
+    var showSize: Bool
+    var showModifiedDate: Bool
+    var showContentSnippets: Bool
+    var resultDensity: ResultDensity
+    var httpServerEnabled: Bool
+    var httpAuthenticationEnabled: Bool
+    var httpPort: Int
+    var hideDockIcon: Bool
+    var automaticMaintenanceEnabled: Bool
+    var enablePinyinInitials: Bool
+    var enablePathSearchAcceleration: Bool
+    var enterKeyAction: EnterKeyAction
+}
+
+@MainActor
+final class AppSettings: ObservableObject {
+    static let shared = AppSettings()
+    static let gridIconSizes: [CGFloat] = [64, 96, 128, 160, 200]
+
+    static func normalizedGridIconSize(_ size: CGFloat) -> CGFloat {
+        gridIconSizes.min { abs($0 - size) < abs($1 - size) } ?? 128
+    }
+
+    var gridIconSizeLevelBinding: Binding<Double> {
+        Binding(
+            get: {
+                Double(Self.gridIconSizes.firstIndex(of: self.gridIconSize) ?? 2)
+            },
+            set: { level in
+                let index = min(max(Int(level.rounded()), 0), Self.gridIconSizes.count - 1)
+                self.gridIconSize = Self.gridIconSizes[index]
+            }
+        )
+    }
+
+    private enum Key {
+        static let indexRoots = "settings.indexRoots"
+        static let excludedPaths = "settings.excludedPaths"
+        static let excludedPatterns = "settings.excludedPatterns"
+        static let indexHiddenFiles = "settings.indexHiddenFiles"
+        static let indexSystemFiles = "settings.indexSystemFiles"
+        static let indexAppBundleContents = "settings.indexAppBundleContents"
+        static let refreshMode = "settings.refreshMode"
+        static let startupDisplayMode = "settings.startupDisplayMode"
+        static let autoResetQuickFilterOnEmptyResults = "settings.autoResetQuickFilterOnEmptyResults"
+        static let searchAsYouType = "settings.searchAsYouType"
+        static let defaultRegex = "settings.defaultRegex"
+        static let defaultCaseSensitive = "settings.defaultCaseSensitive"
+        static let defaultWholeWord = "settings.defaultWholeWord"
+        static let defaultMatchFilename = "settings.defaultMatchFilename"
+        static let maxResults = "settings.maxResults"
+        static let contentSearchMaxResults = "settings.contentSearchMaxResults"
+        static let sortField = "settings.sortField"
+        static let sortAscending = "settings.sortAscending"
+        static let contentIndexingEnabled = "settings.contentIndexingEnabled"
+        static let contentSearchUsesIndexRoots = "settings.contentSearchUsesIndexRoots"
+        static let contentSearchUsesIndexExclusions = "settings.contentSearchUsesIndexExclusions"
+        static let contentSearchRoots = "settings.contentSearchRoots"
+        static let contentSearchExcludedPaths = "settings.contentSearchExcludedPaths"
+        static let contentIndexRoots = "settings.contentIndexRoots"
+        static let contentExcludedPaths = "settings.contentExcludedPaths"
+        static let contentMaxFileSizeMB = "settings.contentMaxFileSizeMB"
+        static let searchHistoryEnabled = "settings.searchHistoryEnabled"
+        static let searchHistoryLimit = "settings.searchHistoryLimit"
+        static let showPath = "settings.showPath"
+        static let showExtension = "settings.showExtension"
+        static let showSize = "settings.showSize"
+        static let showModifiedDate = "settings.showModifiedDate"
+        static let showContentSnippets = "settings.showContentSnippets"
+        static let resultDensity = "settings.resultDensity"
+        static let httpServerEnabled = "settings.httpServerEnabled"
+        static let httpAuthenticationEnabled = "settings.httpAuthenticationEnabled"
+        static let httpPort = "settings.httpPort"
+        static let recentPathFilters = "settings.recentPathFilters"
+        static let hideDockIcon = "settings.hideDockIcon"
+        static let automaticMaintenanceEnabled = "settings.automaticMaintenanceEnabled"
+        static let lowMemoryMode = "settings.lowMemoryMode"
+        static let enablePinyinInitials = "settings.enablePinyinInitials"
+        static let enablePathSearchAcceleration = "settings.enablePathSearchAcceleration"
+        static let enterKeyAction = "settings.enterKeyAction"
+        static let appearanceMode = "settings.appearanceMode"
+        static let lightBackgroundColor = "settings.lightBackgroundColor"
+        static let darkBackgroundColor = "settings.darkBackgroundColor"
+        static let lightTextColor = "settings.lightTextColor"
+        static let darkTextColor = "settings.darkTextColor"
+        static let fontFamily = "settings.fontFamily"
+        static let fontSize = "settings.fontSize"
+        static let resultRowHeight = "settings.resultRowHeight"
+        static let showThumbnails = "settings.showThumbnails"
+        static let resultDisplayMode = "settings.resultDisplayMode"
+        static let gridIconSize = "settings.gridIconSize"
+        static let inspectorDisplayMode = "settings.inspectorDisplayMode"
+        static let language = "settings.language"
+        static let settingsSchemaVersion = "settings.schemaVersion"
+    }
+
+    @Published var language: AppLanguage { didSet { L10n.setLanguage(language) } }
+    @Published var indexRoots: [String] { didSet { saveArray(indexRoots, Key.indexRoots) } }
+    @Published var excludedPaths: [String] { didSet { saveArray(excludedPaths, Key.excludedPaths) } }
+    @Published var excludedPatterns: [String] { didSet { saveArray(excludedPatterns, Key.excludedPatterns) } }
+    @Published var indexHiddenFiles: Bool { didSet { save(indexHiddenFiles, Key.indexHiddenFiles) } }
+    @Published var indexSystemFiles: Bool { didSet { save(indexSystemFiles, Key.indexSystemFiles) } }
+    @Published var indexAppBundleContents: Bool { didSet { save(indexAppBundleContents, Key.indexAppBundleContents) } }
+    @Published var refreshMode: RefreshMode { didSet { save(refreshMode.rawValue, Key.refreshMode) } }
+    @Published var startupDisplayMode: StartupDisplayMode { didSet { save(startupDisplayMode.rawValue, Key.startupDisplayMode) } }
+    @Published var autoResetQuickFilterOnEmptyResults: Bool { didSet { save(autoResetQuickFilterOnEmptyResults, Key.autoResetQuickFilterOnEmptyResults) } }
+    @Published var searchAsYouType: Bool { didSet { save(searchAsYouType, Key.searchAsYouType) } }
+    @Published var defaultRegex: Bool { didSet { save(defaultRegex, Key.defaultRegex) } }
+    @Published var defaultCaseSensitive: Bool { didSet { save(defaultCaseSensitive, Key.defaultCaseSensitive) } }
+    @Published var defaultWholeWord: Bool { didSet { save(defaultWholeWord, Key.defaultWholeWord) } }
+    @Published var defaultMatchFilename: Bool { didSet { save(defaultMatchFilename, Key.defaultMatchFilename) } }
+    @Published var maxResults: Int {
+        didSet {
+            let value = clamped(maxResults, 100, 100_000)
+            if value != maxResults { maxResults = value; return }
+            save(value, Key.maxResults)
+        }
+    }
+    @Published var contentSearchMaxResults: Int {
+        didSet {
+            let value = clamped(contentSearchMaxResults, 50, 200)
+            if value != contentSearchMaxResults { contentSearchMaxResults = value; return }
+            save(value, Key.contentSearchMaxResults)
+        }
+    }
+    @Published var sortField: SortField { didSet { save(sortField.rawValue, Key.sortField) } }
+    @Published var sortAscending: Bool { didSet { save(sortAscending, Key.sortAscending) } }
+    @Published var contentIndexingEnabled: Bool { didSet { save(contentIndexingEnabled, Key.contentIndexingEnabled) } }
+    @Published var contentSearchUsesIndexRoots: Bool { didSet { save(contentSearchUsesIndexRoots, Key.contentSearchUsesIndexRoots) } }
+    @Published var contentSearchUsesIndexExclusions: Bool { didSet { save(contentSearchUsesIndexExclusions, Key.contentSearchUsesIndexExclusions) } }
+    @Published var contentSearchRoots: [String] { didSet { saveArray(contentSearchRoots, Key.contentSearchRoots) } }
+    @Published var contentSearchExcludedPaths: [String] { didSet { saveArray(contentSearchExcludedPaths, Key.contentSearchExcludedPaths) } }
+    @Published var contentIndexRoots: [String] { didSet { saveArray(contentIndexRoots, Key.contentIndexRoots) } }
+    @Published var contentExcludedPaths: [String] { didSet { saveArray(contentExcludedPaths, Key.contentExcludedPaths) } }
+    @Published var contentMaxFileSizeMB: Double {
+        didSet {
+            let value = min(max(contentMaxFileSizeMB, 0.1), 100.0)
+            if value != contentMaxFileSizeMB { contentMaxFileSizeMB = value; return }
+            save(value, Key.contentMaxFileSizeMB)
+        }
+    }
+    @Published var searchHistoryEnabled: Bool { didSet { save(searchHistoryEnabled, Key.searchHistoryEnabled) } }
+    @Published var searchHistoryLimit: Int {
+        didSet {
+            let value = clamped(searchHistoryLimit, 10, 200)
+            if value != searchHistoryLimit { searchHistoryLimit = value; return }
+            save(value, Key.searchHistoryLimit)
+        }
+    }
+    @Published var showPath: Bool { didSet { save(showPath, Key.showPath) } }
+    @Published var showExtension: Bool { didSet { save(showExtension, Key.showExtension) } }
+    @Published var showSize: Bool { didSet { save(showSize, Key.showSize) } }
+    @Published var showModifiedDate: Bool { didSet { save(showModifiedDate, Key.showModifiedDate) } }
+    @Published var showContentSnippets: Bool { didSet { save(showContentSnippets, Key.showContentSnippets) } }
+    @Published var resultDensity: ResultDensity { didSet { save(resultDensity.rawValue, Key.resultDensity) } }
+    @Published var httpServerEnabled: Bool { didSet { save(httpServerEnabled, Key.httpServerEnabled) } }
+    @Published var httpAuthenticationEnabled: Bool { didSet { save(httpAuthenticationEnabled, Key.httpAuthenticationEnabled) } }
+    @Published private(set) var recentPathFilters: [String] {
+        didSet { defaults.set(recentPathFilters, forKey: Key.recentPathFilters) }
+    }
+    @Published var httpPort: Int {
+        didSet {
+            let value = clamped(httpPort, 1024, 65535)
+            if value != httpPort { httpPort = value; return }
+            save(value, Key.httpPort)
+        }
+    }
+    @Published var automaticMaintenanceEnabled: Bool { didSet { save(automaticMaintenanceEnabled, Key.automaticMaintenanceEnabled) } }
+    @Published var enablePinyinInitials: Bool { didSet { save(enablePinyinInitials, Key.enablePinyinInitials) } }
+    @Published var enablePathSearchAcceleration: Bool { didSet { save(enablePathSearchAcceleration, Key.enablePathSearchAcceleration) } }
+    @Published var enterKeyAction: EnterKeyAction { didSet { save(enterKeyAction.rawValue, Key.enterKeyAction) } }
+    @Published var hideDockIcon: Bool { didSet { save(hideDockIcon, Key.hideDockIcon) } }
+    @Published var appearanceMode: AppearanceMode { didSet { save(appearanceMode.rawValue, Key.appearanceMode) } }
+    @Published var lightBackgroundColor: String { didSet { save(lightBackgroundColor, Key.lightBackgroundColor) } }
+    @Published var darkBackgroundColor: String { didSet { save(darkBackgroundColor, Key.darkBackgroundColor) } }
+    @Published var lightTextColor: String { didSet { save(lightTextColor, Key.lightTextColor) } }
+    @Published var darkTextColor: String { didSet { save(darkTextColor, Key.darkTextColor) } }
+    @Published var fontFamily: String { didSet { save(fontFamily, Key.fontFamily) } }
+    @Published var fontSize: CGFloat {
+        didSet {
+            let value = clamped(fontSize, 10.0, 24.0)
+            if value != fontSize { fontSize = value; return }
+            save(Double(value), Key.fontSize)
+        }
+    }
+    @Published var resultRowHeight: CGFloat {
+        didSet {
+            let value = clamped(resultRowHeight, 20.0, 120.0)
+            if value != resultRowHeight { resultRowHeight = value; return }
+            save(Double(value), Key.resultRowHeight)
+        }
+    }
+    @Published var showThumbnails: Bool { didSet { save(showThumbnails, Key.showThumbnails) } }
+    @Published var resultDisplayMode: ResultDisplayMode { didSet { save(resultDisplayMode.rawValue, Key.resultDisplayMode) } }
+    @Published var inspectorDisplayMode: InspectorDisplayMode {
+        didSet { save(inspectorDisplayMode.rawValue, Key.inspectorDisplayMode) }
+    }
+    @Published var gridIconSize: CGFloat {
+        didSet {
+            let value = Self.normalizedGridIconSize(gridIconSize)
+            if value != gridIconSize { gridIconSize = value }
+            save(Double(value), Key.gridIconSize)
+        }
+    }
+
+    private let defaults = UserDefaults.standard
+
+    private init() {
+        let roots = Self.defaultIndexRoots()
+        let fallbackRoots = roots.isEmpty ? [FileManager.default.homeDirectoryForCurrentUser.path] : roots
+        let excluded = Self.defaultExcludedPaths()
+
+        language = AppLanguage(rawValue: defaults.string(forKey: Key.language) ?? "") ?? .system
+        indexRoots = defaults.stringArray(forKey: Key.indexRoots) ?? fallbackRoots
+        excludedPaths = defaults.stringArray(forKey: Key.excludedPaths) ?? excluded
+        excludedPatterns = defaults.stringArray(forKey: Key.excludedPatterns) ?? Self.defaultExcludedPatterns()
+        indexHiddenFiles = defaults.object(forKey: Key.indexHiddenFiles) as? Bool ?? false
+        indexSystemFiles = defaults.object(forKey: Key.indexSystemFiles) as? Bool ?? false
+        indexAppBundleContents = defaults.object(forKey: Key.indexAppBundleContents) as? Bool ?? false
+        refreshMode = RefreshMode(rawValue: defaults.string(forKey: Key.refreshMode) ?? "") ?? .realtime
+        startupDisplayMode = StartupDisplayMode(rawValue: defaults.string(forKey: Key.startupDisplayMode) ?? "") ?? .recent
+        autoResetQuickFilterOnEmptyResults = defaults.object(forKey: Key.autoResetQuickFilterOnEmptyResults) as? Bool ?? true
+        searchAsYouType = defaults.object(forKey: Key.searchAsYouType) as? Bool ?? true
+        defaultRegex = defaults.object(forKey: Key.defaultRegex) as? Bool ?? false
+        defaultCaseSensitive = defaults.object(forKey: Key.defaultCaseSensitive) as? Bool ?? false
+        defaultWholeWord = defaults.object(forKey: Key.defaultWholeWord) as? Bool ?? false
+        defaultMatchFilename = defaults.object(forKey: Key.defaultMatchFilename) as? Bool ?? false
+        maxResults = clamped(defaults.object(forKey: Key.maxResults) as? Int ?? 10_000, 100, 100_000)
+        contentSearchMaxResults = clamped(defaults.object(forKey: Key.contentSearchMaxResults) as? Int ?? 200, 50, 200)
+        sortField = SortField(rawValue: defaults.string(forKey: Key.sortField) ?? "") ?? .relevance
+        sortAscending = defaults.object(forKey: Key.sortAscending) as? Bool ?? false
+        contentIndexingEnabled = defaults.object(forKey: Key.contentIndexingEnabled) as? Bool ?? true
+        contentSearchUsesIndexRoots = defaults.object(forKey: Key.contentSearchUsesIndexRoots) as? Bool ?? true
+        contentSearchUsesIndexExclusions = defaults.object(forKey: Key.contentSearchUsesIndexExclusions) as? Bool ?? true
+        contentSearchRoots = defaults.stringArray(forKey: Key.contentSearchRoots) ?? fallbackRoots
+        contentSearchExcludedPaths = defaults.stringArray(forKey: Key.contentSearchExcludedPaths) ?? excluded
+        contentIndexRoots = defaults.stringArray(forKey: Key.contentIndexRoots) ?? fallbackRoots
+        contentExcludedPaths = defaults.stringArray(forKey: Key.contentExcludedPaths) ?? excluded
+        contentMaxFileSizeMB = defaults.object(forKey: Key.contentMaxFileSizeMB) as? Double ?? 1.0
+        searchHistoryEnabled = defaults.object(forKey: Key.searchHistoryEnabled) as? Bool ?? true
+        searchHistoryLimit = clamped(defaults.object(forKey: Key.searchHistoryLimit) as? Int ?? 50, 10, 200)
+        showPath = defaults.object(forKey: Key.showPath) as? Bool ?? true
+        showExtension = defaults.object(forKey: Key.showExtension) as? Bool ?? true
+        showSize = defaults.object(forKey: Key.showSize) as? Bool ?? true
+        showModifiedDate = defaults.object(forKey: Key.showModifiedDate) as? Bool ?? false
+        showContentSnippets = defaults.object(forKey: Key.showContentSnippets) as? Bool ?? true
+        resultDensity = ResultDensity(rawValue: defaults.string(forKey: Key.resultDensity) ?? "") ?? .comfortable
+        httpServerEnabled = defaults.object(forKey: Key.httpServerEnabled) as? Bool ?? false
+        httpAuthenticationEnabled = defaults.object(forKey: Key.httpAuthenticationEnabled) as? Bool ?? false
+        httpPort = defaults.object(forKey: Key.httpPort) as? Int ?? 19_860
+        recentPathFilters = Array(normalizedExistingPaths(
+            defaults.stringArray(forKey: Key.recentPathFilters) ?? []
+        ).prefix(5))
+        automaticMaintenanceEnabled = defaults.object(forKey: Key.automaticMaintenanceEnabled) as? Bool ?? true
+        let oldLowMemoryMode = defaults.object(forKey: Key.lowMemoryMode) as? Bool ?? false
+        enablePinyinInitials = defaults.object(forKey: Key.enablePinyinInitials) as? Bool ?? !oldLowMemoryMode
+        enablePathSearchAcceleration = defaults.object(forKey: Key.enablePathSearchAcceleration) as? Bool ?? !oldLowMemoryMode
+        enterKeyAction = EnterKeyAction(rawValue: defaults.string(forKey: Key.enterKeyAction) ?? "") ?? .openFile
+        hideDockIcon = defaults.object(forKey: Key.hideDockIcon) as? Bool ?? false
+        appearanceMode = AppearanceMode(rawValue: defaults.string(forKey: Key.appearanceMode) ?? "") ?? .system
+        lightBackgroundColor = defaults.string(forKey: Key.lightBackgroundColor) ?? ""
+        darkBackgroundColor = defaults.string(forKey: Key.darkBackgroundColor) ?? ""
+        lightTextColor = defaults.string(forKey: Key.lightTextColor) ?? ""
+        darkTextColor = defaults.string(forKey: Key.darkTextColor) ?? ""
+        fontFamily = defaults.string(forKey: Key.fontFamily) ?? ""
+        fontSize = CGFloat(clamped(defaults.object(forKey: Key.fontSize) as? Double ?? 13.0, 10.0, 24.0))
+        resultRowHeight = CGFloat(clamped(defaults.object(forKey: Key.resultRowHeight) as? Double ?? 38.0, 20.0, 120.0))
+        showThumbnails = defaults.object(forKey: Key.showThumbnails) as? Bool ?? true
+        resultDisplayMode = ResultDisplayMode(rawValue: defaults.string(forKey: Key.resultDisplayMode) ?? "") ?? .list
+        inspectorDisplayMode = InspectorDisplayMode(
+            rawValue: defaults.string(forKey: Key.inspectorDisplayMode) ?? ""
+        ) ?? .adaptive
+        gridIconSize = Self.normalizedGridIconSize(
+            CGFloat(defaults.object(forKey: Key.gridIconSize) as? Double ?? 128.0)
+        )
+
+        migrateSettingsIfNeeded()
+    }
+
+    var snapshot: AppSettingsSnapshot {
+        AppSettingsSnapshot(
+            indexRoots: normalizedPaths(indexRoots),
+            excludedPaths: normalizedPaths(excludedPaths),
+            excludedPatterns: excludedPatterns,
+            indexHiddenFiles: indexHiddenFiles,
+            indexSystemFiles: indexSystemFiles,
+            indexAppBundleContents: indexAppBundleContents,
+            refreshMode: refreshMode,
+            startupDisplayMode: startupDisplayMode,
+            autoResetQuickFilterOnEmptyResults: autoResetQuickFilterOnEmptyResults,
+            searchAsYouType: searchAsYouType,
+            defaultRegex: defaultRegex,
+            defaultCaseSensitive: defaultCaseSensitive,
+            defaultWholeWord: defaultWholeWord,
+            defaultMatchFilename: defaultMatchFilename,
+            maxResults: clamped(maxResults, 100, 100_000),
+            contentSearchMaxResults: clamped(contentSearchMaxResults, 50, 200),
+            sortField: sortField,
+            sortAscending: sortAscending,
+            contentIndexingEnabled: contentIndexingEnabled,
+            contentSearchUsesIndexRoots: contentSearchUsesIndexRoots,
+            contentSearchUsesIndexExclusions: contentSearchUsesIndexExclusions,
+            contentSearchRoots: normalizedPaths(contentSearchUsesIndexRoots ? indexRoots : contentSearchRoots),
+            contentSearchExcludedPaths: normalizedPaths(contentSearchUsesIndexExclusions ? excludedPaths : contentSearchExcludedPaths),
+            contentIndexRoots: normalizedPaths(ContentRootPolicy.runtimeRoots(
+                useMainIndexRoots: contentSearchUsesIndexRoots,
+                indexRoots: indexRoots,
+                customRoots: contentSearchRoots
+            )),
+            contentExcludedPaths: normalizedPaths(contentSearchUsesIndexExclusions ? excludedPaths : contentSearchExcludedPaths),
+            contentMaxFileSizeMB: min(max(contentMaxFileSizeMB, 0.1), 100.0),
+            searchHistoryEnabled: searchHistoryEnabled,
+            searchHistoryLimit: clamped(searchHistoryLimit, 10, 200),
+            showPath: showPath,
+            showExtension: showExtension,
+            showSize: showSize,
+            showModifiedDate: showModifiedDate,
+            showContentSnippets: showContentSnippets,
+            resultDensity: resultDensity,
+            httpServerEnabled: httpServerEnabled,
+            httpAuthenticationEnabled: httpAuthenticationEnabled,
+            httpPort: clamped(httpPort, 1024, 65535),
+            hideDockIcon: hideDockIcon,
+            automaticMaintenanceEnabled: automaticMaintenanceEnabled,
+            enablePinyinInitials: enablePinyinInitials,
+            enablePathSearchAcceleration: enablePathSearchAcceleration,
+            enterKeyAction: enterKeyAction
+        )
+    }
+
+    func resetIndexDefaults() {
+        indexRoots = Self.defaultIndexRoots()
+        excludedPaths = Self.defaultExcludedPaths()
+        excludedPatterns = Self.defaultExcludedPatterns()
+        indexHiddenFiles = false
+        indexSystemFiles = false
+        indexAppBundleContents = false
+        contentSearchUsesIndexRoots = true
+        contentSearchUsesIndexExclusions = true
+        contentSearchRoots = Self.defaultIndexRoots()
+        contentSearchExcludedPaths = Self.defaultExcludedPaths()
+        contentIndexRoots = Self.defaultIndexRoots()
+        contentExcludedPaths = Self.defaultExcludedPaths()
+    }
+
+    func recordRecentPathFilter(_ path: String) {
+        guard let normalized = normalizedExistingPaths([path]).first else { return }
+        recentPathFilters = [normalized] + recentPathFilters.filter { $0 != normalized }
+        if recentPathFilters.count > 5 {
+            recentPathFilters = Array(recentPathFilters.prefix(5))
+        }
+    }
+
+    func removeRecentPathFilter(_ path: String) {
+        recentPathFilters.removeAll { $0 == path }
+    }
+
+    func clearSearchHistory() {
+        UserDefaults.standard.removeObject(forKey: SearchHistoryStore.defaultsKey)
+    }
+
+    func resetAppearanceDefaults() {
+        appearanceMode = .system
+        lightBackgroundColor = ""
+        darkBackgroundColor = ""
+        lightTextColor = ""
+        darkTextColor = ""
+        fontFamily = ""
+        fontSize = 13
+        resultRowHeight = 38
+        showThumbnails = true
+        resultDisplayMode = .list
+        inspectorDisplayMode = .adaptive
+        gridIconSize = 128
+    }
+
+    private func migrateSettingsIfNeeded() {
+        let version = defaults.object(forKey: Key.settingsSchemaVersion) as? Int ?? 0
+
+        if version < 1 {
+            let appRoots = Self.defaultApplicationRoots()
+            indexRoots = normalizedPaths(appRoots + indexRoots)
+        }
+
+        if version < 2 {
+            let supplementalRoots = Self.defaultSupplementalIndexRoots()
+            indexRoots = normalizedExistingPaths(indexRoots + supplementalRoots)
+            if contentSearchUsesIndexRoots {
+                contentSearchRoots = normalizedExistingPaths(contentSearchRoots + supplementalRoots)
+                contentIndexRoots = normalizedExistingPaths(contentIndexRoots + supplementalRoots)
+            }
+        }
+
+        if version < 3,
+           defaults.object(forKey: Key.enablePinyinInitials) == nil,
+           defaults.object(forKey: Key.enablePathSearchAcceleration) == nil,
+           (defaults.object(forKey: Key.lowMemoryMode) as? Bool) == true {
+            enablePinyinInitials = false
+            enablePathSearchAcceleration = false
+        }
+
+        if version < 4 {
+            excludedPaths = normalizedPaths(excludedPaths + Self.defaultInteropExcludedPaths())
+            if contentSearchUsesIndexExclusions {
+                contentSearchExcludedPaths = excludedPaths
+                contentExcludedPaths = excludedPaths
+            }
+        }
+
+        if version < 5 {
+            if defaults.object(forKey: Key.resultRowHeight) == nil {
+                let oldDensityRaw = defaults.string(forKey: Key.resultDensity) ?? ""
+                if let oldDensity = ResultDensity(rawValue: oldDensityRaw) {
+                    switch oldDensity {
+                    case .compact: resultRowHeight = 28
+                    case .comfortable: resultRowHeight = 38
+                    }
+                }
+            }
+        }
+
+        defaults.set(6, forKey: Key.settingsSchemaVersion)
+    }
+
+    private func save(_ value: Bool, _ key: String) {
+        defaults.set(value, forKey: key)
+    }
+
+    private func save(_ value: Int, _ key: String) {
+        defaults.set(value, forKey: key)
+    }
+
+    private func save(_ value: Double, _ key: String) {
+        defaults.set(value, forKey: key)
+    }
+
+    private func save(_ value: String, _ key: String) {
+        defaults.set(value, forKey: key)
+    }
+
+    private func saveArray(_ value: [String], _ key: String) {
+        defaults.set(normalizedPaths(value), forKey: key)
+    }
+
+    private static func defaultIndexRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        let names = ["Desktop", "Downloads", "Documents", "Pictures", "Movies", "Music"]
+        let userFolders = names
+            .map { home.appendingPathComponent($0).path }
+            .filter { FileManager.default.fileExists(atPath: $0) }
+        return normalizedExistingPaths(defaultApplicationRoots() + userFolders + defaultSupplementalIndexRoots())
+    }
+
+    private static func defaultApplicationRoots() -> [String] {
+        normalizedExistingPaths(["/Applications", "/System/Applications"])
+    }
+
+    private static func defaultSupplementalIndexRoots() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser
+        return normalizedExistingPaths([
+            home.appendingPathComponent("Library/Mobile Documents/com~apple~CloudDocs").path,
+            home.appendingPathComponent("Public").path
+        ])
+    }
+
+    private static func defaultExcludedPaths() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return normalizedPaths([
+            "\(home)/Library",
+            "\(home)/.Trash",
+            "\(home)/.cache",
+            "\(home)/.npm",
+            "\(home)/.cargo",
+            "\(home)/.rustup",
+            "/Library/Caches",
+            "/System",
+            "/private/var",
+            "/Volumes"
+        ] + defaultInteropExcludedPaths())
+    }
+
+    private static func defaultInteropExcludedPaths() -> [String] {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return [
+            "\(home)/.machunt",
+            "\(home)/Library/Caches/com.dacj4n.machunt"
+        ]
+    }
+
+    private static func defaultExcludedPatterns() -> [String] {
+        [
+            ".git",
+            ".svn",
+            ".hg",
+            "node_modules",
+            "Pods",
+            ".build",
+            "DerivedData",
+            "__pycache__",
+            ".pytest_cache",
+            ".DS_Store",
+            "*.tmp",
+            "*.temp",
+            "*.cache",
+            "*.download"
+        ]
+    }
+}
+
+func normalizedPaths(_ paths: [String]) -> [String] {
+    var seen = Set<String>()
+    var result: [String] = []
+    for raw in paths {
+        let expanded = (raw as NSString).expandingTildeInPath
+        let standardized = URL(fileURLWithPath: expanded).standardizedFileURL.path
+        guard !standardized.isEmpty, !seen.contains(standardized) else { continue }
+        seen.insert(standardized)
+        result.append(standardized)
+    }
+    return result
+}
+
+func normalizedExistingPaths(_ paths: [String]) -> [String] {
+    normalizedPaths(paths).filter { FileManager.default.fileExists(atPath: $0) }
+}
+
+func clamped<T: Comparable>(_ value: T, _ lower: T, _ upper: T) -> T {
+    min(max(value, lower), upper)
+}
+
+extension Color {
+    init?(rgbaString: String) {
+        guard !rgbaString.isEmpty else { return nil }
+        let parts = rgbaString.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4 else { return nil }
+        self.init(.sRGB, red: parts[0], green: parts[1], blue: parts[2], opacity: parts[3])
+    }
+
+    var rgbaString: String? {
+        guard let cgColor = NSColor(self).usingColorSpace(.sRGB) else { return nil }
+        var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
+        cgColor.getRed(&r, green: &g, blue: &b, alpha: &a)
+        return String(format: "%.4f,%.4f,%.4f,%.4f", r, g, b, a)
+    }
+}
+
+extension NSColor {
+    convenience init?(rgbaString: String) {
+        guard !rgbaString.isEmpty else { return nil }
+        let parts = rgbaString.split(separator: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+        guard parts.count == 4 else { return nil }
+        self.init(srgbRed: CGFloat(parts[0]), green: CGFloat(parts[1]), blue: CGFloat(parts[2]), alpha: CGFloat(parts[3]))
+    }
+}

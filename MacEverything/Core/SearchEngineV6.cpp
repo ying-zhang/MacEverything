@@ -1,0 +1,316 @@
+#include "SearchEngine.h"
+#include "StringUtils.h"
+#include "Logger.h"
+#include <algorithm>
+#include <thread>
+#ifdef __APPLE__
+#include <mach/mach.h>
+#endif
+
+// ---------------------------------------------------------------------------
+// v6 Flat SoA: loadRecordsV6, completePhase2, snapshotForV6
+// ---------------------------------------------------------------------------
+
+void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
+                                  StringPool&& namePool,
+                                  std::vector<uint32_t>&& pathIndices,
+                                  StringPool&& pathPool,
+                                  std::vector<uint8_t>&& types,
+                                  std::vector<uint64_t>&& sizes,
+                                  std::vector<int64_t>&& modTimes,
+                                  std::vector<uint64_t>&& inodes,
+                                  std::vector<int32_t>&& devIds) {
+    std::unique_lock lock(mutex_);
+
+    uint32_t n = origNamePool.entryCount();
+
+    // Install SoA columns directly (zero-copy from v6 file)
+    origNamePool_ = std::move(origNamePool);
+    namePool_ = std::move(namePool);
+    pinyinInitialsPool_.clear();
+    pinyinInitialsTrigramIndex_.clear();
+    nameTrigramIndex_.clear();
+    pathTrigramIndex_.clear();
+    pathIdxToRecords_.clear();
+    extensionIndex_.clear();
+    cjkBigramIndex_.clear();
+    recentCache_.clear();
+    pathIndices_ = std::move(pathIndices);
+    pathPool_ = std::move(pathPool);
+    types_ = std::move(types);
+    sizes_ = std::move(sizes);
+    modTimes_ = std::move(modTimes);
+    inodes_ = std::move(inodes);
+    devIds_ = std::move(devIds);
+
+    // Rebuild pathLookup_ and lowerPathLookup_ from pathPool_ entries
+    pathLookup_.clear();
+    lowerPathLookup_.clear();
+    pathLookup_.reserve(pathPool_.entryCount());
+    lowerPathLookup_.reserve(pathPool_.entryCount());
+    for (uint32_t i = 0; i < pathPool_.entryCount(); i++) {
+        if (pathPool_.isLive(i)) {
+            pathLookup_[pathPool_.str(i)] = i;
+            lowerPathLookup_[lowerPathStr(pathPool_, i)] = i;
+        }
+    }
+
+    // Build pathIndex_ (lowercase full path -> record index)
+    // Parallelize full-path construction
+    unsigned numThreads = std::thread::hardware_concurrency();
+    if (numThreads < 1) numThreads = 1;
+    if (numThreads > 32) numThreads = 32;
+    size_t chunkSize = (n + numThreads - 1) / numThreads;
+    std::vector<std::string> loweredPaths(n);
+    {
+        std::vector<std::thread> pathThreads;
+        pathThreads.reserve(numThreads);
+        for (unsigned t = 0; t < numThreads; t++) {
+            size_t start = t * chunkSize;
+            size_t end = std::min(start + chunkSize, static_cast<size_t>(n));
+            if (start >= end) break;
+            pathThreads.emplace_back([this, &loweredPaths, start, end] {
+                for (size_t i = start; i < end; i++) {
+                    uint32_t idx = static_cast<uint32_t>(i);
+                    loweredPaths[i] = makeFullPath(lowerPathStr(pathPool_, pathIndices_[idx]),
+                                                   namePool_.view(idx));
+                }
+            });
+        }
+        for (auto& th : pathThreads) th.join();
+    }
+
+    // Insert into pathIndex_ and merge tombstone dedup (last-wins overwrites)
+    pathIndex_.clear();
+    pathIndexCollisions_.clear();
+    uint32_t actualLive = 0;
+    if (options_.enablePathIndex) {
+        pathIndex_.reserve(n);
+        for (uint32_t i = 0; i < n; i++) {
+            if (types_[i] == 0) continue;
+            setPathIndexUnlocked(loweredPaths[i], i);
+        }
+
+        // Tombstone orphaned duplicates: records not in pathIndex_ as winners
+        std::vector<bool> isWinner(n, false);
+        for (const auto& [_, idx] : pathIndex_) {
+            isWinner[idx] = true;
+        }
+        for (const auto& [_, list] : pathIndexCollisions_) {
+            for (uint32_t idx : list) isWinner[idx] = true;
+        }
+        for (uint32_t i = 0; i < n; i++) {
+            if (types_[i] == 0) continue;
+            if (isWinner[i]) {
+                actualLive++;
+            } else {
+                tombstoneAt(i);
+            }
+        }
+    } else {
+        for (uint32_t i = 0; i < n; i++) {
+            if (types_[i] != 0) actualLive++;
+        }
+    }
+
+    liveCount_.store(actualLive, std::memory_order_relaxed);
+
+    // Phase 2: defer trigram index building to background
+    phase2Pending_.store(true, std::memory_order_release);
+    phase2StartRecordCount_ = static_cast<uint32_t>(types_.size());
+
+    // Initialize dirty page bitmap
+    uint32_t pageCount = (n + kRecordsPerPage - 1) / kRecordsPerPage;
+    dirtyPages_.assign(pageCount, false);
+    fullRewriteGeneration_.store(0, std::memory_order_relaxed);
+    acknowledgedRewriteGeneration_.store(0, std::memory_order_relaxed);
+
+    LOG_INFO("SearchEngine", "loadRecordsV6: loaded " << n << " records (" << actualLive
+             << " live), Phase 2 pending");
+}
+
+void SearchEngine::completePhase2() {
+    if (!phase2Pending_.load(std::memory_order_acquire)) return;
+
+    {
+        std::shared_lock lock(mutex_);
+        // Peak transient footprint of completePhase2(): the lightweight snapshot
+        // (types/modTimes/string pools/path indices) plus all secondary indices
+        // (name/pinyin/path trigrams, pathIdxToRecords, extension, CJK bigram).
+        // ~200 B/record was the measured peak across our test corpora; it is a
+        // rough upper bound, not an exact figure.
+        constexpr uint64_t kEstimatedBytesPerRecord = 200;
+        // Only build when the estimate fits within this fraction of reclaimable
+        // memory, leaving headroom for the rest of the process and the OS.
+        constexpr uint64_t kMemoryBudgetNumerator = 7;
+        constexpr uint64_t kMemoryBudgetDenominator = 10;
+
+        uint64_t recordCount = types_.size();
+        uint64_t estimatedBytes = recordCount * kEstimatedBytesPerRecord;
+#ifdef __APPLE__
+        vm_statistics64_data_t vmstat;
+        mach_msg_type_number_t count = HOST_VM_INFO64_COUNT;
+        uint64_t availableBytes = 0;
+        if (host_statistics64(mach_host_self(), HOST_VM_INFO64,
+                              reinterpret_cast<host_info64_t>(&vmstat), &count) == KERN_SUCCESS) {
+            // Reclaimable pages on macOS: free pages, plus pages the VM can hand
+            // back without paging to disk — inactive (compressible under memory
+            // pressure), speculative (read-ahead, dropped first), and purgeable
+            // (volatile caches). Counting only free+inactive understated what is
+            // actually available and caused false skips; including speculative
+            // and purgeable tracks real availability more closely.
+            uint64_t availablePages = static_cast<uint64_t>(vmstat.free_count)
+                                    + vmstat.inactive_count
+                                    + vmstat.speculative_count
+                                    + vmstat.purgeable_count;
+            availableBytes = availablePages * vm_page_size;
+        }
+        if (availableBytes > 0 &&
+            estimatedBytes > availableBytes * kMemoryBudgetNumerator / kMemoryBudgetDenominator) {
+            LOG_WARN("SearchEngine", "Phase 2 skipped: need ~" << (estimatedBytes >> 20)
+                     << "MB but only ~" << (availableBytes >> 20)
+                     << "MB available. Keeping Phase 2 pending to avoid partial indices.");
+            return;
+        }
+#else
+        (void)estimatedBytes;
+#endif
+    }
+
+    LOG_INFO("SearchEngine", "Phase 2: building trigram indices in background...");
+
+    // Snapshot data needed for building indices (under shared lock)
+    // Only snapshot types_ (lightweight ~5MB for 5.5M records) instead of
+    // the full SoA data (~440MB if using FileRecord structs).
+    std::vector<uint8_t> snapTypes;
+    std::vector<int64_t> snapModTimes;
+    StringPool snapNamePool;
+    StringPool snapOrigNamePool;
+    StringPool snapPathPool;
+    std::vector<uint32_t> snapPathIndices;
+    uint32_t snapPathPoolSize;
+    uint32_t snapSize;
+    uint64_t snapCompactionGen = 0;
+    {
+        std::shared_lock lock(mutex_);
+        snapTypes = types_;
+        snapModTimes = modTimes_;
+        snapNamePool = namePool_;
+        if (options_.enablePinyinInitials) snapOrigNamePool = origNamePool_;
+        snapPathPool = pathPool_;
+        snapPathIndices = pathIndices_;
+        snapPathPoolSize = pathPool_.entryCount();
+        snapSize = static_cast<uint32_t>(types_.size());
+        snapCompactionGen = compactionGen_.load(std::memory_order_relaxed);
+    }
+
+    // Build all indices without holding any lock (~3s)
+    auto trigramIndex = buildTrigramIndexFromData(snapTypes, snapNamePool);
+    StringPool pinyinInitialsPool;
+    std::unordered_map<Trigram, std::vector<uint32_t>> pinyinInitialsTrigramIndex;
+    if (options_.enablePinyinInitials) {
+        pinyinInitialsPool = buildPinyinInitialsPoolFromData(snapOrigNamePool);
+        pinyinInitialsTrigramIndex = buildTrigramIndexFromData(snapTypes, pinyinInitialsPool);
+    }
+    std::unordered_map<Trigram, std::vector<uint32_t>> pathTrigramIndex;
+    std::vector<std::vector<uint32_t>> pathIdxToRecords;
+    if (options_.enablePathTrigramIndex) {
+        pathTrigramIndex = buildPathTrigramIndexFromData(snapPathPool);
+        pathIdxToRecords = buildPathIdxToRecordsFromData(snapTypes, snapPathIndices, snapPathPoolSize);
+    }
+    auto recentCache = buildRecentCacheFromData(snapTypes, snapModTimes, kRecentCacheSize);
+    auto extensionIndex = buildExtensionIndexFromData(snapTypes, snapNamePool);
+    auto cjkBigramIndex = buildCJKBigramIndexFromData(snapTypes, snapNamePool);
+
+    LOG_INFO("SearchEngine", "Phase 2: indices built, swapping under lock...");
+
+    // Swap under unique lock and replay mutations that occurred during build
+    {
+        std::unique_lock lock(mutex_);
+
+        // A COW compaction may have completed while we built the indices above.
+        // It renumbers records, rebuilds every secondary index against the new
+        // numbering, and clears phase2Pending_. Installing our pre-compaction
+        // snapshot indices now would reference stale record indices (OOB reads),
+        // so discard them and keep the compaction's fresh indices.
+        if (!phase2Pending_.load(std::memory_order_acquire) ||
+            compactionGen_.load(std::memory_order_relaxed) != snapCompactionGen) {
+            LOG_INFO("SearchEngine", "Phase 2: compaction completed during index build, discarding stale indices");
+            return;
+        }
+
+        nameTrigramIndex_ = std::move(trigramIndex);
+        pinyinInitialsPool_ = std::move(pinyinInitialsPool);
+        pinyinInitialsTrigramIndex_ = std::move(pinyinInitialsTrigramIndex);
+        pathTrigramIndex_ = std::move(pathTrigramIndex);
+        pathIdxToRecords_ = std::move(pathIdxToRecords);
+        recentCache_ = std::move(recentCache);
+        extensionIndex_ = std::move(extensionIndex);
+        cjkBigramIndex_ = std::move(cjkBigramIndex);
+
+        // Replay records added during Phase 2 build
+        uint32_t currentSize = static_cast<uint32_t>(types_.size());
+        uint32_t replayCount = 0;
+        for (uint32_t i = snapSize; i < currentSize; i++) {
+            if (types_[i] == 0) continue;
+            if (options_.enablePinyinInitials) {
+                while (pinyinInitialsPool_.entryCount() < i) {
+                    pinyinInitialsPool_.append("");
+                }
+                pinyinInitialsPool_.append(me::mandarinInitialsKey(origNamePool_.str(i)));
+            }
+            // Add trigrams for this record
+            addTrigramsForRecord(i, namePool_.data(i), namePool_.length(i));
+            addPinyinInitialsForRecord(i);
+            if (options_.enablePathTrigramIndex && i < pathIndices_.size()) {
+                uint32_t pIdx = pathIndices_[i];
+                if (pIdx >= pathIdxToRecords_.size()) {
+                    ensurePathTrigramsForPathIdx(pIdx);
+                }
+            }
+            addPathTrigramsForRecord(i);
+            addExtensionForRecord(i);
+            addCJKBigramsForRecord(i, namePool_.data(i), namePool_.length(i));
+            addToRecentCache(i, static_cast<time_t>(modTimes_[i]));
+            replayCount++;
+        }
+
+        // Replay tombstones: records that were live in snapshot but deleted during build
+        for (uint32_t i = 0; i < snapSize; i++) {
+            if (i >= types_.size()) break;
+            if (snapTypes[i] != 0 && types_[i] == 0) {
+                // Was live in snapshot, now tombstoned — trigram was built, need to remove
+                // Use snapshot name data (pre-tombstone) to find and remove stale trigram entries
+                if (i < snapNamePool.entryCount() && snapNamePool.isLive(i)) {
+                    removeTrigramsForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
+                    removeExtensionForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
+                    removeCJKBigramsForRecord(i, snapNamePool.data(i), snapNamePool.length(i));
+                }
+                removePinyinInitialsForRecord(i);
+                removePathTrigramsForRecord(i);
+            }
+        }
+        recentCache_ = buildRecentCacheFromData(types_, modTimes_, kRecentCacheSize);
+
+        phase2Pending_.store(false, std::memory_order_release);
+
+        LOG_INFO("SearchEngine", "Phase 2 complete: replayed " << replayCount
+                 << " mutations, trigram indices active");
+    }
+}
+
+SearchEngine::V6Snapshot SearchEngine::snapshotForV6() const {
+    std::shared_lock lock(mutex_);
+    V6Snapshot snap;
+    snap.origNamePool = origNamePool_;
+    snap.namePool = namePool_;
+    snap.pathIndices = pathIndices_;
+    snap.pathPool = pathPool_;
+    snap.types = types_;
+    snap.sizes = sizes_;
+    snap.modTimes = modTimes_;
+    snap.inodes = inodes_;
+    snap.devIds = devIds_;
+    snap.liveCount = liveCount_.load(std::memory_order_relaxed);
+    return snap;
+}
