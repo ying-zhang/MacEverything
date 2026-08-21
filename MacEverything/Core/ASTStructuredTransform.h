@@ -60,9 +60,10 @@ inline std::unique_ptr<QueryNode> transformSlashTerms(std::unique_ptr<QueryNode>
         std::string nameText = pq.namePattern;
         if (node->caseSensitive) {
             std::string t = node->text;
-            if (t.size() >= 2 && t.back() == '*' && t[t.size() - 2] == '/')
-                t = t.substr(0, t.size() - 2);
-            else if (!t.empty() && t.back() == '/')
+            // Only SEGMENTS (no trailing '/') and DIR_EXACT (trailing '/') reach
+            // here: glob terms (* / ?) and DIR_LIST (trailing /*) are returned
+            // early above, so no '*' can appear in the name at this point.
+            if (!t.empty() && t.back() == '/')
                 t = t.substr(0, t.size() - 1);
             if (!t.empty() && t.front() == '/') t = t.substr(1);
             size_t slash = t.rfind('/');

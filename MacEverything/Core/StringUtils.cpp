@@ -167,6 +167,28 @@ static bool appendMandarinInitial32(uint32_t cp, std::string& out) {
     return false;
 }
 
+/// Encode one code point back to UTF-8 and append it. Used as a fallback when a
+/// CJK ideograph has no pinyin reading (e.g. rare Extension A characters Core
+/// Foundation cannot transliterate): keeping the original character avoids
+/// silently dropping it from the key and preserves key length.
+static void appendUtf8(uint32_t cp, std::string& out) {
+    if (cp < 0x80) {
+        out.push_back(static_cast<char>(cp));
+    } else if (cp < 0x800) {
+        out.push_back(static_cast<char>(0xC0 | (cp >> 6)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else if (cp < 0x10000) {
+        out.push_back(static_cast<char>(0xE0 | (cp >> 12)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    } else {
+        out.push_back(static_cast<char>(0xF0 | (cp >> 18)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 12) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | ((cp >> 6) & 0x3F)));
+        out.push_back(static_cast<char>(0x80 | (cp & 0x3F)));
+    }
+}
+
 /// Common polyphonic words where a per-character transliteration picks the wrong
 /// reading. Values are the correct pinyin initials for the whole word.
 static const std::vector<std::pair<std::vector<uint32_t>, std::string>>&
@@ -186,6 +208,17 @@ polyphonicWords() {
         std::vector<std::pair<std::vector<uint32_t>, std::string>> out;
         out.reserve(m.size());
         for (const auto& kv : m) out.emplace_back(utf8ToCodePoints(kv.first), kv.second);
+        // Deterministic order independent of std::hash iteration order: longest
+        // first, then by code point sequence. Longest-first also makes the
+        // matcher prefer the most specific word if overlapping entries are
+        // ever added.
+        std::sort(out.begin(), out.end(),
+            [](const auto& a, const auto& b) {
+                if (a.first.size() != b.first.size())
+                    return a.first.size() > b.first.size();
+                if (a.first != b.first) return a.first < b.first;
+                return a.second < b.second;
+            });
         return out;
     }();
     return words;
@@ -202,8 +235,11 @@ std::string normalizeNFD(const std::string& s) {
 std::string mandarinInitialsKey(const std::string& s) {
     if (s.empty() || isAllAscii(s)) return {};
 
-    // NFKC folds compatibility ideographs (e.g. 﨑 → 崎) so CoreFoundation can
-    // transliterate them, and folds full-width forms.
+    // NFKC folds full-width forms and the subset of CJK compatibility
+    // ideographs that have a compatibility decomposition, so CoreFoundation can
+    // transliterate those. Compatibility ideographs without a decomposition
+    // (e.g. U+FA11) and rare Extension A characters do not fold; the loop below
+    // keeps them via the raw-code-point fallback instead of dropping them.
     std::string norm = normalizeCF(s, kCFStringNormalizationFormKC);
     std::vector<uint32_t> cps = utf8ToCodePoints(norm);
 
@@ -235,7 +271,11 @@ std::string mandarinInitialsKey(const std::string& s) {
 
         uint32_t cp = cps[i];
         if (isCJKIdeograph32(cp)) {
-            appendMandarinInitial32(cp, result);
+            if (!appendMandarinInitial32(cp, result)) {
+                // No pinyin reading available (e.g. Extension A chars CF cannot
+                // transliterate). Keep the original character rather than drop it.
+                appendUtf8(cp, result);
+            }
         } else if (cp < 128 && std::isalnum(static_cast<int>(cp))) {
             result.push_back(static_cast<char>(std::tolower(static_cast<int>(cp))));
         }
