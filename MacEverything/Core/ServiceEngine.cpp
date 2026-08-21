@@ -32,6 +32,19 @@ bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
            child[parentLen] == '/';
 }
 
+/// Like pathContainsOrEquals, but also matches when `parent` uses a symlinked
+/// spelling while `child` uses the real path. FSEvents reports real paths
+/// (e.g. /private/tmp for /tmp, /private/var for /var), so a configured root
+/// spelled "/tmp/foo" would otherwise fail to match an event path
+/// "/private/tmp/foo/bar". Resolves the parent (which must exist) and retries.
+static bool pathContainsOrEqualsReal(const std::string& parent, const std::string& child) {
+    if (pathContainsOrEquals(parent, child)) return true;
+    std::error_code ec;
+    fs::path real = fs::canonical(parent, ec);
+    if (!ec) return pathContainsOrEquals(real.string(), child);
+    return false;
+}
+
 bool pathContainsComponentPath(const std::string& path, const std::string& componentPath) {
     if (componentPath.empty()) return false;
     size_t pos = path.find(componentPath);
@@ -938,7 +951,7 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
 
     bool insideRoot = roots.empty();
     for (const auto& root : roots) {
-        if (pathContainsOrEquals(root, path)) {
+        if (pathContainsOrEqualsReal(root, path)) {
             insideRoot = true;
             break;
         }
@@ -952,7 +965,7 @@ bool ServiceEngine::isPathAllowedByConfig(const std::string& path, bool forConte
     }
     for (const auto& ex : excluded) {
         if (ex.empty()) continue;
-        if (pathContainsOrEquals(ex, path)) {
+        if (pathContainsOrEqualsReal(ex, path)) {
             return false;
         }
     }

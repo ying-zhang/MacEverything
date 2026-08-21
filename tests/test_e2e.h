@@ -74,10 +74,7 @@ static void runEndToEndTest() {
 
     // Create a file
     int prevCount = changeCount.load();
-    {
-        std::ofstream ofs(tmpDir + "/e2e_test.txt");
-        ofs << "e2e test content\n";
-    }
+    runShellCommand("echo 'e2e test content' > " + tmpDir + "/e2e_test.txt");
     waitForChange(prevCount, 3000);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -92,7 +89,7 @@ static void runEndToEndTest() {
 
     // Rename the file
     prevCount = changeCount.load();
-    fs::rename(tmpDir + "/e2e_test.txt", tmpDir + "/e2e_renamed.txt");
+    runShellCommand("mv " + tmpDir + "/e2e_test.txt " + tmpDir + "/e2e_renamed.txt");
     waitForChange(prevCount, 3000);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
@@ -108,7 +105,7 @@ static void runEndToEndTest() {
 
     // Delete the file
     prevCount = changeCount.load();
-    fs::remove(tmpDir + "/e2e_renamed.txt");
+    runShellCommand("rm " + tmpDir + "/e2e_renamed.txt");
     waitForChange(prevCount, 3000);
     std::this_thread::sleep_for(std::chrono::milliseconds(200));
 

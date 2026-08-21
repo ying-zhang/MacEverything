@@ -1,6 +1,22 @@
 #pragma once
 // ─────────── Helpers ───────────
 #include <sys/resource.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char** environ;
+
+/// Run a shell command in a child process. FSEvents tests use this to create
+/// files from a separate process, since FileSystemWatcher uses
+/// kFSEventStreamCreateFlagIgnoreSelf (events from the same PID are dropped).
+static void runShellCommand(const std::string& cmd) {
+    pid_t pid;
+    char* argv[] = {(char*)"/bin/sh", (char*)"-c", (char*)cmd.c_str(), nullptr};
+    if (posix_spawn(&pid, "/bin/sh", nullptr, nullptr, argv, environ) == 0) {
+        int status;
+        waitpid(pid, &status, 0);
+    }
+}
 
 static size_t getMemoryUsageMB() {
     mach_task_basic_info_data_t info;

@@ -25,7 +25,11 @@ static void runFSEventsSearchLatencyTest() {
     const double MAX_ACCEPTABLE_P99_MS = 1000.0;  // P99 should be < 1s
 
     // ── Setup: create tmpdir with some seed files, start ServiceEngine ──
-    auto tmpBase = fs::temp_directory_path() / ("me_latency_test_" + std::to_string(getpid()));
+    // NOTE: fs::temp_directory_path() on macOS resolves to /var/folders/.../T,
+    // which is both a symlink (/var -> /private/var) and a system-filtered path.
+    // Use the (real, non-system) current working directory so FSEvents reports
+    // paths that match the configured scan root and are not dropped as system.
+    auto tmpBase = fs::current_path() / ("me_latency_test_" + std::to_string(getpid()));
     fs::remove_all(tmpBase);
     fs::create_directories(tmpBase);
 
