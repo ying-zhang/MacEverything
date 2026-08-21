@@ -4,7 +4,7 @@
 
 <h1 align="center">MacEverything</h1>
 
-<p align="center">Current version: 1.7.30 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+<p align="center">Current version: 1.7.50 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
 
 <p align="center">
   <b>Instant file search for macOS</b> — find any file among millions in milliseconds.<br/>
@@ -196,7 +196,7 @@ Make sure `~/.local/bin` is in `PATH`, or invoke `/Applications/MacEverything.ap
 
 #### Release Status and Downloads
 
-The current stable version is **1.7.30**.
+The current stable version is **1.7.50**.
 
 Install or upgrade with Homebrew Cask:
 
