@@ -90,6 +90,12 @@ private:
     std::shared_ptr<std::atomic<bool>> alive_ = std::make_shared<std::atomic<bool>>(true);
     std::mutex compactionMutex_;
     bool previousBaseWriteFailed_ = false;
+    // Metadata from the last successful load / metadata-rich flush. The bare
+    // flush(lastEventId) overload reuses its extras (config_signature, scan_root,
+    // app_version, ...) so periodic auto-compaction rewrites never strip the
+    // config signature — stripping it made every launch treat the index as
+    // "config changed" and trigger a full rescan.
+    IndexMetadata lastMeta_;
 
     void fullCompactLocked(const IndexMetadata& metadata);
 
