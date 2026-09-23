@@ -108,6 +108,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
+                lastMeta_ = meta;
                 LOG_INFO("IndexPersistence", "Loaded v6 flat index, lastEventId=" << lastEventId
                           << ", liveRecords=" << engine_->liveRecordCount());
             }
@@ -128,6 +129,7 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
+                lastMeta_ = meta;
                 LOG_INFO("IndexPersistence", "Loaded paged index, lastEventId=" << lastEventId
                           << ", liveRecords=" << engine_->liveRecordCount());
                 // Auto-migrate to v6 flat format
@@ -205,11 +207,18 @@ void IndexPersistence::attachWAL() {
 void IndexPersistence::flush(uint64_t lastEventId, bool force) {
     IndexMetadata meta;
     meta.lastEventId = lastEventId;
+    {
+        // Preserve extras (config_signature, scan_root, app_version, ...) from the
+        // last load / metadata-rich flush so bare flushes don't strip them.
+        std::lock_guard<std::mutex> lock(compactionMutex_);
+        meta.extra = lastMeta_.extra;
+    }
     flush(meta, force);
 }
 
 void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
     std::lock_guard<std::mutex> compactionLock(compactionMutex_);
+    lastMeta_ = metadata;
 
     // Skip logic:
     //   - No WAL → skip.
