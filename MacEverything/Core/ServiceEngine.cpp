@@ -422,9 +422,11 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
 
         if (!scanner->isComplete()) {
             const auto& stats = scanner->getStats();
-            LOG_ERROR("ServiceEngine", "Full scan incomplete; preserving existing index ("
-                      << stats.errorCount.load(std::memory_order_relaxed) << " errors)");
+            const auto reason = "Full scan incomplete: " +
+                std::to_string(stats.errorCount.load(std::memory_order_relaxed)) + " root or traversal error(s)";
+            LOG_ERROR("ServiceEngine", reason);
             this->isScanning_.store(false, std::memory_order_relaxed);
+            if (onStartupFailed) onStartupFailed(reason);
             if (completion) completion(0, false);
             return;
         }
@@ -549,8 +551,15 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
 
         // No cache: full scan
         if (!this->isGenerationCurrent(generation)) return;
-        this->startFullScan([this, completion, generation](uint32_t count, bool) {
+        this->startFullScan([this, completion, generation](uint32_t count, bool didFullScan) {
             if (!this->isGenerationCurrent(generation)) return;
+            if (!didFullScan) {
+                // startFullScan already reported the scan failure. Do not
+                // create a persistence object around a missing engine or
+                // overwrite a healthy index with an empty snapshot.
+                if (completion) completion(0, false);
+                return;
+            }
             bool expected = false;
             if (!this->startupCompleted_.compare_exchange_strong(expected, true,
                     std::memory_order_acq_rel)) {
@@ -604,6 +613,21 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
         rebuilding_.store(false, std::memory_order_release);
         if (completion) completion(0, false);
         return;
+    }
+
+    // Rebuild replaces the in-memory engine and removes persisted files before
+    // scanning. Reject an unavailable root first so an unmounted NAS or disk
+    // cannot destroy the last usable index.
+    for (const auto& root : effectiveScanRoots()) {
+        struct stat rootStat{};
+        if (stat(root.c_str(), &rootStat) != 0 || !S_ISDIR(rootStat.st_mode)) {
+            const std::string reason = "Rebuild blocked: scan root unavailable: " + root;
+            LOG_ERROR("ServiceEngine", reason);
+            rebuilding_.store(false, std::memory_order_release);
+            if (onStartupFailed) onStartupFailed(reason);
+            if (completion) completion(0, false);
+            return;
+        }
     }
 
     auto oldContent = safeContentIndex();
@@ -731,10 +755,14 @@ void ServiceEngine::backgroundSyncEngine(
         if (!this->isGenerationCurrent(generation)) return;
         auto roots = effectiveScanRoots();
         bool hasNetworkRoot = false;
+        std::vector<std::string> networkRoots;
+        std::vector<std::string> localRoots;
         for (const auto& root : roots) {
             if (PathUtils::isNetworkFilesystem(root)) {
                 hasNetworkRoot = true;
-                break;
+                networkRoots.push_back(root);
+            } else {
+                localRoots.push_back(root);
             }
         }
 
@@ -743,24 +771,27 @@ void ServiceEngine::backgroundSyncEngine(
         // asynchronously instead of waiting for replay to time out.
         if (hasNetworkRoot) {
             LOG_INFO("ServiceEngine", "Network root detected; skipping FSEvents replay and using polling reconciliation");
-            this->isSyncing_.store(false, std::memory_order_relaxed);
-            if (config.realtimeMonitoring) {
-                this->startMonitoring();
-            }
-            for (const auto& root : roots) {
+            for (const auto& root : networkRoots) {
                 this->rescanSubtree(root);
             }
-            if (config.automaticMaintenanceEnabled) {
-                sharedPersistence->startAutoCompaction(300.0, this->watcher_);
+            if (localRoots.empty()) {
+                this->isSyncing_.store(false, std::memory_order_relaxed);
+                if (config.realtimeMonitoring) this->startMonitoring();
+                if (config.automaticMaintenanceEnabled) {
+                    sharedPersistence->startAutoCompaction(300.0, this->watcher_);
+                }
+                if (config.contentIndexingEnabled) {
+                    dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                        if (!this->isGenerationCurrent(generation)) return;
+                        this->startContentIndexing();
+                    });
+                }
+                if (this->onIndexChanged) this->onIndexChanged();
+                return;
             }
-            if (config.contentIndexingEnabled) {
-                dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
-                    if (!this->isGenerationCurrent(generation)) return;
-                    this->startContentIndexing();
-                });
-            }
-            if (this->onIndexChanged) this->onIndexChanged();
-            return;
+            // Reconcile NAS roots by polling, but still replay local roots
+            // from the persisted event watermark below.
+            roots = std::move(localRoots);
         }
 
         // Try FSEvents replay

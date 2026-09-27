@@ -163,9 +163,31 @@ void ServiceEngine::startNetworkPolling(const std::vector<std::string>& roots) {
                               NSEC_PER_SEC);
     dispatch_source_t timer = networkPollingTimer_;
     dispatch_source_set_event_handler(timer, ^{
-        if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+        auto pollingState = this->networkPollingState_;
+        if (this->shuttingDown_.load(std::memory_order_acquire) ||
+            pollingState->inFlight.exchange(true, std::memory_order_acq_rel)) {
+            return;
+        }
+
+        std::vector<std::string> networkRoots;
         for (const auto& root : this->effectiveScanRoots()) {
-            this->rescanSubtree(root);
+            if (PathUtils::isNetworkFilesystem(root)) networkRoots.push_back(root);
+        }
+        if (networkRoots.empty()) {
+            pollingState->inFlight.store(false, std::memory_order_release);
+            return;
+        }
+
+        const uint64_t pollSerial = pollingState->serial.load(std::memory_order_acquire);
+        auto remaining = std::make_shared<std::atomic<size_t>>(networkRoots.size());
+        auto finish = [pollingState, remaining, pollSerial] {
+            if (remaining->fetch_sub(1, std::memory_order_acq_rel) == 1 &&
+                pollingState->serial.load(std::memory_order_acquire) == pollSerial) {
+                pollingState->inFlight.store(false, std::memory_order_release);
+            }
+        };
+        for (const auto& root : networkRoots) {
+            this->rescanSubtree(root, finish);
         }
     });
     dispatch_resume(networkPollingTimer_);
@@ -173,6 +195,8 @@ void ServiceEngine::startNetworkPolling(const std::vector<std::string>& roots) {
 }
 
 void ServiceEngine::stopNetworkPolling() {
+    networkPollingState_->serial.fetch_add(1, std::memory_order_acq_rel);
+    networkPollingState_->inFlight.store(false, std::memory_order_release);
     if (!networkPollingTimer_) return;
     dispatch_source_cancel(networkPollingTimer_);
     dispatch_release(networkPollingTimer_);
@@ -182,8 +206,9 @@ void ServiceEngine::stopNetworkPolling() {
 void ServiceEngine::restartMonitoring() {
     if (!isMonitoring_.load(std::memory_order_relaxed)) return;
     LOG_INFO("ServiceEngine", "Restarting monitoring (scan roots changed)");
+    const FSEventStreamEventId lastEventId = watcher_->getLastEventId();
     stopMonitoring();
-    startMonitoring();
+    startMonitoring(lastEventId == 0 ? kFSEventStreamEventIdSinceNow : lastEventId);
     if (safeConfig().automaticMaintenanceEnabled) {
         auto persistence = safePersistence();
         if (persistence) {
@@ -324,26 +349,37 @@ void ServiceEngine::flushPendingRescans(dispatch_source_t firingTimer) {
 
 void ServiceEngine::rescanSubtree(const std::string& dir,
                                    std::function<void()> completion) {
+    auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
+    auto notifyCompletion = [completionCopy] {
+        if (!completionCopy) return;
+        dispatch_async(dispatch_get_main_queue(), ^{ (*completionCopy)(); });
+    };
     auto engine = safeEngine();
     if (!engine) {
-        if (completion) {
-            dispatch_async(dispatch_get_main_queue(), ^{ completion(); });
-        }
+        notifyCompletion();
         return;
     }
 
     // Copy dir to avoid dangling reference — the caller's temporary may be
     // destroyed before the async block executes.
     std::string dirCopy = dir;
-    auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
     uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
 
-    if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) return;
+    if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) {
+        notifyCompletion();
+        return;
+    }
     dispatch_async(mutationQueue_, ^{
-        if (!this->isGenerationCurrent(generation)) return;
+        if (!this->isGenerationCurrent(generation)) {
+            notifyCompletion();
+            return;
+        }
 
         auto scanner = std::make_shared<DirectoryScanner>();
-        if (!this->registerScanner(scanner, generation)) return;
+        if (!this->registerScanner(scanner, generation)) {
+            notifyCompletion();
+            return;
+        }
         std::vector<std::string> roots{dirCopy};
         scanner->scan(roots, this->scanConfigForRoots(roots));
         this->unregisterScanner(scanner);
@@ -352,13 +388,17 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
             LOG_ERROR("ServiceEngine", "Subtree scan incomplete; preserving indexed subtree "
                       << dirCopy << " (" << stats.errorCount.load(std::memory_order_relaxed)
                       << " errors)");
+            notifyCompletion();
             return;
         }
         auto freshRecords = scanner->takeResults();
         LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): scanned "
                  << freshRecords.size() << " records");
 
-        if (!this->isGenerationCurrent(generation)) return;
+        if (!this->isGenerationCurrent(generation)) {
+            notifyCompletion();
+            return;
+        }
 
         std::vector<std::string> contentPaths;
         contentPaths.reserve(freshRecords.size());
@@ -404,11 +444,7 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
             onIndexChanged();
         }
 
-        if (completionCopy) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                (*completionCopy)();
-            });
-        }
+        notifyCompletion();
     });
 }
 

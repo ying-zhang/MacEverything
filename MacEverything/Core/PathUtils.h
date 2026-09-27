@@ -1,5 +1,6 @@
 #pragma once
 #include <string>
+#include <cstring>
 #include <cstdlib>
 #include <cerrno>
 #include <pwd.h>
@@ -34,8 +35,26 @@ inline bool pathContainsOrEquals(const std::string& parent,
 /// Detect a mounted filesystem that is not marked local (SMB, NFS, etc.).
 inline bool isNetworkFilesystem(const std::string& path) {
     struct statfs fsInfo = {};
-    return statfs(path.c_str(), &fsInfo) == 0 &&
-           (fsInfo.f_flags & MNT_LOCAL) == 0;
+    if (statfs(path.c_str(), &fsInfo) == 0) {
+        return (fsInfo.f_flags & MNT_LOCAL) == 0;
+    }
+
+    // statfs() fails when a configured child has not appeared yet. Consult
+    // the mount table so an unavailable path below an already mounted SMB/NFS
+    // volume still gets the network scan policy.
+    struct statfs* mounts = nullptr;
+    const int mountCount = getmntinfo(&mounts, MNT_NOWAIT);
+    size_t bestMountLength = 0;
+    bool network = false;
+    for (int i = 0; i < mountCount; ++i) {
+        const char* mountPoint = mounts[i].f_mntonname;
+        if (!mountPoint || !pathContainsOrEquals(mountPoint, path)) continue;
+        const size_t length = std::strlen(mountPoint);
+        if (length < bestMountLength) continue;
+        bestMountLength = length;
+        network = (mounts[i].f_flags & MNT_LOCAL) == 0;
+    }
+    return network;
 }
 
 inline std::string getHomeDirectory() {

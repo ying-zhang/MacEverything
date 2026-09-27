@@ -232,6 +232,20 @@ func testRegexNestedQuantifierRejected() {
     assertEqual(ranges.count, 0, "nested quantifier should not reach ICU")
 }
 
+func testRegexRepeatedAlternationRejected() {
+    print("  test: regex safety — repeated alternation is rejected")
+    for pattern in ["(a|ab)+", "(a|aa)+"] {
+        let hint = HighlightHint(text: pattern, matchMode: .regex)
+        let ranges = computeRangesForHint(in: String(repeating: "a", count: 64) + "!", hint: hint)
+        assertEqual(ranges.count, 0, "repeated alternation should not reach ICU: \(pattern)")
+    }
+    for (pattern, text) in [("(foo|bar)+", "foobarfoo"), ("(a|b)+", "ababab"), ("(ab|cd)+", "abcdabcd")] {
+        let hint = HighlightHint(text: pattern, matchMode: .regex)
+        let ranges = computeRangesForHint(in: text, hint: hint)
+        assertEqual(ranges.count, 1, "disjoint repeated alternatives remain highlightable: \(pattern)")
+    }
+}
+
 func testRegexEscapesAndCharacterClassesRemainValid() {
     print("  test: regex safety — escaped quantifiers and character classes")
     let repeatedGroup = HighlightHint(text: "(ab)+", matchMode: .regex)
@@ -380,6 +394,7 @@ struct TestRunner {
         testRegexCaseSensitive()
         testRegexInvalid()
         testRegexNestedQuantifierRejected()
+        testRegexRepeatedAlternationRejected()
         testRegexEscapesAndCharacterClassesRemainValid()
         testWholeWordMatch()
         testWholeWordNoPartial()

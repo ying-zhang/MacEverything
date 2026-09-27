@@ -118,12 +118,17 @@ public:
     ScanProgressCallback onScanProgress;
     ContentProgressCallback onContentIndexProgress;
     ContentCompleteCallback onContentIndexComplete;
-    /// Fired when startup is aborted for a fatal, non-recoverable reason
-    /// (currently: another process holds the index lock). Invoked synchronously
-    /// from the startup entry point before any index file is opened.
+    /// Fired when startup cannot produce a usable index, including an instance
+    /// lock failure or an incomplete initial scan. Invoked before the startup
+    /// completion callback and before an incomplete scan can be persisted.
     StartupFailedCallback onStartupFailed;
 
 private:
+    struct NetworkPollingState {
+        std::atomic<bool> inFlight{false};
+        std::atomic<uint64_t> serial{0};
+    };
+
     // ── Internal methods (ServiceEngine.cpp) ──
     void setEngine(std::shared_ptr<SearchEngine> engine);
     void setPersistence(std::shared_ptr<IndexPersistence> persistence);
@@ -225,6 +230,8 @@ private:
     std::atomic<bool> cancelContentIndexing_{false};
     std::atomic<uint64_t> contentIndexGeneration_{0};
     std::atomic<uint64_t> contentRebuildRevision_{0};
+    std::shared_ptr<NetworkPollingState> networkPollingState_ =
+        std::make_shared<NetworkPollingState>();
     std::mutex contentRebuildRequestMutex_;
     std::vector<std::string> pendingContentExtensions_;
     uint64_t pendingContentMaxFileSize_ = 0;

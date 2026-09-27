@@ -596,7 +596,8 @@ void HttpServer::handleConnection(int clientFd) {
     }
 
     auto req = parseRequest(raw);
-    std::string response = route(req);
+    const auto deadline = std::chrono::steady_clock::now() + kRequestDeadline;
+    std::string response = route(req, clientFd, deadline);
 
     // Send response (may need multiple writes for large payloads)
     const char* data = response.data();
@@ -727,7 +728,8 @@ HttpServer::HttpRequest HttpServer::parseRequest(const std::string& raw) {
 // Routing
 // ---------------------------------------------------------------------------
 
-std::string HttpServer::route(const HttpRequest& req) {
+std::string HttpServer::route(const HttpRequest& req, int clientFd,
+                              std::chrono::steady_clock::time_point deadline) {
     if (!req.valid) return errorResponse(400, "Invalid percent encoding");
     // ── Host: strict loopback + port validation (DNS rebinding mitigation) ──
     // Reject duplicate, empty, or missing Host.
@@ -803,7 +805,7 @@ std::string HttpServer::route(const HttpRequest& req) {
         if (req.path == "/api/search") {
             return handleSearch(req.query);
         } else if (req.path == "/api/search/content") {
-            return handleContentSearch(req.query);
+            return handleContentSearch(req.query, clientFd, deadline);
         } else if (req.path == "/api/recent") {
             return handleRecent(req.query);
         } else if (req.path == "/api/status") {
@@ -910,7 +912,9 @@ std::string HttpServer::handleSearch(
 }
 
 std::string HttpServer::handleContentSearch(
-        const std::unordered_map<std::string, std::string>& params) {
+        const std::unordered_map<std::string, std::string>& params,
+        int clientFd,
+        std::chrono::steady_clock::time_point deadline) {
     auto qIt = params.find("q");
     if (qIt == params.end() || qIt->second.empty()) {
         return errorResponse(400, "Missing required parameter: q");
@@ -932,7 +936,24 @@ std::string HttpServer::handleContentSearch(
     auto engine = getEngine_();
     if (!engine) return errorResponse(503, "Engine not available");
 
+    auto shouldCancel = [this, clientFd, deadline] {
+        if (!running_.load(std::memory_order_acquire) ||
+            std::chrono::steady_clock::now() >= deadline) {
+            return true;
+        }
+        if (clientFd < 0) return false;
+        char probe = 0;
+        const ssize_t received = ::recv(clientFd, &probe, sizeof(probe),
+                                        MSG_PEEK | MSG_DONTWAIT);
+        if (received == 0) return true;
+        if (received < 0 && errno != EAGAIN && errno != EWOULDBLOCK && errno != EINTR) {
+            return true;
+        }
+        return false;
+    };
+
     for (int attempt = 0; attempt < 3; ++attempt) {
+        if (shouldCancel()) return errorResponse(408, "Content search cancelled");
         uint64_t contentGeneration = contentIndex->mappingGeneration();
         if ((contentGeneration & 1U) != 0) continue;
         uint64_t generation = engine->compactionGeneration();
@@ -940,7 +961,8 @@ std::string HttpServer::handleContentSearch(
             [this](uint32_t, std::string& fullPath) {
                 return !fullPath.empty() &&
                     (!contentPathFilter_ || contentPathFilter_(fullPath));
-            });
+            }, shouldCancel);
+        if (shouldCancel()) return errorResponse(408, "Content search cancelled");
         if (contentIndex->mappingGeneration() != contentGeneration) continue;
 
         std::unordered_map<uint32_t, const ContentMatch*> byIndex;

@@ -11,6 +11,7 @@
 #include <queue>
 #include <condition_variable>
 #include <unordered_set>
+#include <chrono>
 
 class SearchEngine;
 class ContentIndex;
@@ -78,10 +79,13 @@ private:
     };
 
     HttpRequest parseRequest(const std::string& raw);
-    std::string route(const HttpRequest& req);
+    std::string route(const HttpRequest& req, int clientFd,
+                      std::chrono::steady_clock::time_point deadline);
 
     std::string handleSearch(const std::unordered_map<std::string, std::string>& params);
-    std::string handleContentSearch(const std::unordered_map<std::string, std::string>& params);
+    std::string handleContentSearch(const std::unordered_map<std::string, std::string>& params,
+                                    int clientFd,
+                                    std::chrono::steady_clock::time_point deadline);
     std::string handleRecent(const std::unordered_map<std::string, std::string>& params);
     std::string handleStatus();
     std::string handleMemory();
@@ -119,4 +123,5 @@ private:
 
     static constexpr size_t kWorkerCount = 8;
     static constexpr size_t kMaxPendingConnections = 64;
+    static constexpr std::chrono::seconds kRequestDeadline{30};
 };

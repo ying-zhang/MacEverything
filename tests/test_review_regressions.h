@@ -13,6 +13,53 @@ static void runReviewRegressionTests() {
         check(!scanner.isComplete(), "Review: inaccessible scan root is incomplete");
     }
 
+    // An incomplete first scan must report failure without constructing a
+    // persistence layer around a missing engine or writing an empty index.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_incomplete_startup_" + std::to_string(getpid()));
+        const auto missing = cache / "unmounted-root";
+        fs::remove_all(cache);
+        fs::create_directories(cache);
+
+        ServiceConfig config;
+        config.scanRoot = missing.string();
+        config.scanRoots = {missing.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        auto initialEngine = service.safeEngine();
+        std::atomic<bool> startupFailed{false};
+        std::atomic<bool> completionCalled{false};
+        std::atomic<bool> reportedSuccess{false};
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.onStartupFailed = [&](const std::string&) {
+            startupFailed.store(true, std::memory_order_release);
+        };
+        service.startIncremental([&](uint32_t count, bool didFullScan) {
+            completionCalled.store(true, std::memory_order_release);
+            reportedSuccess.store(count > 0 || didFullScan, std::memory_order_release);
+            dispatch_semaphore_signal(done);
+        });
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+
+        check(completed && completionCalled.load(std::memory_order_acquire),
+              "Review: incomplete first scan reaches completion callback");
+        check(startupFailed.load(std::memory_order_acquire) &&
+              !reportedSuccess.load(std::memory_order_acquire) &&
+              service.safeEngine() == initialEngine,
+              "Review: incomplete first scan reports failure without replacing the engine");
+        check(!fs::exists(cache / "index.v6"),
+              "Review: incomplete first scan does not write an empty v6 index");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
     // Filename trigrams must remain usable when path acceleration is disabled.
     {
         SearchEngineOptions options;

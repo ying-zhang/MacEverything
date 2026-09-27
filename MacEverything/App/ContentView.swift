@@ -142,7 +142,7 @@ struct ContentView: View {
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
                         .padding(.horizontal, 32)
-                    Text(L10n.tr("This usually means another copy of MacEverything is already running with the same index. Quit the other instance and restart, or restart your Mac."))
+                    Text(L10n.tr("Resolve the reported issue, then retry the index."))
                         .font(.caption)
                         .foregroundColor(.secondary)
                         .multilineTextAlignment(.center)
@@ -537,7 +537,9 @@ private struct SearchStatusBar: View {
                 if service.startupFailed {
                     Image(systemName: "exclamationmark.shield.fill")
                         .foregroundColor(.red)
-                    Text(L10n.tr("Service unavailable — another instance holds the index lock"))
+                    Text(service.startupFailureReason.isEmpty
+                         ? L10n.tr("Search service unavailable")
+                         : service.startupFailureReason)
                         .foregroundColor(.red)
                         .fontWeight(.medium)
                 } else if service.isScanning {

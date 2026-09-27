@@ -181,6 +181,9 @@ final class SearchServiceModel: ObservableObject {
         if reason.contains("cache path changed while the index lock is held") {
             return L10n.tr("The index location changed while MacEverything was running. Restart the app.")
         }
+        if reason.contains("Full scan incomplete") || reason.contains("scan root unavailable") {
+            return L10n.tr("A configured folder is unavailable. Connect the volume or remove the folder from indexed locations, then retry.")
+        }
         return L10n.tr("MacEverything could not access the index. Check folder permissions and available disk space.")
     }
 
@@ -328,6 +331,8 @@ final class SearchServiceModel: ObservableObject {
     func rebuildIndex() {
         guard !isScanning else { return }
         indexChangeTask?.cancel()
+        startupFailed = false
+        startupFailureReason = ""
         scanComplete = false
         totalRecords = 0
         indexMemoryBytes = 0
@@ -339,6 +344,11 @@ final class SearchServiceModel: ObservableObject {
         bridge.rebuildIndex { [weak self] count in
             Task { @MainActor in
                 guard let self else { return }
+                if self.startupFailed {
+                    self.isScanning = false
+                    self.scanComplete = false
+                    return
+                }
                 self.totalRecords = count
                 self.indexMemoryBytes = self.bridge.indexMemoryApproxBytes()
                 self.isScanning = false

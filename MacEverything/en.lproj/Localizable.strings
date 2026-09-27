@@ -480,3 +480,6 @@
 "Folder" = "Folder";
 "OK" = "OK";
 "Save" = "Save";
+"A configured folder is unavailable. Connect the volume or remove the folder from indexed locations, then retry." = "A configured folder is unavailable. Connect the volume or remove the folder from indexed locations, then retry.";
+"Resolve the reported issue, then retry the index." = "Resolve the reported issue, then retry the index.";
+"Search service unavailable" = "Search service unavailable";

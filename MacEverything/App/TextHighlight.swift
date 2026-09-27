@@ -215,12 +215,14 @@ func buildHighlightedText(text: String, ranges: [Range<String.Index>],
 // MARK: - Hint-based highlighting
 
 /// ICU regular expressions use a backtracking engine. Search itself uses RE2,
-/// so the UI must reject patterns known to cause unbounded backtracking rather
-/// than freezing the main actor while rendering a result row.
+/// so this conservative guard rejects common nested-quantifier and repeated
+/// alternation shapes before they can freeze the main actor. Rejection only
+/// disables highlighting; search results still use the RE2 query path.
 private func isSafeHighlightRegex(_ pattern: String) -> Bool {
     guard pattern.utf8.count <= 1024 else { return false }
     let bytes = Array(pattern.utf8)
     struct GroupState {
+        let start: Int
         var hasQuantifier = false
         var hasAlternation = false
     }
@@ -262,6 +264,71 @@ private func isSafeHighlightRegex(_ pattern: String) -> Bool {
         }
     }
 
+    func firstLiteralToken(from start: Int, to end: Int) -> [UInt8]? {
+        guard start < end else { return nil }
+        var index = start
+        if bytes[index] == 63 { // non-capturing/lookaround group prefix
+            guard index + 1 < end,
+                  bytes[index + 1] == 58 || bytes[index + 1] == 61 ||
+                  bytes[index + 1] == 33 || bytes[index + 1] == 60 else { return nil }
+            index += 2
+            if index >= end { return nil }
+        }
+        if bytes[index] == 92 {
+            guard index + 1 < end else { return nil }
+            return [bytes[index], bytes[index + 1]]
+        }
+        var token: [UInt8] = []
+        while index < end {
+            switch bytes[index] {
+            case 40, 41, 46, 91, 94, 36, 42, 43, 63, 123, 124:
+                return token.isEmpty ? nil : token
+            default:
+                token.append(bytes[index])
+                index += 1
+            }
+        }
+        return token.isEmpty ? nil : token
+    }
+
+    func repeatedAlternationIsAmbiguous(from start: Int, to end: Int) -> Bool {
+        var depth = 0
+        var branchStart = start + 1
+        var prefixes: [[UInt8]] = []
+        var index = branchStart
+        while index < end {
+            if bytes[index] == 92 {
+                index += min(2, end - index)
+                continue
+            }
+            if bytes[index] == 91 {
+                while index < end {
+                    let escaped = bytes[index] == 92
+                    index += escaped ? min(2, end - index) : 1
+                    if !escaped && index > 0 && bytes[index - 1] == 93 { break }
+                }
+                continue
+            }
+            if bytes[index] == 40 { depth += 1 }
+            else if bytes[index] == 41 && depth > 0 { depth -= 1 }
+            else if bytes[index] == 124 && depth == 0 {
+                guard let prefix = firstLiteralToken(from: branchStart, to: index) else { return true }
+                prefixes.append(prefix)
+                branchStart = index + 1
+            }
+            index += 1
+        }
+        guard !prefixes.isEmpty,
+              let finalPrefix = firstLiteralToken(from: branchStart, to: end) else { return true }
+        prefixes.append(finalPrefix)
+        for left in prefixes {
+            for right in prefixes where left != right {
+                if left.starts(with: right) || right.starts(with: left) { return true }
+            }
+        }
+        return false
+    }
+
     var groups: [GroupState] = []
     var inCharacterClass = false
     var escaped = false
@@ -291,7 +358,7 @@ private func isSafeHighlightRegex(_ pattern: String) -> Bool {
             continue
         }
         if byte == 40 { // (
-            groups.append(GroupState())
+            groups.append(GroupState(start: index))
             previousWasQuantifier = false
             index += 1
             continue
@@ -312,7 +379,11 @@ private func isSafeHighlightRegex(_ pattern: String) -> Bool {
             if repeatLength > 0 {
                 // Repeating a group that already contains a repeat or an
                 // alternation is the common source of catastrophic backtracking.
-                if group.hasQuantifier || group.hasAlternation { return false }
+                if group.hasQuantifier ||
+                    (group.hasAlternation && repeatedAlternationIsAmbiguous(from: group.start,
+                                                                             to: index)) {
+                    return false
+                }
                 group.hasQuantifier = true
             }
             if !groups.isEmpty {
