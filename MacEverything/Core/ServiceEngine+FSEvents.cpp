@@ -3,16 +3,7 @@
 #include "RescanDebounce.h"
 #include "Logger.h"
 #include <sys/stat.h>
-#include <sys/mount.h>
-
-namespace {
-
-bool isNetworkRoot(const std::string& path) {
-    struct statfs fsInfo = {};
-    return statfs(path.c_str(), &fsInfo) == 0 && (fsInfo.f_flags & MNT_LOCAL) == 0;
-}
-
-} // namespace
+#include "PathUtils.h"
 
 // ═══════════════════════════════════════════════════════
 //  FSEvents application (replay path)
@@ -156,7 +147,7 @@ void ServiceEngine::startNetworkPolling(const std::vector<std::string>& roots) {
     }
     bool hasNetworkRoot = false;
     for (const auto& root : roots) {
-        if (isNetworkRoot(root)) {
+        if (PathUtils::isNetworkFilesystem(root)) {
             hasNetworkRoot = true;
             break;
         }

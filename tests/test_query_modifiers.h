@@ -63,6 +63,19 @@ static void runQueryModifierTests() {
         }
     }
 
+    // A3c: the app's private regex marker preserves case, whole-word, and
+    // filename options without exposing the marker to the regex engine.
+    {
+        auto node = QueryParser::parse("regex:(?mace:case,ww,wfn)hello");
+        check(node != nullptr, "A3c: regex marker parses");
+        if (node) {
+            check(node->type == QueryNodeType::TERM, "A3c: marker produces TERM");
+            check(node->text == "\\b(?:hello)\\b", "A3c: ww marker wraps the pattern");
+            check(node->mode == MatchMode::REGEX, "A3c: marker keeps REGEX mode");
+            check(node->caseSensitive && node->nameOnly, "A3c: case and wfn markers survive");
+        }
+    }
+
     // A4: ww:hello → TERM("hello", WHOLEWORD)
     {
         auto node = QueryNode::makeFilter("ww", "hello");

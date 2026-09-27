@@ -220,21 +220,122 @@ func buildHighlightedText(text: String, ranges: [Range<String.Index>],
 private func isSafeHighlightRegex(_ pattern: String) -> Bool {
     guard pattern.utf8.count <= 1024 else { return false }
     let bytes = Array(pattern.utf8)
-    var groupHasQuantifier: [Bool] = []
-    for (index, byte) in bytes.enumerated() {
-        if byte == 40 { // (
-            groupHasQuantifier.append(false)
-        } else if byte == 41 { // )
-            let hasQuantifier = groupHasQuantifier.popLast() ?? false
-            if index + 1 < bytes.count && (bytes[index + 1] == 42 || bytes[index + 1] == 43 || bytes[index + 1] == 63) && hasQuantifier {
-                return false
+    struct GroupState {
+        var hasQuantifier = false
+        var hasAlternation = false
+    }
+
+    func quantifierLength(at index: Int) -> Int {
+        guard index < bytes.count, index > 0 else { return 0 }
+        let previous = bytes[index - 1]
+        guard previous != 40 && previous != 124 else { return 0 }
+        switch bytes[index] {
+        case 42, 43: // * or +
+            return 1
+        case 63: // ?; (?i), (?:...), etc. are group syntax, not quantifiers.
+            if previous == 63 { return 0 }
+            if index + 1 < bytes.count && (bytes[index + 1] == 58 ||
+                                            bytes[index + 1] == 61 ||
+                                            bytes[index + 1] == 33 ||
+                                            bytes[index + 1] == 60 ||
+                                            bytes[index + 1] == 35) {
+                return 0
             }
-        } else if byte == 42 || byte == 43 || byte == 63 {
-            if !groupHasQuantifier.isEmpty { groupHasQuantifier[groupHasQuantifier.count - 1] = true }
-            if index > 0 && (bytes[index - 1] == 42 || bytes[index - 1] == 43 || bytes[index - 1] == 63) {
-                return false
+            return 1
+        case 123: // {m}, {m,}, or {m,n}
+            var cursor = index + 1
+            var sawDigit = false
+            while cursor < bytes.count && bytes[cursor] >= 48 && bytes[cursor] <= 57 {
+                sawDigit = true
+                cursor += 1
             }
+            if !sawDigit { return 0 }
+            if cursor < bytes.count && bytes[cursor] == 44 {
+                cursor += 1
+                while cursor < bytes.count && bytes[cursor] >= 48 && bytes[cursor] <= 57 {
+                    cursor += 1
+                }
+            }
+            return cursor < bytes.count && bytes[cursor] == 125 ? cursor - index + 1 : 0
+        default:
+            return 0
         }
+    }
+
+    var groups: [GroupState] = []
+    var inCharacterClass = false
+    var escaped = false
+    var previousWasQuantifier = false
+    var index = 0
+    while index < bytes.count {
+        let byte = bytes[index]
+        if escaped {
+            escaped = false
+            previousWasQuantifier = false
+            index += 1
+            continue
+        }
+        if byte == 92 { // backslash
+            escaped = true
+            index += 1
+            continue
+        }
+        if inCharacterClass {
+            if byte == 93 { inCharacterClass = false } // ]
+            index += 1
+            continue
+        }
+        if byte == 91 { // [
+            inCharacterClass = true
+            index += 1
+            continue
+        }
+        if byte == 40 { // (
+            groups.append(GroupState())
+            previousWasQuantifier = false
+            index += 1
+            continue
+        }
+        if byte == 124 { // |
+            if !groups.isEmpty { groups[groups.count - 1].hasAlternation = true }
+            previousWasQuantifier = false
+            index += 1
+            continue
+        }
+        if byte == 41 { // )
+            guard !groups.isEmpty else {
+                index += 1
+                continue
+            }
+            var group = groups.removeLast()
+            let repeatLength = quantifierLength(at: index + 1)
+            if repeatLength > 0 {
+                // Repeating a group that already contains a repeat or an
+                // alternation is the common source of catastrophic backtracking.
+                if group.hasQuantifier || group.hasAlternation { return false }
+                group.hasQuantifier = true
+            }
+            if !groups.isEmpty {
+                groups[groups.count - 1].hasQuantifier =
+                    groups[groups.count - 1].hasQuantifier || group.hasQuantifier
+                groups[groups.count - 1].hasAlternation =
+                    groups[groups.count - 1].hasAlternation || group.hasAlternation
+            }
+            previousWasQuantifier = repeatLength > 0
+            index += repeatLength > 0 ? repeatLength + 1 : 1
+            continue
+        }
+
+        let repeatLength = quantifierLength(at: index)
+        if repeatLength > 0 {
+            if previousWasQuantifier { return false }
+            if !groups.isEmpty { groups[groups.count - 1].hasQuantifier = true }
+            previousWasQuantifier = true
+            index += repeatLength
+            continue
+        }
+        previousWasQuantifier = false
+        index += 1
     }
     return true
 }

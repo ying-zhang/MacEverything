@@ -68,7 +68,11 @@ struct PermissionView: View {
                     do {
                         try await Task.sleep(for: .seconds(3))
                     } catch {
-                        return
+                        // Sleep throws on cancellation.  Keep the cancellation
+                        // path explicit so future non-cancellation errors do not
+                        // silently skip the next access check.
+                        if Task.isCancelled { return }
+                        continue
                     }
                     guard !Task.isCancelled else { return }
                     checkAccess()

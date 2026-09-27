@@ -44,10 +44,13 @@ class SearchOptions: ObservableObject {
         if isRegex {
             var flags: [String] = []
             if isCaseSensitive { flags.append("case") }
+            if isWholeWord { flags.append("ww") }
             if isMatchFilename { flags.append("wfn") }
+            // `regex:` consumes the rest of the query as one pattern.  This
+            // private marker carries the other UI flags to QueryFilterParser;
+            // it is removed before the pattern reaches RE2.
             let marker = flags.isEmpty ? "" : "(?mace:" + flags.joined(separator: ",") + ")"
-            let pattern = isWholeWord ? "\\b(?:" + keyword + ")\\b" : keyword
-            return "regex:" + marker + pattern
+            return "regex:" + marker + keyword
         }
         var prefix = ""
         if isCaseSensitive { prefix += "case:" }

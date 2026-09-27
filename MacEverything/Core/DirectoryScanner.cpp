@@ -1,5 +1,6 @@
 #include "DirectoryScanner.h"
 #include "Logger.h"
+#include "PathUtils.h"
 #include <sys/attr.h>
 #include <sys/vnode.h>
 #include <sys/types.h>
@@ -17,19 +18,6 @@
 static constexpr size_t ATTR_BUF_SIZE = 1 * 1024 * 1024; // 1 MB per-thread buffer
 
 namespace {
-
-bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
-    if (parent.empty()) return false;
-    size_t parentLen = parent.size();
-    while (parentLen > 1 && parent[parentLen - 1] == '/') {
-        parentLen--;
-    }
-    if (parentLen == 1 && parent[0] == '/') return !child.empty() && child[0] == '/';
-    if (child.size() == parentLen && child.compare(0, parentLen, parent) == 0) return true;
-    return child.size() > parentLen &&
-           child.compare(0, parentLen, parent) == 0 &&
-           child[parentLen] == '/';
-}
 
 bool pathContainsComponentPath(const std::string& path, const std::string& componentPath) {
     if (componentPath.empty()) return false;
@@ -87,15 +75,9 @@ std::vector<std::string> normalizedRootPaths(const std::vector<std::string>& roo
     return normalized;
 }
 
-bool isNetworkFilesystem(const std::string& path) {
-    struct statfs fsInfo = {};
-    if (statfs(path.c_str(), &fsInfo) != 0) return false;
-    return (fsInfo.f_flags & MNT_LOCAL) == 0;
-}
-
 bool hasSystemAllowedPath(const ScanConfig& config, const std::string& path) {
     for (const auto& allowed : config.systemAllowedPaths) {
-        if (pathContainsOrEquals(allowed, path)) {
+        if (PathUtils::pathContainsOrEquals(allowed, path)) {
             return true;
         }
     }
@@ -137,7 +119,7 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
     unsigned numThreads = std::thread::hardware_concurrency();
     bool hasNetworkRoot = false;
     for (const auto& rootPath : roots) {
-        if (isNetworkFilesystem(rootPath)) {
+        if (PathUtils::isNetworkFilesystem(rootPath)) {
             hasNetworkRoot = true;
             break;
         }

@@ -3,18 +3,9 @@
 #include <filesystem>
 #include <unordered_set>
 #include <dispatch/dispatch.h>
-#include <sys/mount.h>
+#include "PathUtils.h"
 
 namespace fs = std::filesystem;
-
-namespace {
-
-bool isNetworkPath(const std::string& path) {
-    struct statfs fsInfo = {};
-    return statfs(path.c_str(), &fsInfo) == 0 && (fsInfo.f_flags & MNT_LOCAL) == 0;
-}
-
-} // namespace
 
 // ═══════════════════════════════════════════════════════
 //  Content persistence setup
@@ -144,7 +135,7 @@ void ServiceEngine::startContentIndexing() {
             if (contentRoots.empty()) contentRoots.push_back(contentConfig.scanRoot);
         }
         for (const auto& root : contentRoots) {
-            if (isNetworkPath(root)) {
+            if (PathUtils::isNetworkFilesystem(root)) {
                 hasNetworkRoot = true;
                 break;
             }

@@ -1,6 +1,7 @@
 #pragma once
 #import "MacSearchBridge.h"
 #include "ServiceEngine.h"
+#include <cstdint>
 #include <memory>
 #include <string>
 
@@ -13,6 +14,8 @@ static inline std::string MESanitizeUTF8(const std::string& input) {
         const uint8_t byte = static_cast<uint8_t>(input[i]);
         size_t width = 0;
         if (byte <= 0x7f) width = 1;
+        // C0/C1 are intentionally excluded: they would encode overlong
+        // two-byte forms such as C0 80.
         else if (byte >= 0xc2 && byte <= 0xdf) width = 2;
         else if (byte >= 0xe0 && byte <= 0xef) width = 3;
         else if (byte >= 0xf0 && byte <= 0xf4) width = 4;

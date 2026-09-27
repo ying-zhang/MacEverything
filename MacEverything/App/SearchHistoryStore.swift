@@ -20,7 +20,13 @@ final class SearchHistoryStore {
         clearObserver = NotificationCenter.default.addObserver(
             forName: Self.didClearNotification, object: nil, queue: .main
         ) { [weak self] _ in
-            Task { @MainActor in self?.entries.removeAll() }
+            // NotificationCenter delivers this observer on the main queue;
+            // mutate the main-actor state directly so a later Task cannot
+            // overtake a subsequent query or clear notification.
+            guard let self else { return }
+            MainActor.assumeIsolated {
+                self.entries.removeAll()
+            }
         }
         load()
     }

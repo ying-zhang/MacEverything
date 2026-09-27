@@ -20,29 +20,16 @@ SearchEngineOptions searchOptionsFromConfig(const ServiceConfig& config) {
     return options;
 }
 
-bool pathContainsOrEquals(const std::string& parent, const std::string& child) {
-    if (parent.empty()) return false;
-    size_t parentLen = parent.size();
-    while (parentLen > 1 && parent[parentLen - 1] == '/') {
-        parentLen--;
-    }
-    if (parentLen == 1 && parent[0] == '/') return !child.empty() && child[0] == '/';
-    if (child.size() == parentLen && child.compare(0, parentLen, parent) == 0) return true;
-    return child.size() > parentLen &&
-           child.compare(0, parentLen, parent) == 0 &&
-           child[parentLen] == '/';
-}
-
 /// Like pathContainsOrEquals, but also matches when `parent` uses a symlinked
 /// spelling while `child` uses the real path. FSEvents reports real paths
 /// (e.g. /private/tmp for /tmp, /private/var for /var), so a configured root
 /// spelled "/tmp/foo" would otherwise fail to match an event path
 /// "/private/tmp/foo/bar". Resolves the parent (which must exist) and retries.
 static bool pathContainsOrEqualsReal(const std::string& parent, const std::string& child) {
-    if (pathContainsOrEquals(parent, child)) return true;
+    if (PathUtils::pathContainsOrEquals(parent, child)) return true;
     std::error_code ec;
     fs::path real = fs::canonical(parent, ec);
-    if (!ec) return pathContainsOrEquals(real.string(), child);
+    if (!ec) return PathUtils::pathContainsOrEquals(real.string(), child);
     return false;
 }
 
@@ -72,11 +59,6 @@ bool isSystemFilteredPath(const std::string& path) {
            pathContainsComponentPath(path, ".Trashes");
 }
 
-bool isNetworkScanRoot(const std::string& path) {
-    struct statfs fsInfo = {};
-    return statfs(path.c_str(), &fsInfo) == 0 && (fsInfo.f_flags & MNT_LOCAL) == 0;
-}
-
 std::vector<std::string> systemAllowedPathsForRoots(const std::vector<std::string>& roots) {
     std::vector<std::string> allowed;
     allowed.reserve(roots.size());
@@ -90,7 +72,7 @@ std::vector<std::string> systemAllowedPathsForRoots(const std::vector<std::strin
 
 bool hasSystemAllowedPath(const std::vector<std::string>& roots, const std::string& path) {
     for (const auto& allowed : systemAllowedPathsForRoots(roots)) {
-        if (pathContainsOrEquals(allowed, path)) {
+        if (PathUtils::pathContainsOrEquals(allowed, path)) {
             return true;
         }
     }
@@ -107,7 +89,7 @@ std::vector<std::string> exclusionsForRoots(const std::vector<std::string>& root
 
         bool overriddenByExplicitRoot = false;
         for (const auto& root : roots) {
-            if (pathContainsOrEquals(excluded, root)) {
+            if (PathUtils::pathContainsOrEquals(excluded, root)) {
                 overriddenByExplicitRoot = true;
                 break;
             }
@@ -750,7 +732,7 @@ void ServiceEngine::backgroundSyncEngine(
         auto roots = effectiveScanRoots();
         bool hasNetworkRoot = false;
         for (const auto& root : roots) {
-            if (isNetworkScanRoot(root)) {
+            if (PathUtils::isNetworkFilesystem(root)) {
                 hasNetworkRoot = true;
                 break;
             }

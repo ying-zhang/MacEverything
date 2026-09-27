@@ -5,12 +5,38 @@
 #include <pwd.h>
 #include <sys/utsname.h>
 #include <sys/types.h>
+#include <sys/mount.h>
 #include <sys/sysctl.h>
 #include <unistd.h>
 #include <fcntl.h>
 
 /// Pure C++ path/OS utilities — no ObjC/Foundation dependency.
 namespace PathUtils {
+
+/// Return true when child is parent itself or is below parent at a path
+/// component boundary. Both paths may have trailing slashes.
+inline bool pathContainsOrEquals(const std::string& parent,
+                                 const std::string& child) {
+    if (parent.empty()) return false;
+    size_t parentLen = parent.size();
+    while (parentLen > 1 && parent[parentLen - 1] == '/') parentLen--;
+    if (parentLen == 1 && parent[0] == '/') {
+        return !child.empty() && child[0] == '/';
+    }
+    if (child.size() == parentLen && child.compare(0, parentLen, parent) == 0) {
+        return true;
+    }
+    return child.size() > parentLen &&
+           child.compare(0, parentLen, parent) == 0 &&
+           child[parentLen] == '/';
+}
+
+/// Detect a mounted filesystem that is not marked local (SMB, NFS, etc.).
+inline bool isNetworkFilesystem(const std::string& path) {
+    struct statfs fsInfo = {};
+    return statfs(path.c_str(), &fsInfo) == 0 &&
+           (fsInfo.f_flags & MNT_LOCAL) == 0;
+}
 
 inline std::string getHomeDirectory() {
     const char* home = std::getenv("HOME");

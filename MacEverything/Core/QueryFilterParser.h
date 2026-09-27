@@ -66,17 +66,26 @@ public:
                 auto end = node.text.find(')', marker.size());
                 if (end != std::string::npos) {
                     auto flags = node.text.substr(marker.size(), end - marker.size());
+                    bool wholeWord = false;
+                    bool validMarker = true;
                     size_t start = 0;
                     while (start <= flags.size()) {
                         size_t comma = flags.find(',', start);
                         auto flag = flags.substr(start, comma == std::string::npos
                                                         ? std::string::npos : comma - start);
                         if (flag == "case") node.caseSensitive = true;
-                        if (flag == "wfn") node.nameOnly = true;
+                        else if (flag == "ww") wholeWord = true;
+                        else if (flag == "wfn") node.nameOnly = true;
+                        else if (!flag.empty()) validMarker = false;
                         if (comma == std::string::npos) break;
                         start = comma + 1;
                     }
-                    node.text.erase(0, end + 1);
+                    if (validMarker) {
+                        node.text.erase(0, end + 1);
+                        if (wholeWord) {
+                            node.text = "\\b(?:" + node.text + ")\\b";
+                        }
+                    }
                 }
             }
         } else if (name == "ww" || name == "wholeword") {

@@ -225,6 +225,26 @@ func testRegexInvalid() {
     assertEqual(ranges.count, 0, "invalid regex should produce no ranges")
 }
 
+func testRegexNestedQuantifierRejected() {
+    print("  test: regex safety — nested quantifiers are rejected")
+    let hint = HighlightHint(text: "((a+)+)+", matchMode: .regex)
+    let ranges = computeRangesForHint(in: String(repeating: "a", count: 64) + "!", hint: hint)
+    assertEqual(ranges.count, 0, "nested quantifier should not reach ICU")
+}
+
+func testRegexEscapesAndCharacterClassesRemainValid() {
+    print("  test: regex safety — escaped quantifiers and character classes")
+    let repeatedGroup = HighlightHint(text: "(ab)+", matchMode: .regex)
+    assertEqual(computeRangesForHint(in: "abab", hint: repeatedGroup).count, 1,
+                "a simple repeated group should remain valid")
+    let escaped = HighlightHint(text: #"\+"#, matchMode: .regex)
+    assertEqual(computeRangesForHint(in: "a+b", hint: escaped).count, 1,
+                "escaped plus should remain a literal")
+    let characterClass = HighlightHint(text: "[+]", matchMode: .regex)
+    assertEqual(computeRangesForHint(in: "a+b", hint: characterClass).count, 1,
+                "quantifier characters inside a class should remain valid")
+}
+
 func testWholeWordMatch() {
     print("  test: whole word match")
     let hint = HighlightHint(text: "test", matchMode: .wholeWord)
@@ -359,6 +379,8 @@ struct TestRunner {
         testRegexCaseInsensitive()
         testRegexCaseSensitive()
         testRegexInvalid()
+        testRegexNestedQuantifierRejected()
+        testRegexEscapesAndCharacterClassesRemainValid()
         testWholeWordMatch()
         testWholeWordNoPartial()
         testWholeFilenameMatch()

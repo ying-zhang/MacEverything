@@ -143,7 +143,10 @@ bool ContentIndex::hasAllowedExtensionLocked(const std::string& filename) const 
 }
 
 std::string ContentIndex::readFileIfText(const std::string& path, uint64_t maxSize) {
-    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    // O_NOFOLLOW prevents symlink traversal.  The fstat check below rejects
+    // FIFOs, sockets, and devices before stdio can ever read from them, so a
+    // non-blocking flag is neither needed nor meaningful for regular files.
+    int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW);
     if (fd < 0) return {};
     struct stat st{};
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
@@ -191,7 +194,7 @@ std::string ContentIndex::generateSnippet(const std::string& path,
                                            uint64_t maxReadBytes) {
     outOffset = 0;
 
-    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    int fd = open(path.c_str(), O_RDONLY | O_NOFOLLOW);
     if (fd < 0) return {};
     struct stat st{};
     if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
