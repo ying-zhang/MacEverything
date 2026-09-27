@@ -51,6 +51,12 @@ public:
         queueCV_.notify_all();
     }
     bool isCancelled() const { return cancelled_.load(std::memory_order_relaxed); }
+    // A scan is complete only when every requested root was reachable and
+    // traversed. Callers must not replace a healthy index with partial data.
+    bool isComplete() const {
+        return !cancelled_.load(std::memory_order_relaxed) &&
+               rootFailureCount_.load(std::memory_order_acquire) == 0;
+    }
     const Stats& getStats() const { return stats_; }
 
     // Move all per-thread results into a single flat vector. Call after scan completes.
@@ -67,6 +73,7 @@ private:
     std::atomic<int> activeTasks_{0};
     std::atomic<bool> done_{false};
     std::atomic<bool> cancelled_{false};
+    std::atomic<uint32_t> rootFailureCount_{0};
 
     std::unordered_set<InodeKey, InodeKeyHash> visitedDirs_;
     std::mutex dedupMutex_;
@@ -78,6 +85,8 @@ private:
     void workerThread(int threadIndex);
     void scanDirectory(const std::string& dirPath, dev_t rootDev,
                        char* buffer, int threadIndex);
+    void scanDirectoryWithReaddir(const std::string& dirPath, dev_t rootDev,
+                                  int threadIndex);
     bool tryVisitDirectory(dev_t dev, uint64_t ino);
     bool shouldExclude(const std::string& fullPath, const std::string& name, bool isDirectory) const;
 };

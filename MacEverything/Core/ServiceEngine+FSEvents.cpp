@@ -3,6 +3,16 @@
 #include "RescanDebounce.h"
 #include "Logger.h"
 #include <sys/stat.h>
+#include <sys/mount.h>
+
+namespace {
+
+bool isNetworkRoot(const std::string& path) {
+    struct statfs fsInfo = {};
+    return statfs(path.c_str(), &fsInfo) == 0 && (fsInfo.f_flags & MNT_LOCAL) == 0;
+}
+
+} // namespace
 
 // ═══════════════════════════════════════════════════════
 //  FSEvents application (replay path)
@@ -108,7 +118,7 @@ void ServiceEngine::startMonitoring(FSEventStreamEventId sinceEventId) {
         watcher_->setExclusionPaths(exclusions);
     }
 
-    watcher_->start(roots, sinceEventId, [this](std::vector<FileSystemWatcher::Event> events) {
+    const bool started = watcher_->start(roots, sinceEventId, [this](std::vector<FileSystemWatcher::Event> events) {
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
         uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
         dispatch_async(mutationQueue_, ^{
@@ -131,7 +141,51 @@ void ServiceEngine::startMonitoring(FSEventStreamEventId sinceEventId) {
         });
     });
 
-    isMonitoring_.store(true, std::memory_order_relaxed);
+    isMonitoring_.store(started, std::memory_order_release);
+    // SMB streams can start successfully while delivering no remote file
+    // events. Keep a bounded polling safety net for every network root.
+    startNetworkPolling(roots);
+    if (!started) {
+        LOG_WARN("FSWatcher", "Unable to start FSEvents stream; live monitoring is disabled");
+    }
+}
+
+void ServiceEngine::startNetworkPolling(const std::vector<std::string>& roots) {
+    if (networkPollingTimer_ || !mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) {
+        return;
+    }
+    bool hasNetworkRoot = false;
+    for (const auto& root : roots) {
+        if (isNetworkRoot(root)) {
+            hasNetworkRoot = true;
+            break;
+        }
+    }
+    if (!hasNetworkRoot) return;
+
+    networkPollingTimer_ = dispatch_source_create(
+        DISPATCH_SOURCE_TYPE_TIMER, 0, 0, mutationQueue_);
+    constexpr uint64_t kNetworkPollIntervalSec = 60;
+    dispatch_source_set_timer(networkPollingTimer_,
+                              dispatch_time(DISPATCH_TIME_NOW, kNetworkPollIntervalSec * NSEC_PER_SEC),
+                              kNetworkPollIntervalSec * NSEC_PER_SEC,
+                              NSEC_PER_SEC);
+    dispatch_source_t timer = networkPollingTimer_;
+    dispatch_source_set_event_handler(timer, ^{
+        if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+        for (const auto& root : this->effectiveScanRoots()) {
+            this->rescanSubtree(root);
+        }
+    });
+    dispatch_resume(networkPollingTimer_);
+    LOG_INFO("FSWatcher", "Network volume polling safety net enabled (60s interval)");
+}
+
+void ServiceEngine::stopNetworkPolling() {
+    if (!networkPollingTimer_) return;
+    dispatch_source_cancel(networkPollingTimer_);
+    dispatch_release(networkPollingTimer_);
+    networkPollingTimer_ = nullptr;
 }
 
 void ServiceEngine::restartMonitoring() {
@@ -150,6 +204,7 @@ void ServiceEngine::restartMonitoring() {
 void ServiceEngine::stopMonitoring() {
     isMonitoring_.store(false, std::memory_order_release);
     watcher_->stop();
+    stopNetworkPolling();
 
     {
         std::lock_guard<std::mutex> lock(pendingRescanMutex_);
@@ -301,6 +356,13 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
         std::vector<std::string> roots{dirCopy};
         scanner->scan(roots, this->scanConfigForRoots(roots));
         this->unregisterScanner(scanner);
+        if (!scanner->isComplete()) {
+            const auto& stats = scanner->getStats();
+            LOG_ERROR("ServiceEngine", "Subtree scan incomplete; preserving indexed subtree "
+                      << dirCopy << " (" << stats.errorCount.load(std::memory_order_relaxed)
+                      << " errors)");
+            return;
+        }
         auto freshRecords = scanner->takeResults();
         LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): scanned "
                  << freshRecords.size() << " records");

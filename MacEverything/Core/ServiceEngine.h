@@ -149,6 +149,8 @@ private:
     void startMonitoring(FSEventStreamEventId sinceEventId = kFSEventStreamEventIdSinceNow);
     void stopMonitoring();
     void restartMonitoring();
+    void startNetworkPolling(const std::vector<std::string>& roots);
+    void stopNetworkPolling();
     void scheduleRescanForPaths(const std::vector<std::string>& paths);
     void flushPendingRescans(dispatch_source_t firingTimer = nullptr);
 
@@ -209,6 +211,7 @@ private:
     dispatch_group_t backgroundGroup_;
     dispatch_group_t contentIndexingGroup_;
     dispatch_queue_t lifecycleQueue_;
+    dispatch_source_t networkPollingTimer_ = nullptr;
 
     // ── Atomic flags ──
     std::atomic<bool> isScanning_{false};

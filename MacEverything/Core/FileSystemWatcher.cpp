@@ -14,34 +14,35 @@ FileSystemWatcher::~FileSystemWatcher() {
     stop();
 }
 
-void FileSystemWatcher::start(const std::string& rootPath, Callback callback) {
-    start(std::vector<std::string>{rootPath}, std::move(callback));
+bool FileSystemWatcher::start(const std::string& rootPath, Callback callback) {
+    return start(std::vector<std::string>{rootPath}, std::move(callback));
 }
 
-void FileSystemWatcher::start(const std::vector<std::string>& rootPaths, Callback callback) {
+bool FileSystemWatcher::start(const std::vector<std::string>& rootPaths, Callback callback) {
     std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
-    if (stream_) return;
+    if (stream_) return true;
     callback_ = std::move(callback);
     onReplayDone_ = nullptr;
-    startInternal(rootPaths, kFSEventStreamEventIdSinceNow);
+    return startInternal(rootPaths, kFSEventStreamEventIdSinceNow);
 }
 
-void FileSystemWatcher::start(const std::string& rootPath,
+bool FileSystemWatcher::start(const std::string& rootPath,
                                FSEventStreamEventId sinceEventId,
                                Callback callback,
                                ReplayDoneCallback onReplayDone) {
-    start(std::vector<std::string>{rootPath}, sinceEventId, std::move(callback), std::move(onReplayDone));
+    return start(std::vector<std::string>{rootPath}, sinceEventId,
+                 std::move(callback), std::move(onReplayDone));
 }
 
-void FileSystemWatcher::start(const std::vector<std::string>& rootPaths,
+bool FileSystemWatcher::start(const std::vector<std::string>& rootPaths,
                                FSEventStreamEventId sinceEventId,
                                Callback callback,
                                ReplayDoneCallback onReplayDone) {
     std::lock_guard<std::mutex> lifecycleLock(lifecycleMutex_);
-    if (stream_) return;
+    if (stream_) return true;
     callback_ = std::move(callback);
     onReplayDone_ = std::move(onReplayDone);
-    startInternal(rootPaths, sinceEventId);
+    return startInternal(rootPaths, sinceEventId);
 }
 
 void FileSystemWatcher::setExclusionPaths(std::vector<std::string> paths) {
@@ -61,7 +62,7 @@ void FileSystemWatcher::setEarlyAbortSemaphore(void* sem) {
     earlyAbortSem_.store(sem, std::memory_order_release);
 }
 
-void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
+bool FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
                                        FSEventStreamEventId sinceEventId) {
     journalTruncated_.store(false, std::memory_order_relaxed);
     totalEventsReceived_.store(0, std::memory_order_relaxed);
@@ -77,7 +78,7 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
     }
     if (CFArrayGetCount(pathsToWatch) == 0) {
         CFRelease(pathsToWatch);
-        return;
+        return false;
     }
 
     FSEventStreamContext context = {};
@@ -97,7 +98,7 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
     );
 
     CFRelease(pathsToWatch);
-    if (!stream_) return;
+    if (!stream_) return false;
 
     std::vector<std::string> exclusionsSnapshot;
     {
@@ -128,11 +129,12 @@ void FileSystemWatcher::startInternal(const std::vector<std::string>& rootPaths,
         queueKey_ = nullptr;
         callback_ = nullptr;
         onReplayDone_ = nullptr;
-        return;
+        return false;
     }
     running_.store(true, std::memory_order_release);
     LOG_INFO("FSWatcher", "[" << label_ << "] Started watching "
              << rootPaths.size() << " root(s)");
+    return true;
 }
 
 void FileSystemWatcher::stop() {

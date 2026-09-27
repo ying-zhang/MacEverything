@@ -3,6 +3,7 @@
 #include "Logger.h"
 #include "HttpToken.h"
 #include <sys/stat.h>
+#include <sys/mount.h>
 #include <filesystem>
 #include <fnmatch.h>
 #include <sstream>
@@ -69,6 +70,11 @@ bool isSystemFilteredPath(const std::string& path) {
            pathContainsComponentPath(path, ".Spotlight-V100") ||
            pathContainsComponentPath(path, ".fseventsd") ||
            pathContainsComponentPath(path, ".Trashes");
+}
+
+bool isNetworkScanRoot(const std::string& path) {
+    struct statfs fsInfo = {};
+    return statfs(path.c_str(), &fsInfo) == 0 && (fsInfo.f_flags & MNT_LOCAL) == 0;
 }
 
 std::vector<std::string> systemAllowedPathsForRoots(const std::vector<std::string>& roots) {
@@ -432,6 +438,15 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
 
         if (!this->isGenerationCurrent(generation)) return;
 
+        if (!scanner->isComplete()) {
+            const auto& stats = scanner->getStats();
+            LOG_ERROR("ServiceEngine", "Full scan incomplete; preserving existing index ("
+                      << stats.errorCount.load(std::memory_order_relaxed) << " errors)");
+            this->isScanning_.store(false, std::memory_order_relaxed);
+            if (completion) completion(0, false);
+            return;
+        }
+
         auto results = scanner->takeResults();
         auto engine = std::make_shared<SearchEngine>(searchOptionsFromConfig(config));
         engine->loadRecords(std::move(results));
@@ -732,6 +747,40 @@ void ServiceEngine::backgroundSyncEngine(
     const ServiceConfig config = safeConfig();
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         if (!this->isGenerationCurrent(generation)) return;
+        auto roots = effectiveScanRoots();
+        bool hasNetworkRoot = false;
+        for (const auto& root : roots) {
+            if (isNetworkScanRoot(root)) {
+                hasNetworkRoot = true;
+                break;
+            }
+        }
+
+        // SMB can expose a running FSEvents stream without delivering remote
+        // changes. Keep the persisted index available and reconcile each root
+        // asynchronously instead of waiting for replay to time out.
+        if (hasNetworkRoot) {
+            LOG_INFO("ServiceEngine", "Network root detected; skipping FSEvents replay and using polling reconciliation");
+            this->isSyncing_.store(false, std::memory_order_relaxed);
+            if (config.realtimeMonitoring) {
+                this->startMonitoring();
+            }
+            for (const auto& root : roots) {
+                this->rescanSubtree(root);
+            }
+            if (config.automaticMaintenanceEnabled) {
+                sharedPersistence->startAutoCompaction(300.0, this->watcher_);
+            }
+            if (config.contentIndexingEnabled) {
+                dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    if (!this->isGenerationCurrent(generation)) return;
+                    this->startContentIndexing();
+                });
+            }
+            if (this->onIndexChanged) this->onIndexChanged();
+            return;
+        }
+
         // Try FSEvents replay
         auto replayDone = std::make_shared<std::atomic<bool>>(false);
         auto journalTruncated = std::make_shared<std::atomic<bool>>(false);
@@ -741,7 +790,6 @@ void ServiceEngine::backgroundSyncEngine(
 
         dispatch_semaphore_t sem = dispatch_semaphore_create(0);
 
-        auto roots = effectiveScanRoots();
         watcherPtr->start(
             roots,
             lastEventId,
@@ -817,6 +865,14 @@ void ServiceEngine::backgroundSyncEngine(
         dispatch_release(timer);
         this->unregisterScanner(scanner);
         if (!this->isGenerationCurrent(generation)) return;
+
+        if (!scanner->isComplete()) {
+            const auto& stats = scanner->getStats();
+            LOG_ERROR("ServiceEngine", "Background scan incomplete; preserving cached index ("
+                      << stats.errorCount.load(std::memory_order_relaxed) << " errors)");
+            this->isSyncing_.store(false, std::memory_order_relaxed);
+            return;
+        }
 
         auto freshRecords = scanner->takeResults();
         engine->loadRecords(std::move(freshRecords));

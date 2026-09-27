@@ -9,6 +9,8 @@
 #include <cerrno>
 #include <memory>
 #include <sys/stat.h>
+#include <sys/mount.h>
+#include <dirent.h>
 #include <fnmatch.h>
 #include <algorithm>
 
@@ -85,6 +87,12 @@ std::vector<std::string> normalizedRootPaths(const std::vector<std::string>& roo
     return normalized;
 }
 
+bool isNetworkFilesystem(const std::string& path) {
+    struct statfs fsInfo = {};
+    if (statfs(path.c_str(), &fsInfo) != 0) return false;
+    return (fsInfo.f_flags & MNT_LOCAL) == 0;
+}
+
 bool hasSystemAllowedPath(const ScanConfig& config, const std::string& path) {
     for (const auto& allowed : config.systemAllowedPaths) {
         if (pathContainsOrEquals(allowed, path)) {
@@ -124,13 +132,29 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
     stats_.symlinkCount.store(0, std::memory_order_relaxed);
     stats_.otherCount.store(0, std::memory_order_relaxed);
     stats_.errorCount.store(0, std::memory_order_relaxed);
+    rootFailureCount_.store(0, std::memory_order_relaxed);
 
     unsigned numThreads = std::thread::hardware_concurrency();
-    if (numThreads < 4) numThreads = 4;
-    if (numThreads > 32) numThreads = 32;
+    bool hasNetworkRoot = false;
+    for (const auto& rootPath : roots) {
+        if (isNetworkFilesystem(rootPath)) {
+            hasNetworkRoot = true;
+            break;
+        }
+    }
+    if (hasNetworkRoot) {
+        // SMB/NFS latency is dominated by outstanding RPCs, not local CPU.
+        // Keep enough parallelism to hide latency without overwhelming a NAS.
+        if (numThreads < 4) numThreads = 4;
+        if (numThreads > 8) numThreads = 8;
+    } else {
+        if (numThreads < 4) numThreads = 4;
+        if (numThreads > 32) numThreads = 32;
+    }
 
     LOG_INFO("Scanner", "Scanning from " << rootPaths.size() << " root(s)"
-        << " (using " << numThreads << " threads)");
+        << " (using " << numThreads << " threads"
+        << (hasNetworkRoot ? ", network volume" : "") << ")");
 
     threadResults_.resize(numThreads);
     for (auto& v : threadResults_) {
@@ -141,8 +165,14 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
         std::lock_guard<std::mutex> lock(queueMutex_);
         for (const auto& rootPath : roots) {
             struct stat rootStat;
-            if (stat(rootPath.c_str(), &rootStat) != 0) continue;
-            if (!S_ISDIR(rootStat.st_mode)) continue;
+            const int statError = stat(rootPath.c_str(), &rootStat) == 0 ? 0 : errno;
+            if (statError != 0 || !S_ISDIR(rootStat.st_mode)) {
+                rootFailureCount_.fetch_add(1, std::memory_order_acq_rel);
+                stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
+                LOG_WARN("Scanner", "Unable to scan root: " << rootPath
+                         << " (" << (statError != 0 ? strerror(statError) : "not a directory") << ")");
+                continue;
+            }
             if (!tryVisitDirectory(rootStat.st_dev, rootStat.st_ino)) continue;
             workQueue_.push({rootPath, rootStat.st_dev});
         }
@@ -222,6 +252,80 @@ void DirectoryScanner::workerThread(int threadIndex) {
     }
 }
 
+void DirectoryScanner::scanDirectoryWithReaddir(const std::string& dirPath,
+                                                 dev_t rootDev,
+                                                 int threadIndex) {
+    DIR* dir = opendir(dirPath.c_str());
+    if (!dir) {
+        stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
+        return;
+    }
+
+    std::vector<WorkItem> pendingDirs;
+    int dirfd = ::dirfd(dir);
+    while (!cancelled_.load(std::memory_order_relaxed)) {
+        errno = 0;
+        dirent* entry = readdir(dir);
+        if (!entry) {
+            if (errno != 0) stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
+            break;
+        }
+        const char* name = entry->d_name;
+        if (name[0] == '.' && (name[1] == '\0' || (name[1] == '.' && name[2] == '\0'))) continue;
+
+        std::string childPath = dirPath;
+        if (childPath.back() != '/') childPath += '/';
+        childPath += name;
+
+        struct stat st = {};
+        if (dirfd < 0 || fstatat(dirfd, name, &st, AT_SYMLINK_NOFOLLOW) != 0) {
+            if (errno != ENOENT && errno != ENOTDIR) {
+                stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
+            }
+            continue;
+        }
+
+        const bool isDirectory = S_ISDIR(st.st_mode);
+        if (shouldExclude(childPath, name, isDirectory)) continue;
+
+        if (isDirectory) {
+            if (st.st_dev != rootDev || !tryVisitDirectory(st.st_dev, st.st_ino)) continue;
+            const size_t nameLen = strlen(name);
+            const bool isAppBundle = nameLen > 4 && name[nameLen - 4] == '.' &&
+                tolower(name[nameLen - 3]) == 'a' &&
+                tolower(name[nameLen - 2]) == 'p' &&
+                tolower(name[nameLen - 1]) == 'p';
+            if (!isAppBundle || config_.includeAppBundleContents) {
+                pendingDirs.push_back({childPath, rootDev});
+            }
+            stats_.dirCount.fetch_add(1, std::memory_order_relaxed);
+            threadResults_[threadIndex].push_back({name, dirPath,
+                static_cast<uint8_t>(isAppBundle ? 5 : 2), 0,
+                st.st_mtime, st.st_ino, static_cast<int32_t>(st.st_dev)});
+        } else if (S_ISREG(st.st_mode)) {
+            stats_.fileCount.fetch_add(1, std::memory_order_relaxed);
+            threadResults_[threadIndex].push_back({name, dirPath, 1,
+                static_cast<uint64_t>(st.st_size), st.st_mtime,
+                st.st_ino, static_cast<int32_t>(st.st_dev)});
+        } else if (S_ISLNK(st.st_mode)) {
+            stats_.symlinkCount.fetch_add(1, std::memory_order_relaxed);
+            threadResults_[threadIndex].push_back({name, dirPath, 3, 0,
+                st.st_mtime, st.st_ino, static_cast<int32_t>(st.st_dev)});
+        } else {
+            stats_.otherCount.fetch_add(1, std::memory_order_relaxed);
+            threadResults_[threadIndex].push_back({name, dirPath, 4, 0,
+                st.st_mtime, st.st_ino, static_cast<int32_t>(st.st_dev)});
+        }
+    }
+    closedir(dir);
+
+    if (!pendingDirs.empty()) {
+        std::lock_guard<std::mutex> lock(queueMutex_);
+        for (auto& work : pendingDirs) workQueue_.push(std::move(work));
+        queueCV_.notify_all();
+    }
+}
+
 void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
                                      char* buffer, int threadIndex) {
     if (cancelled_.load(std::memory_order_relaxed)) return;
@@ -251,6 +355,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
     // Collect subdirectories locally, then batch-push to work queue
     // to reduce queueMutex_ contention (one lock per batch, not per directory).
     std::vector<WorkItem> pendingDirs;
+    bool sawBulkEntries = false;
 
     for (;;) {
         if (cancelled_.load(std::memory_order_relaxed)) break;
@@ -258,7 +363,14 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
         int retcount = getattrlistbulk(dirfd, &attrList, buffer, ATTR_BUF_SIZE, FSOPT_NOFOLLOW);
 
         if (retcount == -1) {
-            if (errno != ENOENT && errno != ENOTDIR) {
+            const int errorCode = errno;
+            if (!sawBulkEntries && (errorCode == ENOTSUP || errorCode == EOPNOTSUPP ||
+                                    errorCode == EINVAL || errorCode == ENOSYS)) {
+                close(dirfd);
+                scanDirectoryWithReaddir(dirPath, rootDev, threadIndex);
+                return;
+            }
+            if (errorCode != ENOENT && errorCode != ENOTDIR) {
                 stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
             }
             break;
@@ -266,6 +378,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
         if (retcount == 0) {
             break;
         }
+        sawBulkEntries = true;
 
         char* entry = buffer;
         for (int i = 0; i < retcount; i++) {

@@ -24,15 +24,15 @@ public:
     FileSystemWatcher& operator=(const FileSystemWatcher&) = delete;
 
     /// Start monitoring from now (kFSEventStreamEventIdSinceNow).
-    void start(const std::string& rootPath, Callback callback);
-    void start(const std::vector<std::string>& rootPaths, Callback callback);
+    bool start(const std::string& rootPath, Callback callback);
+    bool start(const std::vector<std::string>& rootPaths, Callback callback);
 
     /// Start monitoring from a specific event ID (for replaying missed events).
     /// When sinceEventId != 0, FSEvents will replay all events since that ID.
     /// Set onReplayDone to be notified when HistoryDone fires (replay complete).
-    void start(const std::string& rootPath, FSEventStreamEventId sinceEventId,
+    bool start(const std::string& rootPath, FSEventStreamEventId sinceEventId,
                Callback callback, ReplayDoneCallback onReplayDone = nullptr);
-    void start(const std::vector<std::string>& rootPaths, FSEventStreamEventId sinceEventId,
+    bool start(const std::vector<std::string>& rootPaths, FSEventStreamEventId sinceEventId,
                Callback callback, ReplayDoneCallback onReplayDone = nullptr);
 
     /// Stop monitoring.
@@ -91,7 +91,7 @@ private:
     std::mutex stateMutex_;
     mutable std::mutex lifecycleMutex_;
 
-    void startInternal(const std::vector<std::string>& rootPaths, FSEventStreamEventId sinceEventId);
+    bool startInternal(const std::vector<std::string>& rootPaths, FSEventStreamEventId sinceEventId);
 
     static void fseventsCallback(
         ConstFSEventStreamRef streamRef,

@@ -3,6 +3,16 @@
 static void runReviewRegressionTests() {
     std::cout << "\n=== Part 78: Review Regression Tests ===\n";
 
+    // A disappeared scan root must never look like a successful empty scan.
+    {
+        DirectoryScanner scanner;
+        const auto missing = fs::temp_directory_path() /
+            ("maceverything_missing_root_" + std::to_string(getpid()));
+        fs::remove_all(missing);
+        scanner.scan(missing.string());
+        check(!scanner.isComplete(), "Review: inaccessible scan root is incomplete");
+    }
+
     // Filename trigrams must remain usable when path acceleration is disabled.
     {
         SearchEngineOptions options;

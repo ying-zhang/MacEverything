@@ -3,8 +3,18 @@
 #include <filesystem>
 #include <unordered_set>
 #include <dispatch/dispatch.h>
+#include <sys/mount.h>
 
 namespace fs = std::filesystem;
+
+namespace {
+
+bool isNetworkPath(const std::string& path) {
+    struct statfs fsInfo = {};
+    return statfs(path.c_str(), &fsInfo) == 0 && (fsInfo.f_flags & MNT_LOCAL) == 0;
+}
+
+} // namespace
 
 // ═══════════════════════════════════════════════════════
 //  Content persistence setup
@@ -126,18 +136,57 @@ void ServiceEngine::startContentIndexing() {
         auto lastReported = std::make_shared<std::atomic<uint32_t>>(0);
 
         dispatch_queue_t concurrentQ = dispatch_get_global_queue(QOS_CLASS_UTILITY, 0);
+        bool hasNetworkRoot = false;
+        auto contentConfig = this->safeConfig();
+        std::vector<std::string> contentRoots = contentConfig.contentRoots;
+        if (contentRoots.empty()) {
+            contentRoots = contentConfig.scanRoots;
+            if (contentRoots.empty()) contentRoots.push_back(contentConfig.scanRoot);
+        }
+        for (const auto& root : contentRoots) {
+            if (isNetworkPath(root)) {
+                hasNetworkRoot = true;
+                break;
+            }
+        }
+        dispatch_semaphore_t networkSlots = nullptr;
+        if (hasNetworkRoot) {
+            // File reads are network RPCs; bound outstanding requests so a
+            // NAS outage cannot create one request per indexed file.
+            networkSlots = dispatch_semaphore_create(4);
+            LOG_INFO("ServiceEngine", "Content indexing on network volume: max 4 concurrent readers");
+        }
         const auto& entries = *fileEntries;
 
         dispatch_apply(total, concurrentQ, ^(size_t i) {
-            if (this->shuttingDown_.load(std::memory_order_relaxed)) return;
-            if (this->cancelContentIndexing_.load(std::memory_order_relaxed)) return;
-            if (this->contentIndexGeneration_.load(std::memory_order_acquire) != myGeneration) return;
+            if (networkSlots) dispatch_semaphore_wait(networkSlots, DISPATCH_TIME_FOREVER);
+            auto releaseNetworkSlot = [&] {
+                if (networkSlots) dispatch_semaphore_signal(networkSlots);
+            };
+            if (this->shuttingDown_.load(std::memory_order_relaxed)) {
+                releaseNetworkSlot();
+                return;
+            }
+            if (this->cancelContentIndexing_.load(std::memory_order_relaxed)) {
+                releaseNetworkSlot();
+                return;
+            }
+            if (this->contentIndexGeneration_.load(std::memory_order_acquire) != myGeneration) {
+                releaseNetworkSlot();
+                return;
+            }
 
             const auto& entry = entries[i];
-            if (this->isVolumeUnmounting(entry.fullPath)) return;
+            if (this->isVolumeUnmounting(entry.fullPath)) {
+                releaseNetworkSlot();
+                return;
+            }
             auto mappingLease = contentIndex->acquireFileIndexMappingLease();
             uint32_t fileIndex = engine->indexForPath(entry.fullPath);
-            if (fileIndex == UINT32_MAX) return;
+            if (fileIndex == UINT32_MAX) {
+                releaseNetworkSlot();
+                return;
+            }
             auto update = contentIndex->indexFile(fileIndex, entry.fullPath, entry.modTime);
 
             if (update == ContentIndexUpdate::Upserted && contentPersistence) {
@@ -161,7 +210,9 @@ void ServiceEngine::startContentIndexing() {
                     this->onContentIndexProgress(current, total);
                 }
             }
+            releaseNetworkSlot();
         });
+        if (networkSlots) dispatch_release(networkSlots);
 
         auto contentElapsed = std::chrono::duration<double>(
             std::chrono::steady_clock::now() - contentStart).count();
