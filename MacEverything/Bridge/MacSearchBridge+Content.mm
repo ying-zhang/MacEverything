@@ -5,7 +5,9 @@
 
 @implementation MacSearchBridge (Content)
 
-- (NSArray<MEContentResult *> *)queryContent:(NSString *)keyword maxResults:(uint32_t)maxResults {
+- (NSArray<MEContentResult *> *)queryContent:(NSString *)keyword
+                                  maxResults:(uint32_t)maxResults
+                                  sessionId:(uint64_t)sessionId {
     auto queryStart = std::chrono::steady_clock::now();
     auto engine = _serviceEngine->safeEngine();
     auto contentIndex = _serviceEngine->safeContentIndex();
@@ -16,7 +18,12 @@
 
     auto service = _serviceEngine;
     NSMutableArray<MEContentResult *> *results = nil;
+    auto session = engine->acquireSessionGeneration(sessionId);
+    auto cancel = [generation = session.first, expected = session.second] {
+        return generation->load(std::memory_order_acquire) != expected;
+    };
     for (int attempt = 0; attempt < 3; ++attempt) {
+        if (cancel()) return @[];
         uint64_t contentGeneration = contentIndex->mappingGeneration();
         if ((contentGeneration & 1U) != 0) continue;
         uint64_t generation = engine->compactionGeneration();
@@ -24,7 +31,7 @@
             [service](uint32_t, std::string& fullPath) {
                 if (fullPath.empty()) return false;
                 return service->isContentPathAllowed(fullPath);
-            });
+            }, cancel);
         if (contentIndex->mappingGeneration() != contentGeneration) continue;
         if (matches.empty()) {
             if (engine->compactionGeneration() == generation) return @[];
@@ -48,10 +55,9 @@
                 if (matchIt == matchByIndex.end()) return;
                 const auto& match = *matchIt->second;
                 std::string fullPath = SearchEngine::makeFullPath(path, record.name);
-                NSString *nsFileName = [NSString stringWithUTF8String:record.name.c_str()];
-                NSString *nsFilePath = [NSString stringWithUTF8String:fullPath.c_str()];
-                NSString *nsSnippet = [NSString stringWithUTF8String:match.snippet.c_str()];
-                if (!nsFileName || !nsFilePath || !nsSnippet) return;
+                NSString *nsFileName = MEStringFromUTF8(record.name);
+                NSString *nsFilePath = MEStringFromUTF8(fullPath);
+                NSString *nsSnippet = MEStringFromUTF8(match.snippet);
                 [results addObject:[[MEContentResult alloc]
                     initWithFileName:nsFileName
                             filePath:nsFilePath
@@ -59,6 +65,7 @@
                          matchOffset:match.matchOffset
                             fileType:record.type]];
             });
+        if (cancel()) return @[];
         if (stable && contentIndex->mappingGeneration() == contentGeneration) break;
         results = nil;
     }
@@ -104,9 +111,7 @@
     auto exts = contentIndex->getExtensions();
     NSMutableArray<NSString *> *result = [NSMutableArray arrayWithCapacity:exts.size()];
     for (const auto& ext : exts) {
-        NSString *str = [NSString stringWithUTF8String:ext.c_str()];
-        if (!str) continue;
-        [result addObject:str];
+        [result addObject:MEStringFromUTF8(ext)];
     }
     return result;
 }

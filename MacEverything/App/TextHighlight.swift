@@ -214,6 +214,31 @@ func buildHighlightedText(text: String, ranges: [Range<String.Index>],
 
 // MARK: - Hint-based highlighting
 
+/// ICU regular expressions use a backtracking engine. Search itself uses RE2,
+/// so the UI must reject patterns known to cause unbounded backtracking rather
+/// than freezing the main actor while rendering a result row.
+private func isSafeHighlightRegex(_ pattern: String) -> Bool {
+    guard pattern.utf8.count <= 1024 else { return false }
+    let bytes = Array(pattern.utf8)
+    var groupHasQuantifier: [Bool] = []
+    for (index, byte) in bytes.enumerated() {
+        if byte == 40 { // (
+            groupHasQuantifier.append(false)
+        } else if byte == 41 { // )
+            let hasQuantifier = groupHasQuantifier.popLast() ?? false
+            if index + 1 < bytes.count && (bytes[index + 1] == 42 || bytes[index + 1] == 43 || bytes[index + 1] == 63) && hasQuantifier {
+                return false
+            }
+        } else if byte == 42 || byte == 43 || byte == 63 {
+            if !groupHasQuantifier.isEmpty { groupHasQuantifier[groupHasQuantifier.count - 1] = true }
+            if index > 0 && (bytes[index - 1] == 42 || bytes[index - 1] == 43 || bytes[index - 1] == 63) {
+                return false
+            }
+        }
+    }
+    return true
+}
+
 /// Compute matching ranges for a single HighlightHint in the given text.
 func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String.Index>] {
     guard !hint.text.isEmpty else { return [] }
@@ -242,6 +267,7 @@ func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String
         return findAllLiteralRanges(in: text, literals: literals, options: compareOptions)
 
     case .regex:
+        guard isSafeHighlightRegex(hint.text) else { return [] }
         var options: NSRegularExpression.Options = []
         if !hint.caseSensitive { options.insert(.caseInsensitive) }
         guard let regex = try? NSRegularExpression(pattern: hint.text, options: options) else {

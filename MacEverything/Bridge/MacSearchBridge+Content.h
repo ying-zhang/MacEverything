@@ -6,7 +6,9 @@ NS_ASSUME_NONNULL_BEGIN
 @interface MacSearchBridge (Content)
 
 /// Search file contents for the given keyword. Returns content results with snippets.
-- (NSArray<MEContentResult *> *)queryContent:(NSString *)keyword maxResults:(uint32_t)maxResults;
+- (NSArray<MEContentResult *> *)queryContent:(NSString *)keyword
+                                  maxResults:(uint32_t)maxResults
+                                  sessionId:(uint64_t)sessionId;
 
 /// Set allowed file extensions for content indexing (lowercase, without dot).
 - (void)setContentExtensions:(NSArray<NSString *> *)extensions;

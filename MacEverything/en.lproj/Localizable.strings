@@ -213,6 +213,7 @@
 "Ext" = "Ext";
 "Path" = "Path";
 "Size" = "Size";
+"Type" = "Type";
 "Modified Date" = "Modified Date";
 "Sort Ascending" = "Sort Ascending";
 "History" = "History";

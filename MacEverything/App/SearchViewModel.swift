@@ -877,6 +877,7 @@ class SearchViewModel: ObservableObject {
     private func performContentSearch(_ keyword: String) {
         let bridge = self.bridge
         let gen = searchGeneration
+        let sessionId = self.sessionId
         let maxResults = settings.snapshot.contentSearchMaxResults
         contentResults = []
         cachedContentResults = []
@@ -884,7 +885,7 @@ class SearchViewModel: ObservableObject {
         resultLimitReached = false
         Task.detached { [weak self] in
             let start = CFAbsoluteTimeGetCurrent()
-            let results = bridge.queryContent(keyword, maxResults: UInt32(maxResults + 1))
+            let results = bridge.queryContent(keyword, maxResults: UInt32(maxResults + 1), sessionId: sessionId)
             let elapsed = (CFAbsoluteTimeGetCurrent() - start) * 1000
 
             var items: [ContentFileItem] = []

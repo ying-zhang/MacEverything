@@ -108,7 +108,10 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
-                lastMeta_ = meta;
+                {
+                    std::lock_guard<std::mutex> lock(compactionMutex_);
+                    lastMeta_ = meta;
+                }
                 LOG_INFO("IndexPersistence", "Loaded v6 flat index, lastEventId=" << lastEventId
                           << ", liveRecords=" << engine_->liveRecordCount());
             }
@@ -129,7 +132,10 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 loaded = false;
             } else {
                 lastEventId = meta.lastEventId;
-                lastMeta_ = meta;
+                {
+                    std::lock_guard<std::mutex> lock(compactionMutex_);
+                    lastMeta_ = meta;
+                }
                 LOG_INFO("IndexPersistence", "Loaded paged index, lastEventId=" << lastEventId
                           << ", liveRecords=" << engine_->liveRecordCount());
                 // Auto-migrate to v6 flat format
@@ -218,7 +224,15 @@ void IndexPersistence::flush(uint64_t lastEventId, bool force) {
 
 void IndexPersistence::flush(const IndexMetadata& metadata, bool force) {
     std::lock_guard<std::mutex> compactionLock(compactionMutex_);
-    lastMeta_ = metadata;
+    // A legacy caller may only provide lastEventId. Keep metadata extras from
+    // the last loaded/rich snapshot so this overload cannot erase the config
+    // signature that gates incremental startup.
+    if (!metadata.extra.empty() || lastMeta_.extra.empty()) {
+        lastMeta_ = metadata;
+    } else {
+        lastMeta_.lastEventId = metadata.lastEventId;
+        if (metadata.timestamp > 0) lastMeta_.timestamp = metadata.timestamp;
+    }
 
     // Skip logic:
     //   - No WAL → skip.

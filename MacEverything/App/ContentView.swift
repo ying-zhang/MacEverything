@@ -59,9 +59,6 @@ struct ContentView: View {
                     onF2: {
                         viewModel.requestRenameForSelected()
                     },
-                    onCmdDelete: {
-                        viewModel.deleteSelectedFile()
-                    },
                     onArrowDown: {
                         guard !viewModel.isContentSearch, !viewModel.displayItems.isEmpty else { return false }
                         resultListFocused = true

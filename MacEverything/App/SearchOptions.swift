@@ -41,8 +41,15 @@ class SearchOptions: ObservableObject {
     /// Build query string with prefixes for the C++ engine
     func buildQuery(_ keyword: String) -> String {
         guard !keyword.isEmpty else { return keyword }
+        if isRegex {
+            var flags: [String] = []
+            if isCaseSensitive { flags.append("case") }
+            if isMatchFilename { flags.append("wfn") }
+            let marker = flags.isEmpty ? "" : "(?mace:" + flags.joined(separator: ",") + ")"
+            let pattern = isWholeWord ? "\\b(?:" + keyword + ")\\b" : keyword
+            return "regex:" + marker + pattern
+        }
         var prefix = ""
-        if isRegex { prefix += "regex:" }
         if isCaseSensitive { prefix += "case:" }
         if isWholeWord { prefix += "ww:" }
         if isMatchFilename { prefix += "wfn:" }

@@ -3,6 +3,11 @@ set -euo pipefail
 
 repo_root="$(cd "$(dirname "$0")/.." && pwd)"
 
+if ! command -v rg >/dev/null 2>&1; then
+    echo "error: documentation checks require ripgrep (rg)" >&2
+    exit 69
+fi
+
 if rg -n 'github\.com/user/MacEverything|\.\./\.\./releases' \
     "$repo_root/README.md" "$repo_root/README_EN.md"; then
     echo "README contains placeholder or ambiguous release links" >&2

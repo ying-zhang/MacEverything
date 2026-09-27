@@ -64,8 +64,13 @@ struct PermissionView: View {
             .background(Color(nsColor: .controlBackgroundColor))
             .onAppear { checkAccess() }
             .task(id: indexingMode) {
-                while indexingMode.hasPrefix("full") && !hasFullDiskAccess {
-                    try? await Task.sleep(for: .seconds(3))
+                while !Task.isCancelled && indexingMode.hasPrefix("full") && !hasFullDiskAccess {
+                    do {
+                        try await Task.sleep(for: .seconds(3))
+                    } catch {
+                        return
+                    }
+                    guard !Task.isCancelled else { return }
                     checkAccess()
                 }
             }

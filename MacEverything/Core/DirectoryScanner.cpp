@@ -258,7 +258,7 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
         int retcount = getattrlistbulk(dirfd, &attrList, buffer, ATTR_BUF_SIZE, FSOPT_NOFOLLOW);
 
         if (retcount == -1) {
-            if (errno == EACCES || errno == EPERM) {
+            if (errno != ENOENT && errno != ENOTDIR) {
                 stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
             }
             break;

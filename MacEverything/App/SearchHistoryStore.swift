@@ -4,6 +4,7 @@ import Foundation
 @MainActor
 final class SearchHistoryStore {
     static let defaultsKey = "searchHistory"
+    static let didClearNotification = Notification.Name("SearchHistoryStore.didClear")
     private static let minQueryLength = 2
 
     struct Entry: Codable {
@@ -13,9 +14,19 @@ final class SearchHistoryStore {
     }
 
     private var entries: [Entry] = []
+    private var clearObserver: NSObjectProtocol?
 
     init() {
+        clearObserver = NotificationCenter.default.addObserver(
+            forName: Self.didClearNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            Task { @MainActor in self?.entries.removeAll() }
+        }
         load()
+    }
+
+    deinit {
+        if let clearObserver { NotificationCenter.default.removeObserver(clearObserver) }
     }
 
     // MARK: - Public API

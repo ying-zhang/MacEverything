@@ -47,6 +47,11 @@ public:
         return lastEventId_.load(std::memory_order_relaxed);
     }
 
+    /// Seed the persisted event watermark before starting a stream.
+    void setLastEventId(FSEventStreamEventId eventId) {
+        lastEventId_.store(eventId, std::memory_order_relaxed);
+    }
+
     /// Whether the FSEvents journal was truncated (kFSEventStreamEventFlagMustScanSubDirs seen).
     bool isJournalTruncated() const {
         return journalTruncated_.load(std::memory_order_relaxed);

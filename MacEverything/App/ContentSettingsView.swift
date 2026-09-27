@@ -101,6 +101,7 @@ struct ContentSettingsView: View {
     private func applySettings() {
         let dirty = extensions != initialExtensions || maxFileSizeMB != initialMaxFileSizeMB
         guard dirty else { return }
+        settings.contentMaxFileSizeMB = maxFileSizeMB
         bridge.setContentMaxFileSize(UInt64(maxFileSizeMB * 1024 * 1024))
         bridge.setContentExtensions(extensions)
         DispatchQueue.global().async {

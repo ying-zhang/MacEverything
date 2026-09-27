@@ -95,12 +95,18 @@ for prefix in \
   fi
 done
 
+while IFS= read -r lib_root; do
+  [[ -n "$lib_root" ]] || continue
+  if copy_matching_libs "$lib_root" "libre2*.dylib"; then
+    copied_re2_libs=1
+  fi
+  [[ $copied_re2_libs -eq 0 ]] || break
+done < <(artifact_framework_dirs)
 for lib_root in \
   "${RE2_LIB_DIR:-}" \
   "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks" \
   "$root_dir/artifacts/MacEverything-macOS-arm64/build/arm64/Release/MacEverything.app/Contents/Frameworks" \
-  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks" \
-  $(artifact_framework_dirs); do
+  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks"; do
   [[ $copied_re2_libs -eq 0 ]] || break
   [[ -n "${lib_root:-}" ]] || continue
   if copy_matching_libs "$lib_root" "libre2*.dylib"; then
@@ -123,13 +129,19 @@ for prefix in \
   fi
 done
 
+while IFS= read -r lib_root; do
+  [[ -n "$lib_root" ]] || continue
+  if copy_matching_libs "$lib_root" "libabsl*.dylib"; then
+    copied_absl_libs=1
+  fi
+  [[ $copied_absl_libs -eq 0 ]] || break
+done < <(artifact_framework_dirs)
 for lib_root in \
   "${ABSEIL_LIB_DIR:-}" \
   "${RE2_LIB_DIR:-}" \
   "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks" \
   "$root_dir/artifacts/MacEverything-macOS-arm64/build/arm64/Release/MacEverything.app/Contents/Frameworks" \
-  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks" \
-  $(artifact_framework_dirs); do
+  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks"; do
   [[ $copied_absl_libs -eq 0 ]] || break
   [[ -n "${lib_root:-}" ]] || continue
   if copy_matching_libs "$lib_root" "libabsl*.dylib"; then

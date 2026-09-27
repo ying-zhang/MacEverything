@@ -6,6 +6,19 @@ artifact_dir="${ARTIFACT_DIR:-$root_dir/artifacts}"
 configuration="${CONFIGURATION:-Release}"
 scheme="${SCHEME:-MacEverything}"
 volume_name="${VOLUME_NAME:-MacEverything}"
+sign_identity="${CODE_SIGN_IDENTITY:--}"
+development_team="${DEVELOPMENT_TEAM:-}"
+notary_profile="${NOTARY_PROFILE:-}"
+require_notarization="${REQUIRE_NOTARIZATION:-0}"
+
+if [[ "$require_notarization" == "1" && -z "$notary_profile" ]]; then
+  echo "error: REQUIRE_NOTARIZATION=1 requires NOTARY_PROFILE" >&2
+  exit 64
+fi
+if [[ "$require_notarization" == "1" && "$sign_identity" == "-" ]]; then
+  echo "error: notarization requires a Developer ID signing identity" >&2
+  exit 64
+fi
 
 if (($# > 0)); then
   archs=("$@")
@@ -159,6 +172,11 @@ build_arch() {
 
   rm -rf "$symroot" "$derived_data"
 
+  local sign_style=Manual
+  if [[ "$sign_identity" != "-" ]]; then
+    sign_style=Manual
+  fi
+
   xcodebuild \
     -project "$root_dir/MacEverything.xcodeproj" \
     -scheme "$scheme" \
@@ -169,13 +187,17 @@ build_arch() {
     ARCHS="$arch" \
     ONLY_ACTIVE_ARCH=NO \
     RE2_DEPENDENCY_ROOT="$dep_root" \
-    CODE_SIGN_STYLE=Manual \
-    CODE_SIGN_IDENTITY="-" \
-    DEVELOPMENT_TEAM="" \
+    CODE_SIGN_STYLE="$sign_style" \
+    CODE_SIGN_IDENTITY="$sign_identity" \
+    DEVELOPMENT_TEAM="$development_team" \
     build
 
   verify_app_arch "$arch" "$app_path"
   "$root_dir/scripts/create-dmg.sh" "$app_path" "$dmg_path" "$volume_name"
+  if [[ -n "$notary_profile" ]]; then
+    xcrun notarytool submit "$dmg_path" --keychain-profile "$notary_profile" --wait
+    xcrun stapler staple "$dmg_path"
+  fi
   echo "Built $dmg_path"
 }
 

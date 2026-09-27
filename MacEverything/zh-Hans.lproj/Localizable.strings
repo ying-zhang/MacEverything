@@ -213,6 +213,7 @@
 "Ext" = "扩展名";
 "Path" = "路径";
 "Size" = "大小";
+"Type" = "类型";
 "Modified Date" = "修改日期";
 "Sort Ascending" = "升序排序";
 "History" = "历史";

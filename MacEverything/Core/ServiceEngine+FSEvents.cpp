@@ -88,7 +88,7 @@ void ServiceEngine::applyFSEvents(
 //  Live monitoring
 // ═══════════════════════════════════════════════════════
 
-void ServiceEngine::startMonitoring() {
+void ServiceEngine::startMonitoring(FSEventStreamEventId sinceEventId) {
     if (isMonitoring_.load(std::memory_order_relaxed)) return;
 
     auto roots = effectiveScanRoots();
@@ -108,7 +108,7 @@ void ServiceEngine::startMonitoring() {
         watcher_->setExclusionPaths(exclusions);
     }
 
-    watcher_->start(roots, [this](std::vector<FileSystemWatcher::Event> events) {
+    watcher_->start(roots, sinceEventId, [this](std::vector<FileSystemWatcher::Event> events) {
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
         uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
         dispatch_async(mutationQueue_, ^{
@@ -148,6 +148,7 @@ void ServiceEngine::restartMonitoring() {
 }
 
 void ServiceEngine::stopMonitoring() {
+    isMonitoring_.store(false, std::memory_order_release);
     watcher_->stop();
 
     {
@@ -169,7 +170,6 @@ void ServiceEngine::stopMonitoring() {
     if (cp) {
         cp->stopAutoCompactionAndWait();
     }
-    isMonitoring_.store(false, std::memory_order_relaxed);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -177,6 +177,8 @@ void ServiceEngine::stopMonitoring() {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::scheduleRescanForPaths(const std::vector<std::string>& paths) {
+    if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire) ||
+        !isMonitoring_.load(std::memory_order_acquire)) return;
     std::lock_guard<std::mutex> lock(pendingRescanMutex_);
 
     pendingRescanPaths_ = mergeRescanPaths(pendingRescanPaths_, minimizeRescanPaths(paths));
@@ -255,7 +257,8 @@ void ServiceEngine::flushPendingRescans(dispatch_source_t firingTimer) {
     }
 
     // If there are throttled paths, schedule a retry when throttle expires
-    if (!throttledPaths.empty()) {
+    if (!throttledPaths.empty() && !shuttingDown_.load(std::memory_order_acquire) &&
+        isMonitoring_.load(std::memory_order_acquire) && mutationQueue_) {
         std::lock_guard<std::mutex> lock(pendingRescanMutex_);
         if (!rescanDebounceTimer_) {
             rescanDebounceTimer_ = dispatch_source_create(
@@ -289,6 +292,7 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
     auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
     uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
 
+    if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) return;
     dispatch_async(mutationQueue_, ^{
         if (!this->isGenerationCurrent(generation)) return;
 
@@ -363,6 +367,7 @@ void ServiceEngine::refreshRenamedPath(const std::string& oldPath,
     const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
     const std::string oldPathCopy = oldPath;
     const std::string newPathCopy = newPath;
+    if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) return;
     dispatch_async(mutationQueue_, ^{
         if (!this->isGenerationCurrent(generation)) return;
         std::vector<FileSystemWatcher::Event> events{

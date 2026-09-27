@@ -169,7 +169,6 @@ struct HighlightedSearchField: NSViewRepresentable {
     var onTab: (() -> Bool)?
     var onSubmit: (() -> Void)?
     var onF2: (() -> Void)?
-    var onCmdDelete: (() -> Void)?
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Void)?
     var focusRequest: Int = 0
@@ -213,7 +212,6 @@ struct HighlightedSearchField: NSViewRepresentable {
         textView.onTabKey = context.coordinator.handleTab
         textView.onSubmit = context.coordinator.handleSubmit
         textView.onF2 = context.coordinator.handleF2
-        textView.onCmdDelete = context.coordinator.handleCmdDelete
         textView.onArrowDown = context.coordinator.handleArrowDown
         textView.onEscape = context.coordinator.handleEscape
 
@@ -329,9 +327,6 @@ struct HighlightedSearchField: NSViewRepresentable {
             parent.onF2?()
         }
 
-        func handleCmdDelete() {
-            parent.onCmdDelete?()
-        }
 
         func handleArrowDown() -> Bool {
             parent.onArrowDown?() ?? false
@@ -389,7 +384,6 @@ class HighlightedNSTextView: NSTextView {
     var onSubmit: (() -> Void)?
     var onF2: (() -> Void)?
     var placeholderString: String = ""
-    var onCmdDelete: (() -> Void)?
     var onArrowDown: (() -> Bool)?
     var onEscape: (() -> Void)?
 
@@ -401,11 +395,6 @@ class HighlightedNSTextView: NSTextView {
         // F2 key - rename
         if event.keyCode == 120 {
             onF2?()
-            return
-        }
-        // Cmd+Backspace - delete selected file
-        if event.keyCode == 51 && event.modifierFlags.contains(.command) {
-            onCmdDelete?()
             return
         }
         // Handle Tab key for ghost suggestion (skip during IME composition)

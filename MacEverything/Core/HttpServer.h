@@ -40,10 +40,12 @@ public:
 
     using EngineGetter = std::function<std::shared_ptr<SearchEngine>()>;
     using ContentIndexGetter = std::function<std::shared_ptr<ContentIndex>()>;
+    using ContentPathFilter = std::function<bool(const std::string&)>;
 
     bool start(uint16_t port,
                EngineGetter engineGetter,
-               ContentIndexGetter contentIndexGetter);
+               ContentIndexGetter contentIndexGetter,
+               ContentPathFilter contentPathFilter = {});
     void stop();
     bool isRunning() const;
     uint16_t port() const;
@@ -96,6 +98,7 @@ private:
 
     EngineGetter getEngine_;
     ContentIndexGetter getContentIndex_;
+    ContentPathFilter contentPathFilter_;
     AdminCallbacks adminCallbacks_;
     std::mutex adminCallbacksMutex_;
     ServerMetadata serverMetadata_;

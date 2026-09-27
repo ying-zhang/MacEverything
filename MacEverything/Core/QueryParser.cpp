@@ -13,7 +13,8 @@ std::unique_ptr<QueryNode> QueryParser::parse(const std::string& input) {
 
     QueryParser parser(std::move(tokens));
     auto root = parser.parseOrExpr();
-
+    // Reject stray operators instead of silently returning a partial AST.
+    if (!root || !parser.atEnd()) return nullptr;
     return root;
 }
 
@@ -42,9 +43,8 @@ std::unique_ptr<QueryNode> QueryParser::parseOrExpr() {
             kids.push_back(std::move(left));
         }
         auto right = parseAndExpr();
-        if (right) {
-            kids.push_back(std::move(right));
-        }
+        if (!right) return nullptr;
+        kids.push_back(std::move(right));
     }
 
     if (hasOr) {
@@ -107,7 +107,19 @@ std::unique_ptr<QueryNode> QueryParser::parseAtom() {
     // Grouping: < or_expr >
     if (tok.type == TokenType::LANGLE) {
         if (nestingDepth_ >= kMaxNestingDepth) {
+            // Treat an over-deep group as a literal atom, but consume the
+            // complete balanced group so the outer parser can finish in
+            // linear time without leaving stray closing tokens behind.
             advance();
+            size_t groupDepth = 1;
+            while (!atEnd() && groupDepth > 0) {
+                const auto type = advance().type;
+                if (type == TokenType::LANGLE) {
+                    ++groupDepth;
+                } else if (type == TokenType::RANGLE) {
+                    --groupDepth;
+                }
+            }
             return QueryNode::makeTerm("<");
         }
         advance();
@@ -123,6 +135,7 @@ std::unique_ptr<QueryNode> QueryParser::parseAtom() {
     // slash/glob transforms.
     if (tok.type == TokenType::QUOTED) {
         advance();
+        if (tok.value.empty()) return nullptr;
         auto n = QueryNode::makeTerm(tok.value);
         n->quoted = true;
         return n;

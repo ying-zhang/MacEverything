@@ -113,7 +113,7 @@ static std::string AppBundleVersion() {
 
 + (NSString *)logFilePath {
     auto path = me::Logger::instance().getLogFilePath();
-    return [NSString stringWithUTF8String:path.c_str()];
+    return MEStringFromUTF8(path);
 }
 
 - (instancetype)init {
@@ -174,18 +174,18 @@ static std::string AppBundleVersion() {
 
 - (NSString *)httpAuthToken {
     const auto token = HttpToken::readToken();
-    return [NSString stringWithUTF8String:token.c_str()];
+    return MEStringFromUTF8(token);
 }
 
 - (NSString *)ensureHttpAuthToken {
     const auto token = HttpToken::ensureTokenFile();
-    return [NSString stringWithUTF8String:token.c_str()];
+    return MEStringFromUTF8(token);
 }
 
 - (NSString *)regenerateHttpAuthToken {
     const auto token = HttpToken::regenerateTokenFile();
     if (!token.empty()) _serviceEngine->refreshHttpAuthentication();
-    return [NSString stringWithUTF8String:token.c_str()];
+    return MEStringFromUTF8(token);
 }
 
 - (BOOL)setHttpAuthToken:(NSString *)token {
@@ -250,7 +250,7 @@ static std::string AppBundleVersion() {
         MacSearchBridge *s = weakSelf;
         if (!s) return;
         const std::string reasonCopy = reason;
-        NSString *nsReason = [[NSString stringWithUTF8String:reason.c_str()] copy];
+        NSString *nsReason = [MEStringFromUTF8(reason) copy];
         dispatch_async(dispatch_get_main_queue(), ^{
             LOG_ERROR("MacSearchBridge", "startup fatal: " << reasonCopy);
             if (s.onStartupFailed) s.onStartupFailed(nsReason);
@@ -421,9 +421,8 @@ static std::string AppBundleVersion() {
         NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
         bool stable = engine->forEachRecordWithPathIfGeneration(
             indices, generation, [&](uint32_t, const FileRecord& r, const std::string& path) {
-                NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-                NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-                if (!nsName || !nsPath) return;
+                NSString *nsName = MEStringFromUTF8(r.name);
+                NSString *nsPath = MEStringFromUTF8(path);
                 [results addObject:[[MEFileResult alloc] initWithName:nsName
                                                                 path:nsPath
                                                                 type:r.type
@@ -458,9 +457,8 @@ static std::string AppBundleVersion() {
         NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
         bool stable = engine->forEachRecordWithPathIfGeneration(
             indices, generation, [&](uint32_t, const FileRecord& r, const std::string& path) {
-                NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-                NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-                if (!nsName || !nsPath) return;
+                NSString *nsName = MEStringFromUTF8(r.name);
+                NSString *nsPath = MEStringFromUTF8(path);
                 [results addObject:[[MEFileResult alloc] initWithName:nsName
                                                                 path:nsPath
                                                                 type:r.type
@@ -497,9 +495,8 @@ static std::string AppBundleVersion() {
         NSMutableArray<MEFileResult *> *results = [NSMutableArray arrayWithCapacity:indices.size()];
         bool stable = engine->forEachRecordWithPathIfGeneration(
             indices, generation, [&](uint32_t, const FileRecord& r, const std::string& path) {
-                NSString *nsName = [NSString stringWithUTF8String:r.name.c_str()];
-                NSString *nsPath = [NSString stringWithUTF8String:path.c_str()];
-                if (!nsName || !nsPath) return;
+                NSString *nsName = MEStringFromUTF8(r.name);
+                NSString *nsPath = MEStringFromUTF8(path);
                 [results addObject:[[MEFileResult alloc] initWithName:nsName
                                                                 path:nsPath
                                                                 type:r.type
@@ -518,8 +515,7 @@ static std::string AppBundleVersion() {
 
     NSMutableArray<MEHighlightHint *> *result = [NSMutableArray arrayWithCapacity:hints.size()];
     for (auto& h : hints) {
-        NSString *text = [NSString stringWithUTF8String:h.text.c_str()];
-        if (!text) continue;
+        NSString *text = MEStringFromUTF8(h.text);
         [result addObject:[[MEHighlightHint alloc] initWithText:text
                                                          field:static_cast<uint8_t>(h.field)
                                                      matchMode:static_cast<uint8_t>(h.mode)

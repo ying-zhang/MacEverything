@@ -55,7 +55,8 @@ inline ParsedQuery parseQuery(const std::string& rawQuery, const std::string& lo
     // A trailing '/*' is DIR_LIST, not a glob.
     {
         auto tmp = q;
-        if (!tmp.empty() && tmp.front() == '/') tmp = tmp.substr(1);
+        if (q == "/*") tmp.clear();
+        else if (!tmp.empty() && tmp.front() == '/') tmp = tmp.substr(1);
         // Strip trailing /* (DIR_LIST) and trailing / (DIR_EXACT) for glob check
         if (tmp.size() >= 2 && tmp.back() == '*' && tmp[tmp.size() - 2] == '/')
             tmp = tmp.substr(0, tmp.size() - 2);

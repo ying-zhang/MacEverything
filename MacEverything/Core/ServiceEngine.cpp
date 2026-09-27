@@ -403,6 +403,8 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
 
     dispatch_group_async(backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^{
         auto scanStart = std::chrono::steady_clock::now();
+        const FSEventStreamEventId scanStartEventId =
+            FileSystemWatcher::getCurrentSystemEventId();
         auto scanner = std::make_shared<DirectoryScanner>();
         if (!this->registerScanner(scanner, generation)) return;
 
@@ -446,10 +448,12 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
             this->isScanning_.store(false, std::memory_order_relaxed);
         }
 
+        // Replay changes that occurred while the full scanner was running.
+        this->watcher_->setLastEventId(scanStartEventId);
         if (completion) completion(count, true);
 
         if (config.realtimeMonitoring && this->isGenerationCurrent(generation)) {
-            this->startMonitoring();
+            this->startMonitoring(scanStartEventId);
         }
 
         // Content indexing in background
@@ -502,7 +506,7 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
         auto indexLoadDone = std::chrono::steady_clock::now();
         uint32_t loadedCount = engine->liveRecordCount();
 
-        if (lastEventId > 0 && loadedCount > 0) {
+        if (loadedCount > 0) {
             // Have cached index: deliver immediately, then sync in background
             auto sharedPersistence = std::shared_ptr<IndexPersistence>(std::move(persistence));
 
@@ -1036,7 +1040,8 @@ void ServiceEngine::startHttpServer(uint16_t port) {
 
     bool ok = httpServer_->start(port,
         [this]() -> std::shared_ptr<SearchEngine> { return this->safeEngine(); },
-        [this]() -> std::shared_ptr<ContentIndex> { return this->safeContentIndex(); });
+        [this]() -> std::shared_ptr<ContentIndex> { return this->safeContentIndex(); },
+        [this](const std::string& path) { return this->isContentPathAllowed(path); });
     if (!ok) {
         LOG_ERROR("ServiceEngine", "HTTP server failed to start on port " << port);
         return;

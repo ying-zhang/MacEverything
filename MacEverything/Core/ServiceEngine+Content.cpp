@@ -254,6 +254,7 @@ void ServiceEngine::requestContentIndexRebuild(
 
 void ServiceEngine::rebuildContentIndexOnMutationQueue(
     const std::vector<std::string>& extensions, uint64_t maxFileSize) {
+    if (!ensureInstanceLock(safeConfig())) return;
     auto contentIndex = safeContentIndex();
     if (!contentIndex) return;
     if (!safeConfig().contentIndexingEnabled) {
@@ -334,6 +335,7 @@ void ServiceEngine::clearContentIndex() {
 }
 
 void ServiceEngine::clearContentIndexOnMutationQueue() {
+    if (!ensureInstanceLock(safeConfig())) return;
     auto contentIndex = safeContentIndex();
     if (!contentIndex) return;
 

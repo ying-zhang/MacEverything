@@ -66,7 +66,8 @@ public:
     /// entries that predate path-keyed persistence.
     using PathResolver = std::function<bool(uint32_t fileIndex, std::string& fullPath)>;
     std::vector<ContentMatch> query(const std::string& keyword, uint32_t maxResults,
-                                    const PathResolver& resolvePath) const;
+                                    const PathResolver& resolvePath,
+                                    const std::function<bool()>& shouldCancel = {}) const;
 
     // --- Configuration ---
 

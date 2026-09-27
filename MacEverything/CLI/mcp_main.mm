@@ -58,7 +58,8 @@ static uint16_t configuredHttpPort() {
 static std::string jsonEscape(const std::string& s) {
     std::string out;
     out.reserve(s.size() + 8);
-    for (unsigned char c : s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
         switch (c) {
             case '"':  out += "\\\""; break;
             case '\\': out += "\\\\"; break;
@@ -72,6 +73,17 @@ static std::string jsonEscape(const std::string& s) {
                     char buf[8];
                     snprintf(buf, sizeof(buf), "\\u%04x", c);
                     out += buf;
+                } else if (c >= 0x80) {
+                    size_t need = (c >= 0xF0) ? 4 : (c >= 0xE0 ? 3 : 2);
+                    bool valid = (i + need <= s.size()) && (c >= 0xC2 && c <= 0xF4);
+                    for (size_t j = 1; valid && j < need; ++j)
+                        valid = (static_cast<unsigned char>(s[i + j]) & 0xC0) == 0x80;
+                    if (valid) {
+                        out.append(s, i, need);
+                        i += need - 1;
+                    } else {
+                        out += "\\ufffd";
+                    }
                 } else {
                     out += static_cast<char>(c);
                 }

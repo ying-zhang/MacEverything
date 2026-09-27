@@ -516,6 +516,7 @@ final class AppSettings: ObservableObject {
 
     func clearSearchHistory() {
         UserDefaults.standard.removeObject(forKey: SearchHistoryStore.defaultsKey)
+        NotificationCenter.default.post(name: SearchHistoryStore.didClearNotification, object: nil)
     }
 
     func resetAppearanceDefaults() {

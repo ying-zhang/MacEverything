@@ -142,7 +142,7 @@ clean:
 help:
 	@echo "Available targets:"
 	@echo "  make test       - Run fast unit tests (alias for test-fast)"
-	@echo "  make test-fast  - Run local fast tests, skipping benchmarks/stress tests"
+	@echo "  make test-fast  - Run local correctness tests, skipping benchmarks/stress tests"
 	@echo "  make test-slow  - Run slow integration tests (Part 1, 4, 6)"
 	@echo "  make test-all   - Run all tests"
 	@echo "  make test-asan  - Run fast tests with AddressSanitizer"

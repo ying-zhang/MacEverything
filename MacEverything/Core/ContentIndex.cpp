@@ -18,14 +18,18 @@
 #include <unistd.h>
 #include <dispatch/dispatch.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 
 // --- Magic and version for binary persistence ---
 static constexpr char CONTENT_MAGIC[4] = {'M', 'E', 'C', 'I'};
 static constexpr uint32_t CONTENT_FORMAT_VERSION = 4;
 static constexpr uint64_t kMinContentIndexLoadMemory = 512ULL * 1024 * 1024;
-static constexpr uint64_t kMaxContentIndexLoadMemory = 8ULL * 1024 * 1024 * 1024;
+static constexpr uint64_t kMaxContentIndexLoadMemory = 2ULL * 1024 * 1024 * 1024;
 static constexpr uint64_t kEstimatedFileInfoBytes = 256;
-static constexpr uint64_t kEstimatedBytesPerTrigram = 16;
+// Account for the trigram in both the file entry and the posting-list hash
+// table, including vector/hash-node overhead.
+static constexpr uint64_t kEstimatedBytesPerTrigram = 32;
 
 static uint64_t contentIndexLoadMemoryBudget() {
     uint64_t physicalMemory = 0;
@@ -35,7 +39,9 @@ static uint64_t contentIndexLoadMemoryBudget() {
         return kMinContentIndexLoadMemory;
     }
 
-    const uint64_t adaptiveBudget = physicalMemory / 4 * 3;
+    // Keep most memory available for the app, filesystem cache, and the name
+    // index while loading the content index.
+    const uint64_t adaptiveBudget = physicalMemory / 3;
     return std::clamp(adaptiveBudget, kMinContentIndexLoadMemory,
                       kMaxContentIndexLoadMemory);
 }
@@ -137,19 +143,23 @@ bool ContentIndex::hasAllowedExtensionLocked(const std::string& filename) const 
 }
 
 std::string ContentIndex::readFileIfText(const std::string& path, uint64_t maxSize) {
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return {};
+    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    if (fd < 0) return {};
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        return {};
+    }
+    FILE* f = fdopen(fd, "rb");
+    if (!f) { close(fd); return {}; }
 
-    fseek(f, 0, SEEK_END);
-    long fileSize = ftell(f);
-    if (fileSize <= 0 || static_cast<uint64_t>(fileSize) > maxSize) {
+    uint64_t fileSize = static_cast<uint64_t>(st.st_size);
+    if (fileSize == 0 || fileSize > maxSize) {
         fclose(f);
         return {};
     }
 
-    fseek(f, 0, SEEK_SET);
-    std::string content;
-    content.resize(static_cast<size_t>(fileSize));
+    std::string content(static_cast<size_t>(fileSize), '\0');
     size_t bytesRead = fread(content.data(), 1, content.size(), f);
     fclose(f);
 
@@ -181,18 +191,23 @@ std::string ContentIndex::generateSnippet(const std::string& path,
                                            uint64_t maxReadBytes) {
     outOffset = 0;
 
-    FILE* f = fopen(path.c_str(), "rb");
-    if (!f) return {};
+    int fd = open(path.c_str(), O_RDONLY | O_NONBLOCK | O_NOFOLLOW);
+    if (fd < 0) return {};
+    struct stat st{};
+    if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) {
+        close(fd);
+        return {};
+    }
+    FILE* f = fdopen(fd, "rb");
+    if (!f) { close(fd); return {}; }
 
-    fseek(f, 0, SEEK_END);
-    long fileSize = ftell(f);
-    fseek(f, 0, SEEK_SET);
-    if (fileSize <= 0) { fclose(f); return {}; }
+    uint64_t fileSize = static_cast<uint64_t>(st.st_size);
+    if (fileSize == 0) { fclose(f); return {}; }
 
     // H5 fix: Read in 64KB chunks instead of 1MB at once.
     // Most matches are in the first chunk, reducing average I/O by ~16x.
     static constexpr size_t kChunkSize = 64 * 1024;
-    size_t maxRead = std::min(static_cast<uint64_t>(fileSize), maxReadBytes);
+    size_t maxRead = std::min(fileSize, maxReadBytes);
     size_t overlapSize = keyword.size() > 1 ? keyword.size() - 1 : 0;
 
     const bool asciiKeyword = isAsciiText(keyword);
@@ -581,7 +596,8 @@ bool ContentIndex::getFileInfo(uint32_t fileIndex, ContentFileInfo& info) const 
 
 std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
                                               uint32_t maxResults,
-                                              const PathResolver& resolvePath) const {
+                                              const PathResolver& resolvePath,
+                                              const std::function<bool()>& shouldCancel) const {
     if (keyword.empty()) return {};
 
     std::string lowerKey = me::normalizeNFC(me::toLower(keyword));
@@ -666,6 +682,7 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
         maxResults == 0 ? verificationCandidates.size() : maxResults));
 
     for (size_t base = 0; base < verificationCandidates.size(); base += kVerificationBatchSize) {
+        if (shouldCancel && shouldCancel()) break;
         if (maxResults > 0 && results.size() >= maxResults) break;
 
         const size_t count = std::min(kVerificationBatchSize,
@@ -677,6 +694,7 @@ std::vector<ContentMatch> ContentIndex::query(const std::string& keyword,
         };
         auto batch = std::make_shared<VerificationBatch>(count);
         auto verifyCandidate = [&](size_t i) {
+            if (shouldCancel && shouldCancel()) return;
             const auto& candidate = verificationCandidates[base + i];
             const uint32_t fileIdx = candidate.fileIndex;
             std::string fullPath = candidate.fullPath;

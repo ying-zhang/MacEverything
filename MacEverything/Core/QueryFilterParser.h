@@ -8,6 +8,7 @@
 #include <cctype>
 #include <cstdint>
 #include <algorithm>
+#include <string_view>
 
 /// Parse filter arguments and populate structured fields on QueryNode.
 /// Called after the parser creates a FILTER node from raw filterName + filterArg.
@@ -58,6 +59,26 @@ public:
             node.text = arg;
             // textLower not needed — regex uses node.text with icase flag
             node.mode = MatchMode::REGEX;
+            // The app encodes regex-only UI options in a marker because the
+            // regex tokenizer intentionally consumes the remaining pattern.
+            constexpr std::string_view marker = "(?mace:";
+            if (node.text.rfind(marker, 0) == 0) {
+                auto end = node.text.find(')', marker.size());
+                if (end != std::string::npos) {
+                    auto flags = node.text.substr(marker.size(), end - marker.size());
+                    size_t start = 0;
+                    while (start <= flags.size()) {
+                        size_t comma = flags.find(',', start);
+                        auto flag = flags.substr(start, comma == std::string::npos
+                                                        ? std::string::npos : comma - start);
+                        if (flag == "case") node.caseSensitive = true;
+                        if (flag == "wfn") node.nameOnly = true;
+                        if (comma == std::string::npos) break;
+                        start = comma + 1;
+                    }
+                    node.text.erase(0, end + 1);
+                }
+            }
         } else if (name == "ww" || name == "wholeword") {
             node.type = QueryNodeType::TERM;
             node.text = arg;

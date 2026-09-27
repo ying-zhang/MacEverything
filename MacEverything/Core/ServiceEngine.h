@@ -146,7 +146,7 @@ private:
     // ── FSEvents methods (ServiceEngine+FSEvents.cpp) ──
     void applyFSEvents(const std::vector<FileSystemWatcher::Event>& events,
                        std::shared_ptr<SearchEngine> engine);
-    void startMonitoring();
+    void startMonitoring(FSEventStreamEventId sinceEventId = kFSEventStreamEventIdSinceNow);
     void stopMonitoring();
     void restartMonitoring();
     void scheduleRescanForPaths(const std::vector<std::string>& paths);

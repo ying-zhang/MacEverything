@@ -309,6 +309,24 @@ struct GeneralSettingsView: View {
                 .font(.caption)
                 .foregroundColor(.secondary)
         }
+        .onChange(of: settings.contentIndexingEnabled) {
+            SearchServiceModel.shared.applyRuntimeConfiguration()
+        }
+        .onChange(of: settings.contentMaxFileSizeMB) {
+            SearchServiceModel.shared.applyRuntimeConfiguration()
+        }
+        .onChange(of: settings.contentSearchRoots) {
+            SearchServiceModel.shared.applyRuntimeConfiguration()
+        }
+        .onChange(of: settings.contentSearchExcludedPaths) {
+            SearchServiceModel.shared.applyRuntimeConfiguration()
+        }
+        .onChange(of: settings.contentSearchUsesIndexRoots) {
+            SearchServiceModel.shared.applyRuntimeConfiguration()
+        }
+        .onChange(of: settings.contentSearchUsesIndexExclusions) {
+            SearchServiceModel.shared.applyRuntimeConfiguration()
+        }
     }
 
     private var indexFilesSection: some View {
