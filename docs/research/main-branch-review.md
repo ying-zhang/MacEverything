@@ -31,7 +31,7 @@ SwiftUI 高亮仍使用 ICU，而搜索使用 RE2。语法守卫是尽力而为�
 
 ### FSEvents 与 NAS 的验证
 
-本地测试覆盖 watcher 水位、扫描失败和 HTTP 安全路径。真实 SMB 的吞吐、断线重连、权限变化和挂载点切换仍应在 Windows SMB 测试机或实际 NAS 上进行长时间测试。
+本地测试覆盖 watcher 水位、扫描失败和 HTTP 安全路径；此前已通过 Windows SMB 共享完成基础扫描与同步验证。吞吐、断线重连、权限变化和挂载点切换仍应在 Windows SMB 测试机或实际 NAS 上进行长时间测试。
 
 ## 已确认的设计约束
 
@@ -50,7 +50,7 @@ xcodebuild -scheme MacEverything -configuration Release build
 
 本轮本地验证结果：`make test-fast` 的核心测试为 **1838 passed / 0 failed**；高亮测试为 **79 passed / 0 failed**；`make lint-bridge` 和 `make lint-docs` 通过；Release 构建成功。Swift 编译器仍会报告既有的 `Text` 拼接弃用提示，不影响本次修复。
 
-本轮新增的生命周期路径仍缺少真实 SMB 环境下的自动化覆盖，重点是网络轮询过滤、监控水位重启和 HTTP 取消的端到端验证；这些项目应在 Windows SMB 测试机或实际 NAS 上补测。
+本轮新增的生命周期路径仍缺少纳入 `test-fast` 的自动化覆盖，重点是网络轮询过滤、监控水位重启和 HTTP 取消；已有 Windows SMB 基础测试，后续应将关键断线和重连场景纳入持续回归。
 
 发布构建完成后，按项目说明将 `.app` 和 `.dmg` 放入 `artifacts/`。真实 NAS 性能应记录扫描时长、增量延迟、重扫次数、内容索引吞吐、CPU、内存和断线恢复时间。
 

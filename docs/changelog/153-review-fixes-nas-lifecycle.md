@@ -23,3 +23,4 @@
 - Swift 高亮测试：79 passed / 0 failed
 - `make lint-bridge`：通过
 - `make lint-docs`：通过
+- Windows SMB 共享：已完成基础扫描与同步验证；断线重连等长时间场景仍需持续回归。
