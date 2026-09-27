@@ -166,8 +166,6 @@
 | [147](147-结果显示控件与五档缩放.md) | feature | 结果显示控件与五档缩放 | 2026-07-22 |
 | [149](149-runtime-security-and-workflow-cleanup.md) | feature | 运行时安全与搜索工作流收尾 | 2026-07-25 |
 | [150](150-release-1.7.25.md) | docs | MacEverything 1.7.25 发布说明 | 2026-07-25 |
-| [151](151-release-1.7.30.md) | docs | MacEverything 1.7.30 发布说明 | 2026-08-02 |
-| [152](152-release-1.7.50.md) | docs | MacEverything 1.7.50 发布说明 | 2026-08-21 |
 
 ## 统计
 
