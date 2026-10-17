@@ -51,11 +51,19 @@ public:
         queueCV_.notify_all();
     }
     bool isCancelled() const { return cancelled_.load(std::memory_order_relaxed); }
-    // A scan is complete only when every requested root was reachable and
-    // traversed. Callers must not replace a healthy index with partial data.
+    // A scan is complete when every requested root was either traversed or
+    // deferred because its external volume is unplugged. A missing local
+    // folder is still a hard failure: callers must not replace a healthy
+    // index with that partial result.
     bool isComplete() const {
         return !cancelled_.load(std::memory_order_relaxed) &&
                rootFailureCount_.load(std::memory_order_acquire) == 0;
+    }
+    uint32_t deferredVolumeCount() const {
+        return deferredVolumeCount_.load(std::memory_order_acquire);
+    }
+    uint32_t reachableRootCount() const {
+        return reachableRootCount_.load(std::memory_order_acquire);
     }
     const Stats& getStats() const { return stats_; }
 
@@ -74,6 +82,8 @@ private:
     std::atomic<bool> done_{false};
     std::atomic<bool> cancelled_{false};
     std::atomic<uint32_t> rootFailureCount_{0};
+    std::atomic<uint32_t> deferredVolumeCount_{0};
+    std::atomic<uint32_t> reachableRootCount_{0};
 
     std::unordered_set<InodeKey, InodeKeyHash> visitedDirs_;
     std::mutex dedupMutex_;

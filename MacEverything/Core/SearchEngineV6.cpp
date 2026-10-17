@@ -127,6 +127,7 @@ void SearchEngine::loadRecordsV6(StringPool&& origNamePool,
 
     LOG_INFO("SearchEngine", "loadRecordsV6: loaded " << n << " records (" << actualLive
              << " live), Phase 2 pending");
+    noteIndexMutationUnlocked();
 }
 
 void SearchEngine::completePhase2() {

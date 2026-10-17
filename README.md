@@ -333,13 +333,15 @@ Release 构建和 GitHub Actions 发布包会自动把 `libre2` 及其实际使�
 | 自适应 Trigram 旁路 | 候选集过大时自动回退并行扫描，避免无效索引查找 |
 | FSEvents 安全重放 | 规范化排除路径、过滤自身缓存事件，停止监听时排空回调队列，避免竞态与误触发全量重扫 |
 | USB 热插拔索引维护 | `willUnmount` 预清理 + `didMount` 自动重扫 + `config_` shared_mutex 线程安全 + FSEvents 自动重启 |
-| 多词组合评分 | 按 miss count（文件名未命中词数）+ match quality（精确/前缀/词界/子串）+ 路径长度三级排序，多词查询结果更精准 |
+| 多词组合评分 | 按 miss count（文件名未命中词数）+ match quality（精确/前缀/词界/子串）+ 路径长度三级排序，同分再按记录号，多词查询结果更精准 |
+| 连续输入候选复用 | 普通子串查询继续打字时，只在上一轮的全部命中里重验，不复用界面截断后的结果 |
+| 匹配阶段 Top-K | 每个线程只保留最好的 maxResults 条再合并，降低大命中查询的临时内存和排序开销 |
 | COW 无阻塞压缩 | 写时复制，压缩期间独占锁持有 < 100ms（原 30–60s） |
 | 分页增量持久化 | 仅写入脏页，典型 flush I/O 从 ~112MB 降至 KB 级 |
 
 ### 测试体系
 
-87 个 C++ 测试模块覆盖完整技术栈，另有 Swift 测试，支持 AddressSanitizer 和 ThreadSanitizer：
+88 个 C++ 测试模块覆盖完整技术栈，另有 Swift 测试，支持 AddressSanitizer 和 ThreadSanitizer：
 
 ```bash
 make test          # 快速单元测试 + 桥接层 lint
@@ -383,7 +385,7 @@ MacEverything/
 ├── CLI/                   # 命令行工具
 │   ├── mace_main          # 短命令查询客户端
 │   └── mcp_main           # MCP 服务器（stdio JSON-RPC）
-└── tests/                 # 87 个 C++ 测试模块及 Swift 测试
+└── tests/                 # 88 个 C++ 测试模块及 Swift 测试
 ```
 
 ## 参与贡献

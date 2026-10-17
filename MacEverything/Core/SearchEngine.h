@@ -92,6 +92,20 @@ struct QueryTimingInfo {
     std::string searchPath;   // "trigram", "trigram-split", or "linear"
 };
 
+/// Optional controls for one `queryAdvanced` call.
+/// `restrictIds` is a verified superset from an earlier plain substring query.
+/// `capturedIds` receives every match, separate from the ranked `maxResults` window.
+struct QueryCandidateScope {
+    const std::vector<uint32_t>* restrictIds = nullptr;
+    uint64_t restrictEpoch = 0;
+    std::vector<uint32_t>* capturedIds = nullptr;
+    size_t captureLimit = 2000000;
+    bool captureExceeded = false;
+    bool cancelled = false;
+    uint64_t observedEpoch = 0;
+    bool usedNarrow = false;
+};
+
 /// Bundled cancellation context passed through query call chain.
 struct QueryCancelCtx {
     const std::atomic<uint64_t>* gen;
@@ -209,8 +223,9 @@ public:
     V6Snapshot snapshotForV6() const;
 
     /// Case-insensitive substring search. Returns indices into the records array.
-    /// If maxResults > 0, stops early once enough matches are found.
-    /// If useTrigram is false, bypasses trigram index and does NEON full scan.
+    /// If maxResults > 0, the returned window is the best maxResults matches.
+    /// Matching still covers the whole candidate set. If useTrigram is false,
+    /// bypasses trigram index and does NEON full scan.
     std::vector<uint32_t> query(const std::string& keyword, uint32_t maxResults = 0,
                                 bool useTrigram = true, uint64_t sessionId = 0) const;
 
@@ -226,7 +241,8 @@ public:
     std::vector<uint32_t> queryAdvanced(const std::string& input, uint32_t maxResults,
                                          bool useTrigram, QueryTimingInfo& timing,
                                          uint64_t myGen = 0,
-                                         const std::atomic<uint64_t>* genPtr = nullptr) const;
+                                         const std::atomic<uint64_t>* genPtr = nullptr,
+                                         QueryCandidateScope* scope = nullptr) const;
 
     /// Cancel in-flight queries for the given session. Lock-free on the generation atomic.
     void cancelSession(uint64_t sessionId) const;
@@ -631,6 +647,31 @@ private:
 
     std::shared_ptr<IndexWAL> wal_;
     std::atomic<uint64_t> compactionGen_{0};
+    /// Bumped on every record-set change, including ones that do not compact.
+    /// Session cancellation generation is a different counter.
+    std::atomic<uint64_t> mutationEpoch_{1};
+    void noteIndexMutationUnlocked();
+
+    /// Plain substring queries remembered so the next keystroke can rescan
+    /// their full hit list. One slot; a newer eligible query replaces it.
+    static constexpr size_t kNarrowCaptureLimit = 2000000;
+    struct NarrowTerm {
+        std::string text;
+        bool caseSensitive = false;
+    };
+    struct NarrowKey {
+        bool pinyin = false;
+        std::vector<NarrowTerm> terms;
+        bool narrowsFrom(const NarrowKey& previous) const;
+    };
+    bool plainSubstringKey(const std::string& input, NarrowKey& out) const;
+    bool loadNarrowIds(const NarrowKey& key, std::vector<uint32_t>& ids, uint64_t& epoch) const;
+    void storeNarrowIds(const NarrowKey& key, std::vector<uint32_t> ids, uint64_t epoch) const;
+    mutable std::mutex narrowMutex_;
+    mutable bool narrowValid_ = false;
+    mutable uint64_t narrowEpoch_ = 0;
+    mutable NarrowKey narrowKey_{};
+    mutable std::vector<uint32_t> narrowIds_;
 
     // Phase 2 two-stage startup: trigram indices built in background
     std::atomic<bool> phase2Pending_{false};

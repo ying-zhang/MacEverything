@@ -710,6 +710,55 @@ static void unionSortedInto(std::vector<uint32_t>& dest,
     dest = std::move(merged);
 }
 
+bool betterMatch(const SearchEngine::Match& a, const SearchEngine::Match& b) {
+    if (a.score != b.score) return a.score < b.score;
+    return a.idx < b.idx;
+}
+
+/// Keep at most `limit` best matches. A full buffer is cut with nth_element
+/// once it reaches twice the limit, so a wide hit set does not retain every score.
+void considerMatch(std::vector<SearchEngine::Match>& buf, SearchEngine::Match match, size_t limit) {
+    buf.push_back(match);
+    if (limit == 0 || buf.size() < limit * 2) return;
+    std::nth_element(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(limit), buf.end(), betterMatch);
+    buf.resize(limit);
+}
+
+void boundMatches(std::vector<SearchEngine::Match>& buf, size_t limit) {
+    if (limit == 0 || buf.size() <= limit) return;
+    std::nth_element(buf.begin(), buf.begin() + static_cast<std::ptrdiff_t>(limit), buf.end(), betterMatch);
+    buf.resize(limit);
+}
+
+void noteCapturedId(std::vector<uint32_t>& ids, uint32_t idx,
+                    std::atomic<size_t>* count, size_t limit, std::atomic<bool>* exceeded) {
+    if (!count) return;
+    size_t seen = count->fetch_add(1, std::memory_order_relaxed);
+    if (seen < limit) ids.push_back(idx);
+    else exceeded->store(true, std::memory_order_relaxed);
+}
+
+void commitCaptured(QueryCandidateScope* scope,
+                    const std::vector<std::vector<uint32_t>>& parts,
+                    bool exceeded) {
+    if (!scope || !scope->capturedIds) return;
+    if (exceeded) {
+        scope->captureExceeded = true;
+        return;
+    }
+    size_t total = 0;
+    for (const auto& part : parts) total += part.size();
+    if (total > scope->captureLimit) {
+        scope->captureExceeded = true;
+        return;
+    }
+    auto& out = *scope->capturedIds;
+    out.reserve(out.size() + total);
+    for (const auto& part : parts) {
+        out.insert(out.end(), part.begin(), part.end());
+    }
+}
+
 } // anonymous namespace
 
 // Expose extractRegexLiterals for unit testing
@@ -724,7 +773,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                                    bool useTrigram,
                                                    QueryTimingInfo& timing,
                                                    uint64_t myGen,
-                                                   const std::atomic<uint64_t>* genPtr) const {
+                                                   const std::atomic<uint64_t>* genPtr,
+                                                   QueryCandidateScope* scope) const {
     // If no external generation pointer, create a local dummy (no cancellation)
     std::atomic<uint64_t> dummyGen{myGen};
     if (!genPtr) genPtr = &dummyGen;
@@ -766,15 +816,31 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     std::shared_lock lock(mutex_);
     auto afterLock = std::chrono::steady_clock::now();
 
+    auto bailCancel = [&]() -> std::vector<uint32_t> {
+        if (scope) scope->cancelled = true;
+        return {};
+    };
+
+    if (scope) scope->observedEpoch = mutationEpoch_.load(std::memory_order_relaxed);
     if (types_.empty()) return {};
     size_t totalSize = types_.size();
     auto beforeTrigram = afterLock, afterTrigram = afterLock;
 
     // --- Trigram pre-filtering: competitive selection among name, regex, and path trigrams ---
-    std::string trigramKey = bestTrigramTerm(*ast);
-    auto allTermKeys = allTrigramTerms(*ast);
+    std::string trigramKey;
+    auto allTermKeys = std::vector<std::string>{};
     std::vector<uint32_t> candidates;
     bool useTrigramIndex = false;
+    bool narrowed = false;
+    bool extOk = false;
+    if (scope && scope->restrictIds && scope->restrictEpoch == scope->observedEpoch) {
+        narrowed = true;
+        scope->usedNarrow = true;
+        useTrigramIndex = true;
+    }
+    if (!narrowed) {
+    trigramKey = bestTrigramTerm(*ast);
+    allTermKeys = allTrigramTerms(*ast);
 
     // Stage 1: Plain TERM trigram over both filename and path.
     // For multi-word AND queries, intersect candidates of ALL terms for tighter filtering.
@@ -996,7 +1062,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 bool skipExpansion = nameOk && pathIdxCands.size() >= nameCands.size();
                 if (!skipExpansion) {
                     for (uint32_t pi : pathIdxCands) {
-                        if (genPtr->load(std::memory_order_relaxed) != myGen) return {};
+                        if (genPtr->load(std::memory_order_relaxed) != myGen) return bailCancel();
                         if (pi >= pathIdxToRecords_.size()) continue;
                         const auto& recIds = pathIdxToRecords_[pi];
                         pathCands.insert(pathCands.end(), recIds.begin(), recIds.end());
@@ -1013,7 +1079,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
     // Stage 4: Extension index pre-filtering
     std::vector<uint32_t> extCands;
-    bool extOk = false;
     {
         auto extValues = extractExtFilterValues(*ast);
         if (!extValues.empty() && !extensionIndex_.empty()) {
@@ -1058,6 +1123,24 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         }
         useTrigramIndex = true;
     }
+    } // !narrowed
+
+    const uint32_t* scanIds = nullptr;
+    size_t scanCount = 0;
+    if (narrowed) {
+        scanIds = scope->restrictIds->data();
+        scanCount = scope->restrictIds->size();
+    } else if (useTrigramIndex) {
+        scanIds = candidates.data();
+        scanCount = candidates.size();
+    }
+    const bool scanCandidates = narrowed || useTrigramIndex;
+    std::atomic<size_t> capturedCount{0};
+    std::atomic<bool> capturedExceeded{false};
+    const bool captureIds = scope && scope->capturedIds != nullptr;
+    const size_t captureLimit = captureIds ? scope->captureLimit : 0;
+    std::atomic<size_t>* captureCountPtr = captureIds ? &capturedCount : nullptr;
+    std::atomic<bool>* captureExceededPtr = captureIds ? &capturedExceeded : nullptr;
 
     // Evaluate AST against each candidate (or all records for linear scan)
     // Uses SearchEngine::Match (declared in SearchEngine.h)
@@ -1069,9 +1152,10 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
     auto beforePhase = std::chrono::steady_clock::now();
 
-    if (useTrigramIndex) {
-        // Trigram-filtered path with parallel dispatch + software prefetch
-        const size_t candidateCount = candidates.size();
+    if (scanCandidates) {
+        // Trigram-filtered path with parallel dispatch + software prefetch.
+        // A narrowed query scans the previous hit list instead.
+        const size_t candidateCount = scanCount;
         constexpr size_t PARALLEL_THRESHOLD = 10000;
         constexpr size_t PREFETCH_DIST = 8;
 
@@ -1083,8 +1167,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             size_t chunkSize = (candidateCount + numThreads - 1) / numThreads;
 
             auto threadResults = std::make_shared<std::vector<std::vector<Match>>>(numThreads);
+            auto threadIds = std::make_shared<std::vector<std::vector<uint32_t>>>(numThreads);
             uint64_t capturedGen = myGen;
-            const uint32_t* candidatesData = candidates.data();
+            const uint32_t* candidatesData = scanIds;
             const auto* astPtr = ast.get();
             const auto* typesPtr = types_.data();
             const auto* sizesPtr = sizes_.data();
@@ -1105,6 +1190,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                 size_t end = std::min(start + chunkSize, candidateCount);
                 if (start >= end) return;
                 auto& local = (*threadResults)[t];
+                auto& localIds = (*threadIds)[t];
                 std::vector<char> localPathBuf;
                 std::string lowerPathBuf;
                 const auto& regCache = ptcPtr[t];
@@ -1137,27 +1223,31 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   localPathBuf, regCache)) continue;
                     uint32_t sc = computeMultiTermScore(nd, nl, sTerms,
                                                         static_cast<uint32_t>(opl + 1 + nl));
-                    local.push_back({idx, sc});
+                    noteCapturedId(localIds, idx, captureCountPtr, captureLimit, captureExceededPtr);
+                    considerMatch(local, {idx, sc}, maxResults);
                 }
+                boundMatches(local, maxResults);
             };
             using EvaluateChunk = decltype(evaluateChunk);
             dispatch_apply_f(numThreads, queue, &evaluateChunk, [](void* context, size_t t) {
                 (*static_cast<EvaluateChunk*>(context))(t);
             });
 
-            if (genPtr->load(std::memory_order_relaxed) != myGen) return {};
+            if (genPtr->load(std::memory_order_relaxed) != myGen) return bailCancel();
+            commitCaptured(scope, *threadIds, capturedExceeded.load(std::memory_order_relaxed));
             for (auto& v : *threadResults) {
                 merged.insert(merged.end(), v.begin(), v.end());
             }
         } else {
             // Small candidate set — single-threaded with prefetch
             std::string smallLowerPathBuf;
-            const uint32_t* candidatesData = candidates.data();
+            std::vector<uint32_t> serialIds;
+            const uint32_t* candidatesData = scanIds;
             const auto* smallTypesPtr = types_.data();
             const auto* smallSizesPtr = sizes_.data();
             const auto* smallModTimesPtr = modTimes_.data();
             for (size_t ci = 0; ci < candidateCount; ci++) {
-                if ((ci & 1023) == 0 && genPtr->load(std::memory_order_relaxed) != myGen) return {};
+                if ((ci & 1023) == 0 && genPtr->load(std::memory_order_relaxed) != myGen) return bailCancel();
                 if (ci + PREFETCH_DIST < candidateCount) {
                     uint32_t futureIdx = candidatesData[ci + PREFETCH_DIST];
                     __builtin_prefetch(smallTypesPtr + futureIdx, 0, 0);
@@ -1185,8 +1275,11 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                               pathBuf, regexCache)) continue;
                 uint32_t sc = computeMultiTermScore(nd, nl, scoringTerms,
                                                     static_cast<uint32_t>(opl + 1 + nl));
-                merged.push_back({idx, sc});
+                noteCapturedId(serialIds, idx, captureCountPtr, captureLimit, captureExceededPtr);
+                considerMatch(merged, {idx, sc}, maxResults);
             }
+            boundMatches(merged, maxResults);
+            commitCaptured(scope, {serialIds}, capturedExceeded.load(std::memory_order_relaxed));
         }
     } else {
         // Linear scan — parallelize with GCD dispatch_apply
@@ -1198,6 +1291,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
         size_t chunkSize = (totalSize + numThreads - 1) / numThreads;
         auto threadResults = std::make_shared<std::vector<std::vector<Match>>>(numThreads);
+        auto threadIds = std::make_shared<std::vector<std::vector<uint32_t>>>(numThreads);
 
         uint64_t capturedGen = myGen;
         bool pureFilter = needs.isPureFilter();
@@ -1224,6 +1318,7 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
             if (start >= end) return;
 
             auto& local = (*threadResults)[t];
+            auto& localIds = (*threadIds)[t];
             std::vector<char> localPathBuf;
             std::string lowerPathBuf;
             const auto& regCache = ptcPtr[t];
@@ -1242,7 +1337,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   static_cast<time_t>(modTimesPtr[idx]),
                                   nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                   localPathBuf, regCache)) continue;
-                    local.push_back({static_cast<uint32_t>(idx), SearchEngine::encodeScore(0, 0, 0)});
+                    uint32_t id = static_cast<uint32_t>(idx);
+                    noteCapturedId(localIds, id, captureCountPtr, captureLimit, captureExceededPtr);
+                    considerMatch(local, {id, SearchEngine::encodeScore(0, 0, 0)}, maxResults);
                 }
 
                 // SIMD main loop: 16 records per iteration
@@ -1259,7 +1356,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                      static_cast<time_t>(modTimesPtr[ri]),
                                      nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                      localPathBuf, regCache)) {
-                            local.push_back({static_cast<uint32_t>(ri), SearchEngine::encodeScore(0, 0, 0)});
+                            uint32_t id = static_cast<uint32_t>(ri);
+                            noteCapturedId(localIds, id, captureCountPtr, captureLimit, captureExceededPtr);
+                            considerMatch(local, {id, SearchEngine::encodeScore(0, 0, 0)}, maxResults);
                         }
                         liveMask &= liveMask - 1;
                     }
@@ -1272,7 +1371,9 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                                   static_cast<time_t>(modTimesPtr[idx]),
                                   nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0, nullptr, 0,
                                   localPathBuf, regCache)) continue;
-                    local.push_back({static_cast<uint32_t>(idx), SearchEngine::encodeScore(0, 0, 0)});
+                    uint32_t id = static_cast<uint32_t>(idx);
+                    noteCapturedId(localIds, id, captureCountPtr, captureLimit, captureExceededPtr);
+                    considerMatch(local, {id, SearchEngine::encodeScore(0, 0, 0)}, maxResults);
                 }
             } else {
                 // ── Full evaluation path (needs string access) ──
@@ -1302,9 +1403,12 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
 
                     uint32_t sc = computeMultiTermScore(nd, nl, sTerms,
                                                         static_cast<uint32_t>(opl + 1 + nl));
-                    local.push_back({static_cast<uint32_t>(idx), sc});
+                    uint32_t id = static_cast<uint32_t>(idx);
+                    noteCapturedId(localIds, id, captureCountPtr, captureLimit, captureExceededPtr);
+                    considerMatch(local, {id, sc}, maxResults);
                 }
             }
+            boundMatches(local, maxResults);
         };
         using EvaluateChunk = decltype(evaluateChunk);
         dispatch_apply_f(numThreads, queue, &evaluateChunk, [](void* context, size_t t) {
@@ -1312,7 +1416,8 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
         });
 
         // Check if superseded after dispatch_apply
-        if (genPtr->load(std::memory_order_relaxed) != myGen) return {};
+        if (genPtr->load(std::memory_order_relaxed) != myGen) return bailCancel();
+        commitCaptured(scope, *threadIds, capturedExceeded.load(std::memory_order_relaxed));
 
         // Merge thread-local results
         for (auto& v : *threadResults) {
@@ -1326,10 +1431,10 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     auto beforeUnlock = std::chrono::steady_clock::now();
     lock.unlock();
 
-    // Sort by composite score (lower = better)
+    // Sort by composite score (lower = better), then record index.
     auto beforeSort = std::chrono::steady_clock::now();
     auto cmp = [](const Match& a, const Match& b) {
-        return a.score < b.score;
+        return betterMatch(a, b);
     };
 
     size_t resultCount = merged.size();
@@ -1358,12 +1463,14 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     timing.phase1Ms = 0;
     timing.phase2Ms = toMs(afterPhase - beforePhase);
     timing.totalRecords = totalSize;
-    timing.candidates = candidates.size();
+    timing.candidates = narrowed ? scanCount : candidates.size();
     timing.nameMatches = 0;
     timing.pathMatches = 0;
     timing.resultCount = result.size();
-    timing.usedTrigram = useTrigramIndex;
-    if (useTrigramIndex) {
+    timing.usedTrigram = useTrigramIndex && !narrowed;
+    if (narrowed) {
+        timing.searchPath = "advanced-narrow";
+    } else if (useTrigramIndex) {
         if (!trigramKey.empty()) {
             timing.searchPath = "advanced-trigram";
         } else if (extOk && !extractExtFilterValues(*ast).empty()) {
@@ -1389,4 +1496,68 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
     }
 
     return result;
+}
+
+bool SearchEngine::NarrowKey::narrowsFrom(const NarrowKey& previous) const {
+    if (pinyin != previous.pinyin) return false;
+    if (previous.terms.empty() || terms.size() < previous.terms.size()) return false;
+    for (size_t i = 0; i < previous.terms.size(); ++i) {
+        if (terms[i].caseSensitive != previous.terms[i].caseSensitive) return false;
+        const std::string& older = previous.terms[i].text;
+        const std::string& newer = terms[i].text;
+        if (newer.size() < older.size() || newer.find(older) == std::string::npos) return false;
+    }
+    return true;
+}
+
+bool SearchEngine::plainSubstringKey(const std::string& input, NarrowKey& out) const {
+    auto ast = QueryParser::parse(input);
+    if (!ast) return false;
+    ast = transformSlashTerms(std::move(ast));
+    ast = transformGlobTerms(std::move(ast));
+    if (!ast) return false;
+
+    std::function<bool(const QueryNode&, std::vector<NarrowTerm>&)> collect =
+        [&](const QueryNode& node, std::vector<NarrowTerm>& terms) -> bool {
+            if (node.type == QueryNodeType::TERM) {
+                if (node.mode != MatchMode::SUBSTRING) return false;
+                if (node.matchPath || node.nameOnly || node.useNameKind || node.text.empty()) return false;
+                NarrowTerm term;
+                term.caseSensitive = node.caseSensitive;
+                term.text = node.caseSensitive ? node.text : node.textLower;
+                terms.push_back(std::move(term));
+                return true;
+            }
+            if (node.type != QueryNodeType::AND || node.children.empty()) return false;
+            for (const auto& child : node.children) {
+                if (!child || !collect(*child, terms)) return false;
+            }
+            return !terms.empty();
+        };
+
+    NarrowKey key;
+    key.pinyin = options_.enablePinyinInitials;
+    if (!collect(*ast, key.terms)) return false;
+    out = std::move(key);
+    return true;
+}
+
+bool SearchEngine::loadNarrowIds(const NarrowKey& key, std::vector<uint32_t>& ids, uint64_t& epoch) const {
+    std::lock_guard<std::mutex> lock(narrowMutex_);
+    if (!narrowValid_) return false;
+    if (mutationEpoch_.load(std::memory_order_acquire) != narrowEpoch_) return false;
+    if (!key.narrowsFrom(narrowKey_)) return false;
+    ids = narrowIds_;
+    epoch = narrowEpoch_;
+    return true;
+}
+
+void SearchEngine::storeNarrowIds(const NarrowKey& key, std::vector<uint32_t> ids, uint64_t epoch) const {
+    if (ids.size() > kNarrowCaptureLimit) return;
+    std::lock_guard<std::mutex> lock(narrowMutex_);
+    if (mutationEpoch_.load(std::memory_order_acquire) != epoch) return;
+    narrowKey_ = key;
+    narrowIds_ = std::move(ids);
+    narrowEpoch_ = epoch;
+    narrowValid_ = true;
 }

@@ -150,6 +150,9 @@ NS_ASSUME_NONNULL_BEGIN
 /// Clear the unmounting flag for a volume path.
 - (void)clearVolumeUnmounting:(NSString *)volumePath;
 
+/// Refresh FSEvents after a volume is connected or ejected.
+- (void)refreshVolumeMonitoring;
+
 /// Whether a scan is currently in progress.
 @property (nonatomic, readonly) BOOL isScanning;
 

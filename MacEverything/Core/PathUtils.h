@@ -32,6 +32,29 @@ inline bool pathContainsOrEquals(const std::string& parent,
            child[parentLen] == '/';
 }
 
+/// True when `path` is on a `/Volumes/<name>` mount that is not connected.
+/// A missing folder on a volume that is currently mounted returns false.
+inline bool isUnmountedVolumePath(const std::string& rawPath) {
+    std::string path = rawPath;
+    while (path.size() > 1 && path.back() == '/') path.pop_back();
+    constexpr const char* prefix = "/Volumes/";
+    constexpr size_t prefixLen = 9;
+    if (path.size() <= prefixLen || path.compare(0, prefixLen, prefix) != 0) {
+        return false;
+    }
+    const size_t slash = path.find('/', prefixLen);
+    const std::string volume = path.substr(0, slash == std::string::npos ? path.size() : slash);
+    if (volume.size() <= prefixLen) return false;
+
+    struct statfs* mounts = nullptr;
+    const int mountCount = getmntinfo(&mounts, MNT_NOWAIT);
+    for (int i = 0; i < mountCount; ++i) {
+        const char* mountPoint = mounts[i].f_mntonname;
+        if (mountPoint && volume == mountPoint) return false;
+    }
+    return true;
+}
+
 /// Detect a mounted filesystem that is not marked local (SMB, NFS, etc.).
 inline bool isNetworkFilesystem(const std::string& path) {
     struct statfs fsInfo = {};

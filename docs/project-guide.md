@@ -194,7 +194,7 @@ posting-list 求交统一由 `PostingListIntersection.h` 处理：尺寸接近�
 | 2 | 文件名包含匹配 | `my-readme-file.txt` |
 | 3（最低） | 仅路径匹配 | `/readme-project/config.json` |
 
-同级内按完整路径长度升序（短路径优先）。当 `maxResults < 总匹配数` 时，使用 `partial_sort`（O(N·log K)）而非全排序（O(N·log N)）。
+同级内按完整路径长度升序（短路径优先），路径长度也相同则按记录号升序。扫描时每个线程只保留最好的 `maxResults` 条（缓冲区达到 2K 后用 `nth_element` 截断），合并后再 `partial_sort`。普通子串查询会另存全部命中记录号；下一次能证明是收窄的输入只重验这批记录。OR、NOT、通配符、正则、过滤器和索引变更都不复用。
 
 **短关键词和 glob 模式**：关键词 < 3 字符或包含 `*`/`?` 时，无法使用 trigram 索引，退化为并行线性扫描。
 
@@ -348,7 +348,7 @@ shutdown()
 | 列表交集 | 迭代最短列表 | O(min(k1, k2, ...))，ki = posting list 长度 |
 | 子串验证 | 每个候选做子串匹配 | O(C·L)，C = 候选数，L = 文件名长度 |
 | Phase 2 路径扫描 | 并行线性扫描 | O(N/P)，P = 并行度 |
-| 排序 | partial_sort | O(M·log K)，M = 匹配数，K = maxResults |
+| 排序 | 线程内有界保留 + partial_sort | O(K·log K)，K = maxResults；匹配本身仍要看完候选 |
 
 **关键路径优化**：
 - `__builtin_prefetch`：提前 4 条预取 `records_[]` 数据，隐藏随机访问延迟
@@ -508,7 +508,7 @@ App 启动
       → engine.query(keyword, maxResults)
         → Phase 1: trigram 交集 + 验证
         → Phase 2: 路径补充扫描
-        → 4 级排序 + partial_sort
+        → 有界 Top-K + 记录号同分；普通子串可复用上一轮完整候选
       → forEachRecordWithPath()（单次 shared_lock 批量读取）
     → UI 更新结果列表
 ```

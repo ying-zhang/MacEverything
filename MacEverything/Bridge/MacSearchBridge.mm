@@ -403,6 +403,10 @@ static std::string AppBundleVersion() {
     _serviceEngine->clearVolumeUnmounting(std::string([volumePath UTF8String]));
 }
 
+- (void)refreshVolumeMonitoring {
+    _serviceEngine->refreshMonitoringForVolumeChange();
+}
+
 // ═══════════════════════════════════════════════════════
 //  Query methods — type conversion layer
 // ═══════════════════════════════════════════════════════

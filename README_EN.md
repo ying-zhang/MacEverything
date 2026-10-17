@@ -333,13 +333,15 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 | Adaptive Trigram bypass | Falls back to parallel scan when candidate set is too large, avoiding wasteful index lookups |
 | Safe FSEvents replay | Normalizes exclusion paths, filters self-generated cache events, and drains callback queues during shutdown to avoid races and unnecessary full rescans |
 | USB hot-plug index maintenance | `willUnmount` pre-cleanup + `didMount` auto-rescan + `config_` shared_mutex thread safety + automatic FSEvents restart |
-| Multi-term composite scoring | Ranks by miss count (query terms not in filename) + match quality (exact/prefix/boundary/substring) + path length — more precise results for multi-word queries |
+| Multi-term composite scoring | Ranks by miss count (query terms not in filename) + match quality (exact/prefix/boundary/substring) + path length, then record index — more precise results for multi-word queries |
+| Continuous-input candidate reuse | A longer plain substring query rechecks the previous query's full hit list, not the truncated rows shown in the window |
+| Match-stage top-K | Each thread keeps only the best `maxResults` rows before merging, cutting temporary memory and sort cost on wide queries |
 | COW non-blocking compaction | Copy-on-write, exclusive lock held < 100ms during compaction (was 30–60s) |
 | Paged incremental persistence | Only writes dirty pages, typical flush I/O drops from ~112MB to KB-level |
 
 ### Testing
 
-87 C++ test modules plus Swift tests cover the full stack, with AddressSanitizer and ThreadSanitizer support:
+88 C++ test modules plus Swift tests cover the full stack, with AddressSanitizer and ThreadSanitizer support:
 
 ```bash
 make test          # Fast unit tests + bridge lint
@@ -383,7 +385,7 @@ MacEverything/
 ├── CLI/                   # Command-line tools
 │   ├── mace_main          # Short query client
 │   └── mcp_main           # MCP server (stdio JSON-RPC)
-└── tests/                 # 87 C++ test modules plus Swift tests
+└── tests/                 # 88 C++ test modules plus Swift tests
 ```
 
 ## Contributing

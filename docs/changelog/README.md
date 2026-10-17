@@ -8,6 +8,7 @@
 
 | # | 类型 | 标题 | 日期 |
 |---|------|------|------|
+| [155](155-candidate-reuse-topk.md) | performance | 连续输入候选复用与匹配阶段 Top-K | 2026-10-17 |
 | [154](154-release-1.9.27.md) | release | MacEverything 1.9.27 发布说明 | 2026-09-27 |
 | [153](153-review-fixes-nas-lifecycle.md) | bugfix | NAS 同步与启动失败处理修复 | 2026-09-27 |
 | [001](001-测试框架模块化拆分.md) | refactor | 测试框架模块化拆分 | 2026-04-14 |

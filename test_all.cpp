@@ -77,6 +77,7 @@ namespace fs = std::filesystem;
 #include "tests/test_instance_lock.h"
 #include "tests/test_instance_lock_enforcement.h"
 #include "tests/test_http_security.h"
+#include "tests/test_narrow_topk.h"
 #include "tests/test_wal_batch_replay.h"
 #include "tests/test_wal_rename_chain.h"
 #include "tests/test_rescan_debounce.h"
@@ -195,7 +196,8 @@ static void printUsage(const char* prog) {
     std::cout << "  76 (FSEvents search latency),\n";
     std::cout << "  77 (scanner config overrides),\n";
     std::cout << "  78 (review regressions), 79 (adaptive index kernels),\n";
-    std::cout << "  80 (instance lock enforcement), 81 (HTTP security regression)\n";
+    std::cout << "  80 (instance lock enforcement), 81 (HTTP security regression),\n";
+    std::cout << "  82 (candidate reuse and top-K)\n";
 }
 
 int main(int argc, char* argv[]) {
@@ -212,7 +214,7 @@ int main(int argc, char* argv[]) {
         } else if (arg == "--fast") {
             explicitSelection = true;
             gSkipPerformanceTests = true;
-            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "5", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "22", "23", "25", "26", "27", "28", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "43", "45", "47", "48", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "70", "71", "72", "73", "74", "75", "77", "78", "79", "80", "81"});
+            selectedParts.insert({"3", "3b", "3c", "3d", "3e", "5", "7", "7f", "8", "11", "13", "15", "16", "17", "18", "20", "22", "23", "25", "26", "27", "28", "29", "30", "31", "34", "35", "36", "37", "39", "40", "42", "43", "45", "47", "48", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "70", "71", "72", "73", "74", "75", "77", "78", "79", "80", "81", "82"});
         } else if (arg == "--bench") {
             explicitSelection = true;
             selectedParts.insert({"44", "46"});
@@ -240,7 +242,7 @@ int main(int argc, char* argv[]) {
 
     // If no explicit selection, run all parts
     if (!explicitSelection) {
-        selectedParts = {"1", "3", "3b", "3c", "3d", "3e", "4", "5", "6", "7", "7b", "7c", "7d", "7e", "7f", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "34", "35", "36", "37", "38", "39", "40", "42", "43", "44", "45", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81"};
+        selectedParts = {"1", "3", "3b", "3c", "3d", "3e", "4", "5", "6", "7", "7b", "7c", "7d", "7e", "7f", "8", "9", "10", "11", "12", "13", "14", "15", "16", "17", "18", "19", "20", "21", "22", "23", "24", "25", "26", "27", "28", "29", "30", "31", "32", "34", "35", "36", "37", "38", "39", "40", "42", "43", "44", "45", "47", "48", "49", "50", "51", "52", "53", "54", "55", "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67", "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79", "80", "81", "82"};
     }
 
     static const std::set<std::string> knownParts = {
@@ -251,7 +253,7 @@ int main(int argc, char* argv[]) {
         "43", "44", "45", "46", "47", "48", "49", "50", "51", "52", "53", "54", "55",
         "56", "57", "58", "59", "60", "61", "62", "63", "64", "65", "66", "67",
         "68", "69", "70", "71", "72", "73", "74", "75", "76", "77", "78", "79",
-        "80", "81"
+        "80", "81", "82"
     };
     for (const auto& part : selectedParts) {
         if (!knownParts.count(part)) {
@@ -385,6 +387,7 @@ int main(int argc, char* argv[]) {
     if (selectedParts.count("79")) runAdaptiveIndexKernelTests();
     if (selectedParts.count("80")) runInstanceLockEnforcementTests();
     if (selectedParts.count("81")) runHttpSecurityTests();
+    if (selectedParts.count("82")) runNarrowTopKTests();
 
     if (savedStdout >= 0) {
         std::cout.flush();

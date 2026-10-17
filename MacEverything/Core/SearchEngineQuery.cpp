@@ -358,10 +358,11 @@ std::vector<uint32_t> SearchEngine::query(const std::string& keyword, uint32_t m
         auto beforeUnlock = std::chrono::steady_clock::now();
         lock.unlock();
 
-        // Sort by composite score (lower = better)
+        // Sort by composite score (lower = better), then record index.
         auto beforeSort = std::chrono::steady_clock::now();
         auto cmp = [](const Match& a, const Match& b) {
-            return a.score < b.score;
+            if (a.score != b.score) return a.score < b.score;
+            return a.idx < b.idx;
         };
         size_t resultCount = merged.size();
         if (maxResults > 0 && resultCount > maxResults) resultCount = maxResults;
@@ -396,8 +397,29 @@ std::vector<uint32_t> SearchEngine::query(const std::string& keyword, uint32_t m
         ? maxResults
         : normalizationQueryLimit(maxResults);
 
-    auto result = queryAdvanced(pq.original, internalMaxResults, useTrigram, timing, myGen, genAtom.get());
-    if (genAtom->load(std::memory_order_relaxed) != myGen) return {};
+    // Plain substring queries keep every hit so the next keystroke can rescan
+    // that set. Unicode alternates, aliases, and other syntax stay on the full path.
+    QueryCandidateScope candidateScope;
+    std::vector<uint32_t> restrictIds;
+    std::vector<uint32_t> capturedIds;
+    NarrowKey plainKey;
+    const bool plain = alternate.empty() && plainSubstringKey(pq.original, plainKey);
+    if (plain) {
+        uint64_t restrictEpoch = 0;
+        if (loadNarrowIds(plainKey, restrictIds, restrictEpoch)) {
+            candidateScope.restrictIds = &restrictIds;
+            candidateScope.restrictEpoch = restrictEpoch;
+        }
+        candidateScope.capturedIds = &capturedIds;
+        candidateScope.captureLimit = kNarrowCaptureLimit;
+    }
+
+    auto result = queryAdvanced(pq.original, internalMaxResults, useTrigram, timing,
+                                myGen, genAtom.get(), plain ? &candidateScope : nullptr);
+    if (genAtom->load(std::memory_order_relaxed) != myGen || candidateScope.cancelled) return {};
+    if (plain && !candidateScope.captureExceeded && capturedIds.size() <= kNarrowCaptureLimit) {
+        storeNarrowIds(plainKey, std::move(capturedIds), candidateScope.observedEpoch);
+    }
 
     // macOS often stores filenames as decomposed Unicode while users type NFC.
     // Retry the alternate normalization on demand without adding a second index.

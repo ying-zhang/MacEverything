@@ -369,6 +369,18 @@ bool ServiceEngine::isVolumeUnmounting(const std::string& path) const {
     return false;
 }
 
+void ServiceEngine::pruneUnmountedVolumes(const std::shared_ptr<SearchEngine>& engine) {
+    if (!engine) return;
+    for (const auto& root : effectiveScanRoots()) {
+        if (!PathUtils::isUnmountedVolumePath(root)) continue;
+        const uint32_t removed = engine->removeByPathPrefix(root);
+        if (removed > 0) {
+            LOG_INFO("ServiceEngine", "Dropped " << removed
+                     << " cached records for unmounted volume: " << root);
+        }
+    }
+}
+
 // ═══════════════════════════════════════════════════════
 //  Full scan
 // ═══════════════════════════════════════════════════════
@@ -503,6 +515,9 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
         uint64_t lastEventId = persistence->load(this->configSignature());
         if (!this->isGenerationCurrent(generation)) return;
         auto indexLoadDone = std::chrono::steady_clock::now();
+        // Drop records for external disks that were unplugged while the app
+        // was not running. The root stays configured and is scanned on mount.
+        this->pruneUnmountedVolumes(engine);
         uint32_t loadedCount = engine->liveRecordCount();
 
         if (loadedCount > 0) {
@@ -616,18 +631,22 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
     }
 
     // Rebuild replaces the in-memory engine and removes persisted files before
-    // scanning. Reject an unavailable root first so an unmounted NAS or disk
-    // cannot destroy the last usable index.
+    // scanning. An unplugged external volume is skipped and indexed again when
+    // it mounts. A missing local folder still blocks the rebuild so it cannot
+    // destroy the last usable index.
     for (const auto& root : effectiveScanRoots()) {
         struct stat rootStat{};
-        if (stat(root.c_str(), &rootStat) != 0 || !S_ISDIR(rootStat.st_mode)) {
-            const std::string reason = "Rebuild blocked: scan root unavailable: " + root;
-            LOG_ERROR("ServiceEngine", reason);
-            rebuilding_.store(false, std::memory_order_release);
-            if (onStartupFailed) onStartupFailed(reason);
-            if (completion) completion(0, false);
-            return;
+        if (stat(root.c_str(), &rootStat) == 0 && S_ISDIR(rootStat.st_mode)) continue;
+        if (PathUtils::isUnmountedVolumePath(root)) {
+            LOG_INFO("ServiceEngine", "Rebuild skipping unmounted volume: " << root);
+            continue;
         }
+        const std::string reason = "Rebuild blocked: scan root unavailable: " + root;
+        LOG_ERROR("ServiceEngine", reason);
+        rebuilding_.store(false, std::memory_order_release);
+        if (onStartupFailed) onStartupFailed(reason);
+        if (completion) completion(0, false);
+        return;
     }
 
     auto oldContent = safeContentIndex();
@@ -758,6 +777,10 @@ void ServiceEngine::backgroundSyncEngine(
         std::vector<std::string> networkRoots;
         std::vector<std::string> localRoots;
         for (const auto& root : roots) {
+            if (PathUtils::isUnmountedVolumePath(root)) {
+                LOG_INFO("ServiceEngine", "Deferring unmounted volume during sync: " << root);
+                continue;
+            }
             if (PathUtils::isNetworkFilesystem(root)) {
                 hasNetworkRoot = true;
                 networkRoots.push_back(root);
@@ -792,6 +815,25 @@ void ServiceEngine::backgroundSyncEngine(
             // Reconcile NAS roots by polling, but still replay local roots
             // from the persisted event watermark below.
             roots = std::move(localRoots);
+        } else {
+            roots = std::move(localRoots);
+        }
+
+        if (roots.empty()) {
+            LOG_INFO("ServiceEngine", "No mounted local roots to replay");
+            this->isSyncing_.store(false, std::memory_order_relaxed);
+            if (config.realtimeMonitoring) this->startMonitoring();
+            if (config.automaticMaintenanceEnabled) {
+                sharedPersistence->startAutoCompaction(300.0, this->watcher_);
+            }
+            if (config.contentIndexingEnabled) {
+                dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
+                    if (!this->isGenerationCurrent(generation)) return;
+                    this->startContentIndexing();
+                });
+            }
+            if (this->onIndexChanged) this->onIndexChanged();
+            return;
         }
 
         // Try FSEvents replay

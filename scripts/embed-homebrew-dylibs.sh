@@ -143,6 +143,22 @@ rewrite_binary_references() {
   done < <(otool -L "$path" | awk 'NR > 1 { print $1 }')
 }
 
+# Sign embedded libraries with the same identity as the app. A separate ad-hoc
+# signature gets its own Team ID, and hardened runtime then refuses to load
+# libre2 ("mapping process and mapped file have different Team IDs").
+sign_identity="${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}"
+if [[ -z "$sign_identity" ]]; then
+  sign_identity="-"
+fi
+
+sign_embedded() {
+  local target="$1"
+  if ! codesign --force --sign "$sign_identity" "$target"; then
+    echo "error: codesign failed for $target (identity: $sign_identity)" >&2
+    exit 1
+  fi
+}
+
 rewrite_dylib_references() {
   local dylib
   for dylib in "$FRAMEWORKS_DIR"/*.dylib "$APP_PATH/Contents/MacOS"/*.dylib; do
@@ -161,7 +177,7 @@ rewrite_dylib_references() {
       fi
     done < <(otool -L "$dylib" | awk 'NR > 1 { print $1 }')
 
-    codesign --force --sign - "$dylib" >/dev/null 2>&1
+    sign_embedded "$dylib"
   done
 }
 
@@ -174,8 +190,10 @@ for binary in "${BINARIES[@]}"; do
   path="$APP_PATH/Contents/MacOS/$binary"
   [[ -f "$path" ]] || continue
   codesign --remove-signature "$path" >/dev/null 2>&1 || true
-  codesign --force --sign - "$path" >/dev/null 2>&1
+  sign_embedded "$path"
 done
+
+echo "Signed embedded Mach-O images with identity: $sign_identity"
 
 if [[ -n "${SCRIPT_OUTPUT_FILE_0:-}" ]]; then
   mkdir -p "$(dirname "$SCRIPT_OUTPUT_FILE_0")"

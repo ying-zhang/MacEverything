@@ -115,6 +115,8 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
     stats_.otherCount.store(0, std::memory_order_relaxed);
     stats_.errorCount.store(0, std::memory_order_relaxed);
     rootFailureCount_.store(0, std::memory_order_relaxed);
+    deferredVolumeCount_.store(0, std::memory_order_relaxed);
+    reachableRootCount_.store(0, std::memory_order_relaxed);
 
     unsigned numThreads = std::thread::hardware_concurrency();
     bool hasNetworkRoot = false;
@@ -149,12 +151,22 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
             struct stat rootStat;
             const int statError = stat(rootPath.c_str(), &rootStat) == 0 ? 0 : errno;
             if (statError != 0 || !S_ISDIR(rootStat.st_mode)) {
+                // A USB or other external disk that is configured but not
+                // plugged in must not fail the rest of the scan. The root
+                // stays in the user's settings and is indexed on mount.
+                if (PathUtils::isUnmountedVolumePath(rootPath)) {
+                    deferredVolumeCount_.fetch_add(1, std::memory_order_acq_rel);
+                    LOG_INFO("Scanner", "Skipping unmounted volume until it is connected: "
+                             << rootPath);
+                    continue;
+                }
                 rootFailureCount_.fetch_add(1, std::memory_order_acq_rel);
                 stats_.errorCount.fetch_add(1, std::memory_order_relaxed);
                 LOG_WARN("Scanner", "Unable to scan root: " << rootPath
                          << " (" << (statError != 0 ? strerror(statError) : "not a directory") << ")");
                 continue;
             }
+            reachableRootCount_.fetch_add(1, std::memory_order_acq_rel);
             if (!tryVisitDirectory(rootStat.st_dev, rootStat.st_ino)) continue;
             workQueue_.push({rootPath, rootStat.st_dev});
         }

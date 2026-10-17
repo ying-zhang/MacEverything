@@ -91,6 +91,9 @@ public:
     void markVolumeUnmounting(const std::string& volumePath);
     void clearVolumeUnmounting(const std::string& volumePath);
     bool isVolumeUnmounting(const std::string& path) const;
+    /// Restart FSEvents after a volume mount or unmount so configured external
+    /// roots are watched only while they are connected.
+    void refreshMonitoringForVolumeChange();
 
     // ── Thread-safe accessors ──
     std::shared_ptr<SearchEngine> safeEngine();
@@ -172,6 +175,7 @@ private:
     static bool isInsideAppBundle(const std::string& path);
     static bool pathEndsWithApp(const std::string& path);
     std::vector<std::string> effectiveScanRoots() const;
+    void pruneUnmountedVolumes(const std::shared_ptr<SearchEngine>& engine);
     ScanConfig scanConfigForRoots(const std::vector<std::string>& roots) const;
     ScanConfig scanConfig() const;
     bool isPathAllowedByConfig(const std::string& path, bool forContent) const;

@@ -2,6 +2,7 @@
 #include "DirectoryScanner.h"
 #include "RescanDebounce.h"
 #include "Logger.h"
+#include <algorithm>
 #include <sys/stat.h>
 #include "PathUtils.h"
 
@@ -89,10 +90,30 @@ void ServiceEngine::applyFSEvents(
 //  Live monitoring
 // ═══════════════════════════════════════════════════════
 
+void ServiceEngine::refreshMonitoringForVolumeChange() {
+    if (shuttingDown_.load(std::memory_order_acquire)) return;
+    if (!safeConfig().realtimeMonitoring) return;
+    if (!startupCompleted_.load(std::memory_order_acquire)) return;
+    if (isMonitoring_.load(std::memory_order_acquire)) {
+        restartMonitoring();
+    } else {
+        startMonitoring();
+    }
+}
+
 void ServiceEngine::startMonitoring(FSEventStreamEventId sinceEventId) {
     if (isMonitoring_.load(std::memory_order_relaxed)) return;
 
     auto roots = effectiveScanRoots();
+    roots.erase(std::remove_if(roots.begin(), roots.end(), [](const std::string& root) {
+        if (!PathUtils::isUnmountedVolumePath(root)) return false;
+        LOG_INFO("FSWatcher", "Not watching unmounted volume: " << root);
+        return true;
+    }), roots.end());
+    if (roots.empty()) {
+        LOG_INFO("FSWatcher", "No mounted scan roots to watch");
+        return;
+    }
 
     // Exclude app's own cache directory from FSEvents
     auto cfg = safeConfig();
@@ -383,6 +404,11 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
         std::vector<std::string> roots{dirCopy};
         scanner->scan(roots, this->scanConfigForRoots(roots));
         this->unregisterScanner(scanner);
+        if (scanner->deferredVolumeCount() > 0 && scanner->reachableRootCount() == 0) {
+            LOG_INFO("ServiceEngine", "Subtree scan skipped; volume is not connected: " << dirCopy);
+            notifyCompletion();
+            return;
+        }
         if (!scanner->isComplete()) {
             const auto& stats = scanner->getStats();
             LOG_ERROR("ServiceEngine", "Subtree scan incomplete; preserving indexed subtree "

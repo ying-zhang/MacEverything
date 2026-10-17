@@ -1,4 +1,5 @@
 #pragma once
+#include <sys/mount.h>
 
 static void runReviewRegressionTests() {
     std::cout << "\n=== Part 78: Review Regression Tests ===\n";
@@ -11,6 +12,107 @@ static void runReviewRegressionTests() {
         fs::remove_all(missing);
         scanner.scan(missing.string());
         check(!scanner.isComplete(), "Review: inaccessible scan root is incomplete");
+    }
+
+    // An unplugged external volume is deferred. Other configured roots still
+    // scan, and a missing folder on a mounted volume remains a hard failure.
+    {
+        DirectoryScanner scanner;
+        const std::string missing = "/Volumes/maceverything_unmounted_" +
+            std::to_string(getpid());
+        scanner.scan(missing);
+        check(scanner.isComplete(), "Review: unmounted volume root is deferred");
+        check(scanner.deferredVolumeCount() == 1, "Review: unmounted volume is counted");
+        check(scanner.reachableRootCount() == 0, "Review: unmounted volume is not reachable");
+        check(scanner.takeResults().empty(), "Review: deferred volume adds no records");
+    }
+    {
+        const auto present = fs::temp_directory_path() /
+            ("maceverything_present_root_" + std::to_string(getpid()));
+        fs::remove_all(present);
+        fs::create_directories(present);
+        std::ofstream(present / "keep.txt") << "keep";
+        DirectoryScanner scanner;
+        scanner.scan(std::vector<std::string>{
+            present.string(),
+            "/Volumes/maceverything_unmounted_" + std::to_string(getpid())
+        });
+        check(scanner.isComplete(), "Review: present roots complete while a volume is absent");
+        bool found = false;
+        for (const auto& record : scanner.takeResults()) {
+            if (record.name == "keep.txt") found = true;
+        }
+        check(found, "Review: present root is indexed while a volume is absent");
+        fs::remove_all(present);
+    }
+    {
+        struct statfs* mounts = nullptr;
+        const int mountCount = getmntinfo(&mounts, MNT_NOWAIT);
+        std::string mounted;
+        for (int i = 0; i < mountCount; ++i) {
+            const char* mountPoint = mounts[i].f_mntonname;
+            if (mountPoint[0] == '\0') continue;
+            const std::string point = mountPoint;
+            if (point.rfind("/Volumes/", 0) == 0 && point.size() > std::string("/Volumes/").size()) {
+                mounted = point;
+                break;
+            }
+        }
+        if (!mounted.empty()) {
+            DirectoryScanner scanner;
+            scanner.scan(mounted + "/maceverything_missing_child_" + std::to_string(getpid()));
+            check(!scanner.isComplete(),
+                  "Review: missing folder on a mounted volume is still incomplete");
+        }
+    }
+
+    // Startup must index the reachable roots when one configured root is an
+    // unplugged external volume, and must not ask the user to remove it.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_unmounted_startup_" + std::to_string(getpid()));
+        const auto present = cache / "present";
+        fs::remove_all(cache);
+        fs::create_directories(present);
+        std::ofstream(present / "keep.txt") << "keep";
+
+        ServiceConfig config;
+        config.scanRoot = present.string();
+        config.scanRoots = {
+            present.string(),
+            "/Volumes/maceverything_unmounted_" + std::to_string(getpid())
+        };
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        std::atomic<bool> startupFailed{false};
+        std::atomic<bool> completionCalled{false};
+        std::atomic<uint32_t> completionCount{0};
+        std::atomic<bool> didScan{false};
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.onStartupFailed = [&](const std::string&) {
+            startupFailed.store(true, std::memory_order_release);
+        };
+        service.startIncremental([&](uint32_t count, bool didFullScan) {
+            completionCalled.store(true, std::memory_order_release);
+            completionCount.store(count, std::memory_order_release);
+            didScan.store(didFullScan, std::memory_order_release);
+            dispatch_semaphore_signal(done);
+        });
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+
+        check(completed && completionCalled.load(std::memory_order_acquire) &&
+              !startupFailed.load(std::memory_order_acquire) &&
+              didScan.load(std::memory_order_acquire) &&
+              completionCount.load(std::memory_order_acquire) > 0,
+              "Review: unmounted volume does not block startup of other roots");
+        service.shutdown();
+        fs::remove_all(cache);
     }
 
     // An incomplete first scan must report failure without constructing a

@@ -441,6 +441,7 @@ final class SearchServiceModel: ObservableObject {
             return
         }
         AppLogger.info("VolumeMonitor", "Volume unmounted, cleaning up: \(path)")
+        bridge.refreshVolumeMonitoring()
         bridge.removeSubtree(path) { [weak self] removedCount in
             Task { @MainActor in
                 guard let self else { return }
@@ -469,6 +470,7 @@ final class SearchServiceModel: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             guard let self else { return }
             self.applyRuntimeConfiguration()
+            self.bridge.refreshVolumeMonitoring()
             for root in matching {
                 let rescanPath = root.hasPrefix(path + "/") ? root : path
                 AppLogger.info("VolumeMonitor", "Rescanning: \(rescanPath)")

@@ -33,6 +33,10 @@ uint32_t SearchEngine::internPath(const std::string& path) {
     return pIdx;
 }
 
+void SearchEngine::noteIndexMutationUnlocked() {
+    mutationEpoch_.fetch_add(1, std::memory_order_release);
+}
+
 void SearchEngine::tombstoneAt(uint32_t idx) {
     types_[idx] = 0;
     markPageDirty(idx);
@@ -392,6 +396,7 @@ void SearchEngine::loadRecords(std::vector<FileRecord>&& records) {
     dirtyPages_.assign(pageCount, false);
     fullRewriteGeneration_.store(0, std::memory_order_relaxed);
     acknowledgedRewriteGeneration_.store(0, std::memory_order_relaxed);
+    noteIndexMutationUnlocked();
 }
 
 void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
@@ -528,6 +533,7 @@ void SearchEngine::loadRecordsV5(std::vector<FileRecord>&& records,
     dirtyPages_.assign(pageCount, false);
     fullRewriteGeneration_.store(0, std::memory_order_relaxed);
     acknowledgedRewriteGeneration_.store(0, std::memory_order_relaxed);
+    noteIndexMutationUnlocked();
 }
 
 FileRecord SearchEngine::getRecord(uint32_t index) const {
@@ -608,6 +614,7 @@ uint32_t SearchEngine::addRecord(FileRecord&& record) {
 
     liveCount_.fetch_add(1, std::memory_order_relaxed);
     addToRecentCache(idx, static_cast<time_t>(modTimes_[idx]));
+    noteIndexMutationUnlocked();
 
     return idx;
 }
@@ -630,6 +637,7 @@ bool SearchEngine::removeByPathUnlocked(const std::string& fullPath) {
 
     liveCount_.fetch_sub(1, std::memory_order_relaxed);
     removeFromRecentCache(idx, oldModTime);
+    noteIndexMutationUnlocked();
 
     return true;
 }
@@ -730,6 +738,7 @@ uint32_t SearchEngine::removeByPathPrefixCollectingIndices(const std::string& pa
         removeIdx(idx, path);
     }
 
+    if (removed > 0) noteIndexMutationUnlocked();
     return removed;
 }
 
@@ -811,6 +820,7 @@ uint32_t SearchEngine::batchRescanPrefix(const std::string& pathPrefix,
 
     // ── Phase 3: Rebuild recent cache ──
     rebuildRecentCache();
+    noteIndexMutationUnlocked();
 
     return removed;
 }
@@ -868,6 +878,7 @@ void SearchEngine::updateByPathUnlocked(const std::string& fullPath, FileRecord&
     markPageDirty(newIdx);
     liveCount_.fetch_add(1, std::memory_order_relaxed);
     addToRecentCache(newIdx, static_cast<time_t>(modTimes_[newIdx]));
+    noteIndexMutationUnlocked();
 }
 
 void SearchEngine::updateByPath(const std::string& fullPath, FileRecord&& updated) {
@@ -1162,6 +1173,7 @@ std::unordered_map<uint32_t, uint32_t> SearchEngine::compactRecords() {
 
         liveCount_.store(cdLiveCount, std::memory_order_relaxed);
         compactionGen_.fetch_add(1, std::memory_order_relaxed);
+        noteIndexMutationUnlocked();
 
         LOG_INFO("SearchEngine", "COW compaction done: replayed " << replayedAdds
                  << " adds, " << replayedDeletes << " deletes, live=" << cdLiveCount);
@@ -1384,4 +1396,5 @@ void SearchEngine::replayWALEntries(std::vector<WALEntry>&& entries) {
     }
 
     rebuildRecentCache();
+    noteIndexMutationUnlocked();
 }

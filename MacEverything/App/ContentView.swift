@@ -409,7 +409,7 @@ struct ContentView: View {
             Divider()
             SearchStatusBar(viewModel: viewModel, showingExport: $showingExport)
         }
-        .frame(minWidth: 600, minHeight: 400)
+        .frame(minWidth: 760, minHeight: 400)
         .background(theme.resolvedBackgroundColor)
         .focusedSceneValue(\.exportSearchResults) {
             showingExport = true
@@ -842,6 +842,7 @@ private struct ResultDisplayModeSwitcher: View {
 
 private struct ResultDisplayControls: View {
     let isDisabled: Bool
+    var showsSlider = true
     @ObservedObject private var settings = AppSettings.shared
 
     var body: some View {
@@ -849,26 +850,28 @@ private struct ResultDisplayControls: View {
             ResultDisplayModeSwitcher()
                 .disabled(isDisabled)
 
-            Divider()
-                .frame(height: 18)
-            Image(systemName: "square.grid.3x3")
-                .foregroundColor(.secondary)
-                .accessibilityHidden(true)
-            Slider(
-                value: settings.gridIconSizeLevelBinding,
-                in: 0...Double(AppSettings.gridIconSizes.count - 1),
-                step: 1
-            )
-                .controlSize(.small)
-                .frame(width: 80)
-                .help(L10n.tr("Thumbnail Size"))
-                .accessibilityLabel(L10n.tr("Thumbnail Size"))
-                .accessibilityValue(Text("\(Int(settings.gridIconSize)) pt"))
-                .accessibilityIdentifier("gridIconSizeSlider")
-                .disabled(isDisabled || settings.resultDisplayMode != .grid)
-            Image(systemName: "square.grid.2x2")
-                .foregroundColor(.secondary)
-                .accessibilityHidden(true)
+            if showsSlider {
+                Divider()
+                    .frame(height: 18)
+                Image(systemName: "square.grid.3x3")
+                    .foregroundColor(.secondary)
+                    .accessibilityHidden(true)
+                Slider(
+                    value: settings.gridIconSizeLevelBinding,
+                    in: 0...Double(AppSettings.gridIconSizes.count - 1),
+                    step: 1
+                )
+                    .controlSize(.small)
+                    .frame(width: 80)
+                    .help(L10n.tr("Thumbnail Size"))
+                    .accessibilityLabel(L10n.tr("Thumbnail Size"))
+                    .accessibilityValue(Text("\(Int(settings.gridIconSize)) pt"))
+                    .accessibilityIdentifier("gridIconSizeSlider")
+                    .disabled(isDisabled || settings.resultDisplayMode != .grid)
+                Image(systemName: "square.grid.2x2")
+                    .foregroundColor(.secondary)
+                    .accessibilityHidden(true)
+            }
         }
     }
 }
@@ -1000,127 +1003,152 @@ private struct QuickFilterBar: View {
     let inspectorVisible: Bool
     let toggleInspector: () -> Void
 
+    private var pathFilterActive: Bool { showPathFilter || !pathFilter.isEmpty }
+
     var body: some View {
         GeometryReader { proxy in
-            let showExpandedPathFilter = proxy.size.width >= 980 || showPathFilter || !pathFilter.isEmpty
-            let quickFilterWidth = min(360, max(280, proxy.size.width - 620))
+            // Segment titles stay at their natural width. The old 280 pt cap was
+            // narrower than the English and Chinese labels, so the segments overlapped.
+            let width = proxy.size.width
+            let base: CGFloat = 560
+            let sliderExtra: CGFloat = 160
+            let quickLabelExtra: CGFloat = 86
+            let pathExtra: CGFloat = 150
+            let displayLabelExtra: CGFloat = 72
+            let showPathField = pathFilterActive || width >= base + sliderExtra + quickLabelExtra + pathExtra + displayLabelExtra
+            let pathCost = showPathField ? pathExtra : 0
+            let showSlider = width >= base + pathCost + sliderExtra
+            let sliderCost = showSlider ? sliderExtra : 0
+            let showQuickLabel = width >= base + pathCost + sliderCost + quickLabelExtra
+            let showDisplayLabel = width >= base + pathCost + sliderCost + (showQuickLabel ? quickLabelExtra : 0) + displayLabelExtra
 
-            HStack(spacing: 8) {
+            filterBar(
+                showsQuickLabel: showQuickLabel,
+                showsPathField: showPathField,
+                showsDisplayLabel: showDisplayLabel,
+                showsSlider: showSlider
+            )
+            .frame(width: width, height: proxy.size.height, alignment: .center)
+        }
+        .frame(height: 32)
+    }
+
+    private func filterBar(showsQuickLabel: Bool, showsPathField: Bool, showsDisplayLabel: Bool, showsSlider: Bool) -> some View {
+        HStack(spacing: 8) {
+            if showsQuickLabel {
                 Text(L10n.tr("Quick filter"))
                     .font(.callout)
                     .foregroundColor(.secondary)
                     .lineLimit(1)
+                    .fixedSize()
+            }
 
-                Picker("", selection: $quickFilter) {
-                    ForEach(QuickFilter.allCases) { filter in
-                        Text(filter.title).tag(filter)
-                    }
+            Picker("", selection: $quickFilter) {
+                ForEach(QuickFilter.allCases) { filter in
+                    Text(filter.title).tag(filter)
                 }
-                .id(settings.language)
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .controlSize(.small)
-                .frame(width: quickFilterWidth)
-                .layoutPriority(1)
-                .help(L10n.tr("Quick filters"))
+            }
+            .id(settings.language)
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+            .fixedSize(horizontal: true, vertical: false)
+            .help(L10n.tr("Quick filters"))
 
-                Button {
-                    showPathFilter.toggle()
-                } label: {
-                    Image(systemName: showExpandedPathFilter ? "folder.fill" : "folder")
-                        .font(.system(size: 14, weight: .medium))
-                }
-                .buttonStyle(.borderless)
-                .help(L10n.tr("Path filter"))
+            Button {
+                showPathFilter.toggle()
+            } label: {
+                Image(systemName: showsPathField ? "folder.fill" : "folder")
+                    .font(.system(size: 14, weight: .medium))
+            }
+            .buttonStyle(.borderless)
+            .fixedSize()
+            .help(L10n.tr("Path filter"))
 
-                if showExpandedPathFilter {
-                    HStack(spacing: 6) {
-                        Image(systemName: "line.3.horizontal.decrease.circle")
-                            .foregroundColor(.secondary)
-                        TextField(L10n.tr("Filter by path..."), text: $pathFilter)
-                            .textFieldStyle(.plain)
-                        Menu {
-                            Button {
-                                choosePathFilterFolder()
-                            } label: {
-                                Label(L10n.tr("Choose Folder..."), systemImage: "folder.badge.plus")
-                            }
-                            if !settings.recentPathFilters.isEmpty {
-                                Divider()
-                                ForEach(settings.recentPathFilters, id: \.self) { path in
-                                    Menu(path) {
-                                        Button(L10n.tr("Use This Folder")) {
-                                            pathFilter = path
-                                            settings.recordRecentPathFilter(path)
-                                        }
-                                        Button(L10n.tr("Remove from Recent"), role: .destructive) {
-                                            settings.removeRecentPathFilter(path)
-                                        }
+            if showsPathField {
+                HStack(spacing: 6) {
+                    Image(systemName: "line.3.horizontal.decrease.circle")
+                        .foregroundColor(.secondary)
+                    TextField(L10n.tr("Filter by path..."), text: $pathFilter)
+                        .textFieldStyle(.plain)
+                    Menu {
+                        Button {
+                            choosePathFilterFolder()
+                        } label: {
+                            Label(L10n.tr("Choose Folder..."), systemImage: "folder.badge.plus")
+                        }
+                        if !settings.recentPathFilters.isEmpty {
+                            Divider()
+                            ForEach(settings.recentPathFilters, id: \.self) { path in
+                                Menu(path) {
+                                    Button(L10n.tr("Use This Folder")) {
+                                        pathFilter = path
+                                        settings.recordRecentPathFilter(path)
+                                    }
+                                    Button(L10n.tr("Remove from Recent"), role: .destructive) {
+                                        settings.removeRecentPathFilter(path)
                                     }
                                 }
                             }
-                        } label: {
-                            Image(systemName: "folder.badge.plus")
                         }
-                        .menuStyle(.borderlessButton)
-                        .fixedSize()
-                        .help(L10n.tr("Choose a folder or use a recent folder"))
-                        if !pathFilter.isEmpty {
-                            Button {
-                                pathFilter = ""
-                            } label: {
-                                Image(systemName: "xmark.circle.fill")
-                                    .foregroundColor(.secondary)
-                            }
-                            .buttonStyle(.plain)
-                        }
+                    } label: {
+                        Image(systemName: "folder.badge.plus")
                     }
-                    .font(.callout)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color(nsColor: .separatorColor).opacity(0.7))
-                    )
-                    .frame(minWidth: 120, idealWidth: 220, maxWidth: 300)
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help(L10n.tr("Choose a folder or use a recent folder"))
+                    if !pathFilter.isEmpty {
+                        Button {
+                            pathFilter = ""
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundColor(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
                 }
-
-                Spacer(minLength: 8)
-
-                if proxy.size.width >= 1_100 {
-                    Text(L10n.tr("Display Style"))
-                        .font(.callout)
-                        .foregroundColor(.secondary)
-                        .lineLimit(1)
-                }
-
-                ResultDisplayControls(isDisabled: displayControlsDisabled)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .layoutPriority(2)
-
-                Divider()
-                    .frame(height: 18)
-                    .padding(.horizontal, 3)
-
-                Button(action: toggleInspector) {
-                    Image(systemName: "sidebar.right")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundColor(inspectorVisible ? .accentColor : .secondary)
-                        .frame(width: 24, height: 24)
-                }
-                .buttonStyle(.borderless)
-                .fixedSize()
-                .layoutPriority(4)
-                .help(L10n.tr(inspectorVisible ? "Hide Information Panel" : "Show Information Panel"))
-                .accessibilityLabel(L10n.tr(inspectorVisible ? "Hide Information Panel" : "Show Information Panel"))
+                .font(.callout)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(Color(nsColor: .controlBackgroundColor))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color(nsColor: .separatorColor).opacity(0.7))
+                )
+                .frame(minWidth: 120, idealWidth: 220, maxWidth: 300)
             }
-            .frame(width: proxy.size.width, height: proxy.size.height, alignment: .center)
+
+            Spacer(minLength: 8)
+
+            if showsDisplayLabel {
+                Text(L10n.tr("Display Style"))
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+
+            ResultDisplayControls(isDisabled: displayControlsDisabled, showsSlider: showsSlider)
+                .fixedSize(horizontal: true, vertical: false)
+
+            Divider()
+                .frame(height: 18)
+                .padding(.horizontal, 3)
+
+            Button(action: toggleInspector) {
+                Image(systemName: "sidebar.right")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundColor(inspectorVisible ? .accentColor : .secondary)
+                    .frame(width: 24, height: 24)
+            }
+            .buttonStyle(.borderless)
+            .fixedSize()
+            .help(L10n.tr(inspectorVisible ? "Hide Information Panel" : "Show Information Panel"))
+            .accessibilityLabel(L10n.tr(inspectorVisible ? "Hide Information Panel" : "Show Information Panel"))
         }
-        .frame(height: 32)
     }
 
     private func choosePathFilterFolder() {
