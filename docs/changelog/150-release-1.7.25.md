@@ -53,7 +53,7 @@ brew install --cask maceverything
 - Apple Silicon：`MacEverything-arm64.dmg`
 - Intel：`MacEverything-x86_64.dmg`
 
-应用当前采用 ad-hoc 签名，尚未经过 Apple 公证。若 macOS 阻止首次启动，请先尝试打开应用，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
+应用采用 ad-hoc 签名。若 macOS 阻止首次启动，请先尝试打开应用，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
 
 ## 验证
 

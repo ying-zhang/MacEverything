@@ -150,13 +150,17 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
         for (const auto& rootPath : roots) {
             struct stat rootStat;
             const int statError = stat(rootPath.c_str(), &rootStat) == 0 ? 0 : errno;
+            PathUtils::VolumeKindStore& volumeKinds = config_.volumeKinds
+                ? *config_.volumeKinds
+                : PathUtils::volumeKindStore();
             if (statError != 0 || !S_ISDIR(rootStat.st_mode)) {
-                // A USB or other external disk that is configured but not
-                // plugged in must not fail the rest of the scan. The root
-                // stays in the user's settings and is indexed on mount.
-                if (PathUtils::isUnmountedVolumePath(rootPath)) {
+                // Only a local external disk we have already classified may be
+                // skipped. An offline NAS, a symlink that still resolves, or an
+                // unknown /Volumes path must fail the scan so the old index is
+                // kept.
+                if (PathUtils::isUnpluggedRemovableVolume(volumeKinds, rootPath)) {
                     deferredVolumeCount_.fetch_add(1, std::memory_order_acq_rel);
-                    LOG_INFO("Scanner", "Skipping unmounted volume until it is connected: "
+                    LOG_INFO("Scanner", "Skipping unplugged external volume until it is connected: "
                              << rootPath);
                     continue;
                 }
@@ -166,6 +170,7 @@ void DirectoryScanner::scan(const std::vector<std::string>& rootPaths, const Sca
                          << " (" << (statError != 0 ? strerror(statError) : "not a directory") << ")");
                 continue;
             }
+            PathUtils::observeVolumeKind(volumeKinds, rootPath);
             reachableRootCount_.fetch_add(1, std::memory_order_acq_rel);
             if (!tryVisitDirectory(rootStat.st_dev, rootStat.st_ino)) continue;
             workQueue_.push({rootPath, rootStat.st_dev});

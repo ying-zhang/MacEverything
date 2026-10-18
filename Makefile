@@ -1,6 +1,6 @@
 CXX = clang++
 CXXFLAGS = -std=c++20 -O2 -Wall -Wextra
-FRAMEWORKS = -framework CoreServices
+FRAMEWORKS = -framework CoreServices -framework CoreFoundation
 CORE_SRCS = $(wildcard MacEverything/Core/*.cpp)
 CORE_HEADERS = $(wildcard MacEverything/Core/*.h)
 TEST_HEADERS = $(wildcard tests/*.h)
@@ -126,8 +126,14 @@ test-all: test_all
 	./test_all
 
 # === Xcode build ===
+# Ad-hoc Release build. The embed script signs bundled dylibs with the same identity.
 app:
 	xcodebuild -scheme MacEverything -configuration Release build
+	app_path=$$(xcodebuild -scheme MacEverything -configuration Release -showBuildSettings 2>/dev/null | awk -F ' = ' '/^    BUILT_PRODUCTS_DIR /{print $$2; exit}')/MacEverything.app; \
+	if ! codesign --verify --deep --strict "$$app_path"; then \
+		echo "error: Release app failed codesign verification"; \
+		exit 1; \
+	fi
 
 # === Package ===
 dmg:

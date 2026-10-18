@@ -16,7 +16,12 @@
 #include <functional>
 #include <string>
 #include <mutex>
+#include <vector>
 #include <dispatch/dispatch.h>
+
+namespace PathUtils {
+struct VolumeKindStore;
+}
 
 /// Configuration for ServiceEngine.
 struct ServiceConfig {
@@ -79,6 +84,29 @@ public:
     void refreshRenamedPath(const std::string& oldPath, const std::string& newPath);
     void removeSubtree(const std::string& pathPrefix,
                        std::function<void(uint32_t)> completion = nullptr);
+    /// Queue events tagged with the current lifecycle generation and index
+    /// snapshot. Tests use this while a scan owns the index; production events
+    /// come from FSEvents.
+    void queueWatcherEventsForTests(std::vector<FileSystemWatcher::Event> events);
+    /// Test only. The next deferred-volume drain rescans the configured roots
+    /// and publishes that snapshot through the background replacement path
+    /// before applying the batch it has already taken off the shared queue.
+    void publishFreshScanOnNextDeferredDrainForTests();
+    bool startupCompletedForTests() const {
+        return startupCompleted_.load(std::memory_order_acquire);
+    }
+    uint64_t deferredDrainCountForTests() const {
+        return deferredDrainCount_.load(std::memory_order_acquire);
+    }
+    /// Test only. Runs the volume-notification watcher start while the caller
+    /// chooses the lifecycle state.
+    void attemptVolumeMonitoringForTests();
+    /// Test only. The next full-scan publish starts a watcher from "now"
+    /// before the scan replay, so the replay must replace that stream.
+    void armVolumeMonitoringBeforeReplayForTests();
+    uint64_t monitoringAnchorForTests() const {
+        return monitoringAnchor_.load(std::memory_order_acquire);
+    }
     void rebuildContentIndex();
     void rebuildContentIndex(const std::vector<std::string>& extensions,
                              uint64_t maxFileSize);
@@ -91,8 +119,9 @@ public:
     void markVolumeUnmounting(const std::string& volumePath);
     void clearVolumeUnmounting(const std::string& volumePath);
     bool isVolumeUnmounting(const std::string& path) const;
-    /// Restart FSEvents after a volume mount or unmount so configured external
-    /// roots are watched only while they are connected.
+    /// Restart FSEvents after a volume mount or unmount so configured roots are
+    /// watched only while those directories exist. Requests that arrive during
+    /// a scan or background sync are applied after that work finishes.
     void refreshMonitoringForVolumeChange();
 
     // ── Thread-safe accessors ──
@@ -155,6 +184,10 @@ private:
     void applyFSEvents(const std::vector<FileSystemWatcher::Event>& events,
                        std::shared_ptr<SearchEngine> engine);
     void startMonitoring(FSEventStreamEventId sinceEventId = kFSEventStreamEventIdSinceNow);
+    /// Caller holds `monitoringMutex_` and has already stopped any stream
+    /// that this start replaces.
+    void startMonitoringUnlocked(FSEventStreamEventId sinceEventId);
+    void noteDeferredMonitoringRefresh();
     void stopMonitoring();
     void restartMonitoring();
     void startNetworkPolling(const std::vector<std::string>& roots);
@@ -175,7 +208,61 @@ private:
     static bool isInsideAppBundle(const std::string& path);
     static bool pathEndsWithApp(const std::string& path);
     std::vector<std::string> effectiveScanRoots() const;
+    void useVolumeKindStore(const ServiceConfig& config);
+    PathUtils::VolumeKindStore& ownVolumeKinds();
     void pruneUnmountedVolumes(const std::shared_ptr<SearchEngine>& engine);
+    void noteIndexedScanRoots(const std::vector<std::string>& roots);
+    void noteIndexedIdentityForCompletedRescan(const std::string& scannedPath);
+    bool lifecycleBusy() const;
+    void deferVolumeRescan(std::string dir, std::function<void()> completion);
+    void deferVolumeRemoval(std::string path, std::function<void(uint32_t)> completion,
+                            bool cancelIfRemounted);
+    void deferVolumeRename(std::string oldPath, std::string newPath);
+    void deferVolumeEvents(uint64_t generation,
+                           uint64_t indexRevision,
+                           std::vector<FileSystemWatcher::Event> events);
+    /// Run `work` on `mutationQueue_`. A caller that is already on that queue
+    /// runs it inline so one deferred batch keeps its arrival order.
+    void enqueueMutation(dispatch_block_t work);
+    /// Drop replay batches still sitting on the shared deferred queue.
+    /// A batch already swapped into a local drain is not visible here; it
+    /// carries `indexRevision` and is dropped when that snapshot is replaced.
+    void discardDeferredEvents();
+    /// Apply events to the engine published for `generation` and
+    /// `indexRevision`, or queue them when a scan owns the index.
+    /// `requiredEngine` refuses a replay that would otherwise keep writing an
+    /// engine that is no longer published. A stale snapshot is dropped, not
+    /// queued again. Caller must already be on `mutationQueue_`.
+    void applyOrDeferEvents(uint64_t generation,
+                            uint64_t indexRevision,
+                            std::vector<FileSystemWatcher::Event> events,
+                            std::shared_ptr<SearchEngine> requiredEngine,
+                            bool allowWhileSyncing);
+    enum class SnapshotPublishResult { Replaced, Superseded, Unchanged };
+    /// Caller holds `lifecycleStateMutex_`. Drops deferred FSEvents batches
+    /// for the snapshot that `setEngine` or `loadRecords` is about to replace.
+    void retireDeferredEventSnapshotUnlocked();
+    /// Publish `records` into `engine` under the lifecycle lock. Bumps the
+    /// index snapshot first so event batches already taken off the deferred
+    /// queue cannot modify the replacement. Does not change
+    /// `lifecycleGeneration_`.
+    SnapshotPublishResult publishScannedRecords(
+        const std::shared_ptr<SearchEngine>& engine,
+        std::vector<FileRecord> records,
+        const std::shared_ptr<ContentIndex>& replacementContent,
+        const std::shared_ptr<IndexPersistence>& persistence,
+        uint64_t generation);
+    void rescanSubtreeNow(const std::string& dir, std::function<void()> completion);
+    void removeSubtreeNow(const std::string& pathPrefix,
+                          std::function<void(uint32_t)> completion,
+                          bool cancelIfRemounted);
+    void refreshRenamedPathNow(const std::string& oldPath, const std::string& newPath);
+    void startOrRestartVolumeMonitoring();
+    /// `requireStartup` is false when the scan failed and no later success
+    /// will drain the queue. Removals, rescans, and renames still run.
+    void applyDeferredVolumeWork(bool requireStartup = true);
+    void quiesceMonitoringUnlocked();
+    void stopMonitoringObservers();
     ScanConfig scanConfigForRoots(const std::vector<std::string>& roots) const;
     ScanConfig scanConfig() const;
     bool isPathAllowedByConfig(const std::string& path, bool forContent) const;
@@ -196,6 +283,7 @@ private:
     mutable std::shared_mutex configMutex_;
 
     // ── Core objects ──
+    std::unique_ptr<PathUtils::VolumeKindStore> volumeKinds_;
     std::shared_ptr<SearchEngine> engine_;
     std::shared_ptr<FileSystemWatcher> watcher_;
     std::shared_ptr<ContentIndex> contentIndex_;
@@ -211,6 +299,9 @@ private:
     std::shared_mutex persistenceMutex_;
     std::shared_mutex contentPersistenceMutex_;
     std::mutex httpMutex_;
+    /// Publishes a generation, scan/sync flags, and the current engine together.
+    /// Index mutations must hold this lock from the generation check through
+    /// the write, so a rebuild cannot swap the engine in between.
     std::mutex lifecycleStateMutex_;
     std::mutex activeScannersMutex_;
     std::vector<std::weak_ptr<DirectoryScanner>> activeScanners_;
@@ -225,6 +316,10 @@ private:
     // ── Atomic flags ──
     std::atomic<bool> isScanning_{false};
     std::atomic<bool> isMonitoring_{false};
+    /// Event id the running watcher was started from. `SinceNow` means the
+    /// stream is not replaying a scan.
+    std::atomic<uint64_t> monitoringAnchor_{0};
+    std::atomic<bool> armVolumeMonitoringBeforeReplay_{false};
     std::atomic<bool> isContentIndexing_{false};
     std::atomic<uint64_t> contentIndexingActiveGeneration_{0};
     std::atomic<bool> shuttingDown_{false};
@@ -241,11 +336,41 @@ private:
     uint64_t pendingContentMaxFileSize_ = 0;
     bool hasPendingContentConfig_ = false;
     std::atomic<uint64_t> lifecycleGeneration_{1};
+    /// Records currently published in the engine. Background full replacement
+    /// bumps this without retiring the sync's lifecycle generation.
+    std::atomic<uint64_t> indexRevision_{1};
+    std::atomic<bool> publishFreshScanOnNextDeferredDrain_{false};
+    std::atomic<uint64_t> deferredDrainCount_{0};
     std::atomic<bool> rebuilding_{false};
 
     // ── Volume unmount tracking ──
     mutable std::mutex unmountingVolumesMutex_;
     std::set<std::string> unmountingVolumes_;
+    // Serializes watcher start/stop and the network polling timer.
+    std::mutex monitoringMutex_;
+    // Mount, rescan, and removal requests that arrived while a scan or sync
+    // owned the index. One queue keeps unmount and remount in arrival order.
+    std::mutex deferredVolumeMutex_;
+    struct DeferredVolumeWork {
+        enum class Kind { Rescan, Remove, Rename, Events };
+        Kind kind = Kind::Rescan;
+        std::string path;
+        std::string newPath;
+        std::vector<FileSystemWatcher::Event> events;
+        /// Generation that produced `events`. A later rebuild must not apply
+        /// them to the replacement index.
+        uint64_t generation = 0;
+        /// Index snapshot these events belong to. Background full replacement
+        /// keeps the lifecycle generation and bumps this instead.
+        uint64_t indexRevision = 0;
+        std::function<void()> rescanCompletion;
+        std::function<void(uint32_t)> removeCompletion;
+        /// A removal queued while a scan owns the index must not run after the
+        /// same path has been mounted again.
+        bool cancelIfRemounted = false;
+    };
+    std::vector<DeferredVolumeWork> deferredVolumeWork_;
+    bool deferredMonitoringRefresh_ = false;
 
     // ── Rescan debounce state ──
     std::mutex pendingRescanMutex_;

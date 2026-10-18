@@ -131,25 +131,49 @@ $name
   done
 }
 
+# True when an install name or dependency still points outside the bundle.
+# An incremental build must not rewrite those commands again: install_name_tool
+# changes the Mach-O and breaks the app seal even when the new value matches
+# the old one.
+load_commands_need_rewrite() {
+  local path="$1"
+  local want_id="${2:-}"
+  if [[ -n "$want_id" ]]; then
+    local current_id
+    current_id="$(otool -D "$path" | awk 'NR == 2 { print; exit }')"
+    [[ "$current_id" == "$want_id" ]] || return 0
+  fi
+  local dep
+  while IFS= read -r dep; do
+    if is_embeddable_dependency "$dep"; then
+      return 0
+    fi
+  done < <(otool -L "$path" | awk 'NR > 1 { print $1 }')
+  return 1
+}
+
 rewrite_binary_references() {
   local binary="$1"
   local path="$APP_PATH/Contents/MacOS/$binary"
   [[ -f "$path" ]] || return 0
+  load_commands_need_rewrite "$path" || return 0
 
   while IFS= read -r dep; do
     if is_embeddable_dependency "$dep"; then
       run_install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$path"
     fi
   done < <(otool -L "$path" | awk 'NR > 1 { print $1 }')
+  sign_embedded "$path"
 }
 
-# Sign embedded libraries with the same identity as the app. A separate ad-hoc
-# signature gets its own Team ID, and hardened runtime then refuses to load
-# libre2 ("mapping process and mapped file have different Team IDs").
+# Sign embedded libraries with the same ad-hoc identity as the app so
+# hardened runtime can load libre2.
 sign_identity="${EXPANDED_CODE_SIGN_IDENTITY:-${CODE_SIGN_IDENTITY:--}}"
 if [[ -z "$sign_identity" ]]; then
   sign_identity="-"
 fi
+
+signed_any=0
 
 sign_embedded() {
   local target="$1"
@@ -157,27 +181,58 @@ sign_embedded() {
     echo "error: codesign failed for $target (identity: $sign_identity)" >&2
     exit 1
   fi
+  signed_any=1
+}
+
+# Xcode does not re-run the outer CodeSign phase when only this script's
+# nested signatures change. Seal the bundle again, with the same identity,
+# entitlements, and hardened runtime the build is using.
+sign_app_bundle() {
+  local args=(--force --sign "$sign_identity")
+  if [[ "${ENABLE_HARDENED_RUNTIME:-}" == "YES" ]]; then
+    args+=(--options runtime)
+  fi
+  local entitlements="${CODE_SIGN_ENTITLEMENTS:-}"
+  if [[ -n "$entitlements" && "$entitlements" != /* && -n "${SRCROOT:-}" ]]; then
+    entitlements="${SRCROOT}/${entitlements}"
+  fi
+  if [[ -z "$entitlements" || ! -f "$entitlements" ]]; then
+    echo "error: cannot re-sign $APP_PATH; CODE_SIGN_ENTITLEMENTS is missing" >&2
+    exit 1
+  fi
+  args+=(--entitlements "$entitlements")
+  if ! codesign "${args[@]}" "$APP_PATH"; then
+    echo "error: codesign failed for $APP_PATH (identity: $sign_identity)" >&2
+    exit 1
+  fi
+  signed_any=1
 }
 
 rewrite_dylib_references() {
   local dylib
   for dylib in "$FRAMEWORKS_DIR"/*.dylib "$APP_PATH/Contents/MacOS"/*.dylib; do
     [[ -f "$dylib" ]] || continue
-    # install_name_tool can update a signed Mach-O and invalidates its existing
-    # signature. Do not remove that signature first: some Homebrew arm64 dylibs
-    # keep the signature inside __LINKEDIT, and deleting it before mutation can
-    # leave a layout that install_name_tool refuses to process. Re-sign below.
+    local want_id=""
     if [[ "$dylib" == "$FRAMEWORKS_DIR/"* ]]; then
-      run_install_name_tool -id "@rpath/$(basename "$dylib")" "$dylib"
+      want_id="@rpath/$(basename "$dylib")"
     fi
-
-    while IFS= read -r dep; do
-      if is_embeddable_dependency "$dep"; then
-        run_install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$dylib"
+    if load_commands_need_rewrite "$dylib" "$want_id"; then
+      # install_name_tool can update a signed Mach-O and invalidates its
+      # existing signature. Do not remove that signature first: some Homebrew
+      # arm64 dylibs keep the signature inside __LINKEDIT, and deleting it
+      # before mutation can leave a layout that install_name_tool refuses.
+      if [[ -n "$want_id" ]]; then
+        run_install_name_tool -id "$want_id" "$dylib"
       fi
-    done < <(otool -L "$dylib" | awk 'NR > 1 { print $1 }')
-
-    sign_embedded "$dylib"
+      while IFS= read -r dep; do
+        if is_embeddable_dependency "$dep"; then
+          run_install_name_tool -change "$dep" "@rpath/$(basename "$dep")" "$dylib"
+        fi
+      done < <(otool -L "$dylib" | awk 'NR > 1 { print $1 }')
+      sign_embedded "$dylib"
+    elif ! codesign --verify --strict "$dylib" 2>/dev/null; then
+      sign_embedded "$dylib"
+    fi
   done
 }
 
@@ -186,12 +241,9 @@ for binary in "${BINARIES[@]}"; do
   rewrite_binary_references "$binary"
 done
 rewrite_dylib_references
-for binary in "${BINARIES[@]}"; do
-  path="$APP_PATH/Contents/MacOS/$binary"
-  [[ -f "$path" ]] || continue
-  codesign --remove-signature "$path" >/dev/null 2>&1 || true
-  sign_embedded "$path"
-done
+if [[ "$signed_any" -eq 1 ]] || ! codesign --verify --deep --strict "$APP_PATH" 2>/dev/null; then
+  sign_app_bundle
+fi
 
 echo "Signed embedded Mach-O images with identity: $sign_identity"
 

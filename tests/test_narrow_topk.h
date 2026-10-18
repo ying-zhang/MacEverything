@@ -137,6 +137,14 @@ static void runNarrowTopKTests() {
         typing.loadRecords(std::move(compactRecords));
         typing.query("a");
         typing.removeByPath("/tmp/aa-gone");
+        // The deletion already bumps the mutation epoch. Rebuild the cache,
+        // then compact, so this checks compaction itself.
+        QueryTimingInfo primedTiming;
+        auto primed = typing.query("ab", 20, true, primedTiming);
+        check(primedTiming.searchPath != "advanced-narrow",
+              "Narrow: deletion forces a fresh scan before compaction");
+        check(primed.size() == 1 && typing.getRecord(primed[0]).name == "ab-kept",
+              "Narrow: fresh scan after deletion returns the live file");
         typing.compactRecords();
         QueryTimingInfo timing;
         auto got = typing.query("ab", 20, true, timing);

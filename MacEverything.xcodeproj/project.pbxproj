@@ -753,6 +753,8 @@
 				);
 				OTHER_LDFLAGS = (
 					"-lre2",
+					"-framework",
+					CoreFoundation,
 				);
 			};
 			name = Debug;
@@ -787,6 +789,8 @@
 				);
 				OTHER_LDFLAGS = (
 					"-lre2",
+					"-framework",
+					CoreFoundation,
 				);
 			};
 			name = Release;

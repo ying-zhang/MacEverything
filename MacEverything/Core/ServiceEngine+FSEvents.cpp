@@ -90,24 +90,140 @@ void ServiceEngine::applyFSEvents(
 //  Live monitoring
 // ═══════════════════════════════════════════════════════
 
+namespace {
+
+bool replayStartsEarlier(FSEventStreamEventId requested, FSEventStreamEventId anchor) {
+    if (requested == kFSEventStreamEventIdSinceNow) return false;
+    if (anchor == 0 || anchor == kFSEventStreamEventIdSinceNow) return true;
+    return requested < anchor;
+}
+
+} // namespace
+
+void ServiceEngine::startOrRestartVolumeMonitoring() {
+    if (!safeConfig().realtimeMonitoring) return;
+    if (!startupCompleted_.load(std::memory_order_acquire)) return;
+    if (lifecycleBusy()) {
+        noteDeferredMonitoringRefresh();
+        return;
+    }
+    if (isMonitoring_.load(std::memory_order_acquire)) restartMonitoring();
+    else startMonitoring();
+}
+
+void ServiceEngine::attemptVolumeMonitoringForTests() {
+    startOrRestartVolumeMonitoring();
+}
+
+void ServiceEngine::armVolumeMonitoringBeforeReplayForTests() {
+    armVolumeMonitoringBeforeReplay_.store(true, std::memory_order_release);
+}
+
+void ServiceEngine::noteDeferredMonitoringRefresh() {
+    std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+    deferredMonitoringRefresh_ = true;
+}
+
+void ServiceEngine::applyDeferredVolumeWork(bool requireStartup) {
+    if (shuttingDown_.load(std::memory_order_acquire)) return;
+    if (lifecycleBusy()) return;
+    if (requireStartup && !startupCompleted_.load(std::memory_order_acquire)) return;
+
+    std::vector<DeferredVolumeWork> work;
+    bool refresh = false;
+    {
+        std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+        if (lifecycleBusy()) return;
+        if (requireStartup && !startupCompleted_.load(std::memory_order_acquire)) return;
+        work.swap(deferredVolumeWork_);
+        // A failed first scan has not finished startup. Keep the watcher
+        // request until a later successful start can honor it.
+        if (startupCompleted_.load(std::memory_order_acquire)) {
+            refresh = deferredMonitoringRefresh_;
+            deferredMonitoringRefresh_ = false;
+        }
+    }
+    if (refresh) startOrRestartVolumeMonitoring();
+    // The batch in `work` is already off the shared queue. A background
+    // replacement has to invalidate it by snapshot id; discardDeferredEvents()
+    // cannot see it. An empty startup drain must not consume the test hook.
+    if (!work.empty() &&
+        publishFreshScanOnNextDeferredDrain_.exchange(false, std::memory_order_acq_rel)) {
+        auto engine = safeEngine();
+        auto roots = effectiveScanRoots();
+        DirectoryScanner scanner;
+        scanner.scan(roots, scanConfigForRoots(roots));
+        if (scanner.isComplete() && engine) {
+            publishScannedRecords(engine, scanner.takeResults(), nullptr, nullptr,
+                                  lifecycleGeneration_.load(std::memory_order_acquire));
+        }
+    }
+    for (auto& item : work) {
+        if (item.kind == DeferredVolumeWork::Kind::Remove) {
+            removeSubtreeNow(std::move(item.path), std::move(item.removeCompletion),
+                             item.cancelIfRemounted);
+        } else if (item.kind == DeferredVolumeWork::Kind::Rename) {
+            refreshRenamedPathNow(item.path, item.newPath);
+        } else if (item.kind == DeferredVolumeWork::Kind::Events) {
+            const uint64_t generation = item.generation;
+            const uint64_t indexRevision = item.indexRevision;
+            auto events = std::move(item.events);
+            enqueueMutation(^{
+                this->applyOrDeferEvents(generation, indexRevision, events, nullptr, false);
+            });
+        } else {
+            rescanSubtreeNow(std::move(item.path), std::move(item.rescanCompletion));
+        }
+    }
+    deferredDrainCount_.fetch_add(1, std::memory_order_acq_rel);
+}
+
 void ServiceEngine::refreshMonitoringForVolumeChange() {
     if (shuttingDown_.load(std::memory_order_acquire)) return;
     if (!safeConfig().realtimeMonitoring) return;
-    if (!startupCompleted_.load(std::memory_order_acquire)) return;
-    if (isMonitoring_.load(std::memory_order_acquire)) {
-        restartMonitoring();
-    } else {
-        startMonitoring();
+    // A scan or sync still owns the index. Remember the mount change and
+    // start the live watcher only after that work publishes its result.
+    if (lifecycleBusy() || !startupCompleted_.load(std::memory_order_acquire)) {
+        if (lifecycleBusy()) {
+            std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+            deferredMonitoringRefresh_ = true;
+        }
+        if (!lifecycleBusy() && startupCompleted_.load(std::memory_order_acquire)) {
+            applyDeferredVolumeWork();
+        }
+        return;
     }
+    startOrRestartVolumeMonitoring();
 }
 
 void ServiceEngine::startMonitoring(FSEventStreamEventId sinceEventId) {
-    if (isMonitoring_.load(std::memory_order_relaxed)) return;
+    bool defer = false;
+    {
+        std::lock_guard<std::mutex> lock(monitoringMutex_);
+        if (shuttingDown_.load(std::memory_order_acquire)) return;
+        // The idle check in refreshMonitoringForVolumeChange() can pass
+        // before a scan publishes isScanning_. Refuse the start here, while
+        // this lock is held, so that stream cannot outrun stopMonitoring().
+        if (lifecycleBusy()) {
+            defer = true;
+        } else if (isMonitoring_.load(std::memory_order_relaxed) &&
+                   !replayStartsEarlier(sinceEventId, monitoringAnchor_.load(std::memory_order_relaxed))) {
+            return;
+        } else {
+            if (isMonitoring_.load(std::memory_order_relaxed)) {
+                quiesceMonitoringUnlocked();
+            }
+            startMonitoringUnlocked(sinceEventId);
+        }
+    }
+    if (defer) noteDeferredMonitoringRefresh();
+}
 
+void ServiceEngine::startMonitoringUnlocked(FSEventStreamEventId sinceEventId) {
     auto roots = effectiveScanRoots();
     roots.erase(std::remove_if(roots.begin(), roots.end(), [](const std::string& root) {
-        if (!PathUtils::isUnmountedVolumePath(root)) return false;
-        LOG_INFO("FSWatcher", "Not watching unmounted volume: " << root);
+        if (PathUtils::isReachableDirectory(root)) return false;
+        LOG_INFO("FSWatcher", "Not watching unavailable scan root: " << root);
         return true;
     }), roots.end());
     if (roots.empty()) {
@@ -129,31 +245,25 @@ void ServiceEngine::startMonitoring(FSEventStreamEventId sinceEventId) {
     if (!exclusions.empty()) {
         watcher_->setExclusionPaths(exclusions);
     }
+    // Seed the watermark before the stream starts so a callback cannot
+    // publish a newer id that this assignment would then rewind.
+    if (watcher_) watcher_->setLastEventId(sinceEventId);
 
     const bool started = watcher_->start(roots, sinceEventId, [this](std::vector<FileSystemWatcher::Event> events) {
         if (shuttingDown_.load(std::memory_order_relaxed)) return;
-        uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+        if (!mutationQueue_ || events.empty()) return;
+        const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+        const uint64_t indexRevision = indexRevision_.load(std::memory_order_acquire);
         dispatch_async(mutationQueue_, ^{
-            if (!this->isGenerationCurrent(generation)) return;
-            auto engine = this->safeEngine();
-            if (!engine) return;
-
-            std::vector<FileSystemWatcher::Event> directEvents;
-            std::vector<std::string> rescanDirs;
-            for (const auto& event : events) {
-                if (event.flags & kFSEventStreamEventFlagMustScanSubDirs) {
-                    rescanDirs.push_back(event.path);
-                } else {
-                    directEvents.push_back(event);
-                }
-            }
-            if (!directEvents.empty()) this->applyFSEvents(directEvents, engine);
-            if (!rescanDirs.empty()) this->scheduleRescanForPaths(rescanDirs);
-            if (!directEvents.empty() && this->onIndexChanged) this->onIndexChanged();
+            this->applyOrDeferEvents(generation, indexRevision, events, nullptr,
+                                     /*allowWhileSyncing=*/false);
         });
     });
 
     isMonitoring_.store(started, std::memory_order_release);
+    if (started) {
+        monitoringAnchor_.store(sinceEventId, std::memory_order_release);
+    }
     // SMB streams can start successfully while delivering no remote file
     // events. Keep a bounded polling safety net for every network root.
     startNetworkPolling(roots);
@@ -224,44 +334,65 @@ void ServiceEngine::stopNetworkPolling() {
     networkPollingTimer_ = nullptr;
 }
 
+void ServiceEngine::quiesceMonitoringUnlocked() {
+    isMonitoring_.store(false, std::memory_order_release);
+    monitoringAnchor_.store(0, std::memory_order_release);
+    if (watcher_) watcher_->stop();
+    stopNetworkPolling();
+
+    std::lock_guard<std::mutex> lock(pendingRescanMutex_);
+    if (rescanDebounceTimer_) {
+        dispatch_source_cancel(rescanDebounceTimer_);
+        dispatch_release(rescanDebounceTimer_);
+        rescanDebounceTimer_ = nullptr;
+    }
+    pendingRescanPaths_.clear();
+    lastRescanTime_.clear();
+}
+
+void ServiceEngine::stopMonitoringObservers() {
+    auto persistence = safePersistence();
+    if (persistence) persistence->stopAutoCompactionAndWait();
+    auto cp = safeContentPersistence();
+    if (cp) cp->stopAutoCompactionAndWait();
+}
+
 void ServiceEngine::restartMonitoring() {
-    if (!isMonitoring_.load(std::memory_order_relaxed)) return;
-    LOG_INFO("ServiceEngine", "Restarting monitoring (scan roots changed)");
-    const FSEventStreamEventId lastEventId = watcher_->getLastEventId();
-    stopMonitoring();
-    startMonitoring(lastEventId == 0 ? kFSEventStreamEventIdSinceNow : lastEventId);
+    bool defer = false;
+    bool restarted = false;
+    {
+        std::lock_guard<std::mutex> lock(monitoringMutex_);
+        if (shuttingDown_.load(std::memory_order_acquire)) return;
+        if (lifecycleBusy()) {
+            defer = true;
+        } else if (isMonitoring_.load(std::memory_order_relaxed)) {
+            FSEventStreamEventId lastEventId = kFSEventStreamEventIdSinceNow;
+            if (watcher_) lastEventId = watcher_->getLastEventId();
+            if (lastEventId == 0) {
+                lastEventId = monitoringAnchor_.load(std::memory_order_relaxed);
+            }
+            if (lastEventId == 0) lastEventId = kFSEventStreamEventIdSinceNow;
+            LOG_INFO("ServiceEngine", "Restarting monitoring (scan roots changed)");
+            quiesceMonitoringUnlocked();
+            startMonitoringUnlocked(lastEventId);
+            restarted = true;
+        }
+    }
+    if (defer) noteDeferredMonitoringRefresh();
+    if (!restarted) return;
+    stopMonitoringObservers();
     if (safeConfig().automaticMaintenanceEnabled) {
         auto persistence = safePersistence();
-        if (persistence) {
-            persistence->startAutoCompaction(300.0, watcher_);
-        }
+        if (persistence) persistence->startAutoCompaction(300.0, watcher_);
     }
 }
 
 void ServiceEngine::stopMonitoring() {
-    isMonitoring_.store(false, std::memory_order_release);
-    watcher_->stop();
-    stopNetworkPolling();
-
     {
-        std::lock_guard<std::mutex> lock(pendingRescanMutex_);
-        if (rescanDebounceTimer_) {
-            dispatch_source_cancel(rescanDebounceTimer_);
-            dispatch_release(rescanDebounceTimer_);
-            rescanDebounceTimer_ = nullptr;
-        }
-        pendingRescanPaths_.clear();
-        lastRescanTime_.clear();
+        std::lock_guard<std::mutex> lock(monitoringMutex_);
+        quiesceMonitoringUnlocked();
     }
-
-    auto persistence = safePersistence();
-    if (persistence) {
-        persistence->stopAutoCompactionAndWait();
-    }
-    auto cp = safeContentPersistence();
-    if (cp) {
-        cp->stopAutoCompactionAndWait();
-    }
+    stopMonitoringObservers();
 }
 
 // ═══════════════════════════════════════════════════════
@@ -368,18 +499,179 @@ void ServiceEngine::flushPendingRescans(dispatch_source_t firingTimer) {
     }
 }
 
+void ServiceEngine::deferVolumeRescan(std::string dir, std::function<void()> completion) {
+    {
+        std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+        DeferredVolumeWork work;
+        work.kind = DeferredVolumeWork::Kind::Rescan;
+        work.path = std::move(dir);
+        work.rescanCompletion = std::move(completion);
+        deferredVolumeWork_.push_back(std::move(work));
+    }
+    if (!lifecycleBusy() && startupCompleted_.load(std::memory_order_acquire)) {
+        applyDeferredVolumeWork();
+    }
+}
+
+void ServiceEngine::deferVolumeRemoval(std::string path,
+                                       std::function<void(uint32_t)> completion,
+                                       bool cancelIfRemounted) {
+    {
+        std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+        DeferredVolumeWork work;
+        work.kind = DeferredVolumeWork::Kind::Remove;
+        work.path = std::move(path);
+        work.removeCompletion = std::move(completion);
+        work.cancelIfRemounted = cancelIfRemounted;
+        deferredVolumeWork_.push_back(std::move(work));
+    }
+    if (!lifecycleBusy() && startupCompleted_.load(std::memory_order_acquire)) {
+        applyDeferredVolumeWork();
+    }
+}
+
+void ServiceEngine::queueWatcherEventsForTests(std::vector<FileSystemWatcher::Event> events) {
+    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+    const uint64_t indexRevision = indexRevision_.load(std::memory_order_acquire);
+    deferVolumeEvents(generation, indexRevision, std::move(events));
+}
+
+void ServiceEngine::publishFreshScanOnNextDeferredDrainForTests() {
+    publishFreshScanOnNextDeferredDrain_.store(true, std::memory_order_release);
+}
+
+void ServiceEngine::enqueueMutation(dispatch_block_t work) {
+    if (!work) return;
+    if (!mutationQueue_ || dispatch_get_specific(this) == this) {
+        work();
+        return;
+    }
+    dispatch_async(mutationQueue_, work);
+}
+
+void ServiceEngine::deferVolumeEvents(uint64_t generation,
+                                     uint64_t indexRevision,
+                                     std::vector<FileSystemWatcher::Event> events) {
+    if (events.empty()) return;
+    {
+        std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+        DeferredVolumeWork work;
+        work.kind = DeferredVolumeWork::Kind::Events;
+        work.generation = generation;
+        work.indexRevision = indexRevision;
+        work.events = std::move(events);
+        deferredVolumeWork_.push_back(std::move(work));
+    }
+    if (!lifecycleBusy() && startupCompleted_.load(std::memory_order_acquire)) {
+        applyDeferredVolumeWork();
+    }
+}
+
+void ServiceEngine::discardDeferredEvents() {
+    std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+    deferredVolumeWork_.erase(
+        std::remove_if(deferredVolumeWork_.begin(), deferredVolumeWork_.end(),
+                       [](const DeferredVolumeWork& work) {
+                           return work.kind == DeferredVolumeWork::Kind::Events;
+                       }),
+        deferredVolumeWork_.end());
+}
+
+void ServiceEngine::applyOrDeferEvents(uint64_t generation,
+                                      uint64_t indexRevision,
+                                      std::vector<FileSystemWatcher::Event> events,
+                                      std::shared_ptr<SearchEngine> requiredEngine,
+                                      bool allowWhileSyncing) {
+    std::vector<FileSystemWatcher::Event> directEvents;
+    std::vector<std::string> rescanDirs;
+    directEvents.reserve(events.size());
+    for (auto& event : events) {
+        if (event.flags & kFSEventStreamEventFlagMustScanSubDirs) {
+            rescanDirs.push_back(std::move(event.path));
+        } else {
+            directEvents.push_back(std::move(event));
+        }
+    }
+
+    bool applied = false;
+    bool defer = false;
+    {
+        std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+        if (shuttingDown_.load(std::memory_order_acquire)) return;
+        // The batch is stamped with the generation and snapshot that observed
+        // the events. A rebuild reads the disk itself; applying the old batch
+        // to the new index can delete files the scan just recorded. Background
+        // full replacement keeps the generation and bumps the snapshot instead.
+        // Do not queue the batch again: the shared queue was already drained,
+        // and re-deferring a stale snapshot would apply it after publish.
+        if (!isGenerationCurrent(generation)) return;
+        if (indexRevision_.load(std::memory_order_acquire) != indexRevision) return;
+        const bool scanning = isScanning_.load(std::memory_order_acquire);
+        const bool syncing = isSyncing_.load(std::memory_order_acquire);
+        auto engine = safeEngine();
+        const bool engineMismatch = requiredEngine && engine != requiredEngine;
+        if (scanning || (!allowWhileSyncing && syncing) || !engine || engineMismatch) {
+            defer = true;
+        } else if (!directEvents.empty()) {
+            applyFSEvents(directEvents, engine);
+            applied = true;
+        }
+    }
+    if (defer) {
+        if (!directEvents.empty()) {
+            deferVolumeEvents(generation, indexRevision, std::move(directEvents));
+        }
+        for (auto& dir : rescanDirs) deferVolumeRescan(std::move(dir), {});
+        return;
+    }
+    if (!rescanDirs.empty()) {
+        // Replay runs while monitoring is stopped. Queue the subtree work
+        // instead of dropping it in scheduleRescanForPaths().
+        if (allowWhileSyncing || !isMonitoring_.load(std::memory_order_acquire)) {
+            for (auto& dir : rescanDirs) deferVolumeRescan(std::move(dir), {});
+        } else {
+            scheduleRescanForPaths(rescanDirs);
+        }
+    }
+    if (applied && !allowWhileSyncing && onIndexChanged) onIndexChanged();
+}
+
+void ServiceEngine::deferVolumeRename(std::string oldPath, std::string newPath) {
+    {
+        std::lock_guard<std::mutex> lock(deferredVolumeMutex_);
+        DeferredVolumeWork work;
+        work.kind = DeferredVolumeWork::Kind::Rename;
+        work.path = std::move(oldPath);
+        work.newPath = std::move(newPath);
+        deferredVolumeWork_.push_back(std::move(work));
+    }
+    if (!lifecycleBusy() && startupCompleted_.load(std::memory_order_acquire)) {
+        applyDeferredVolumeWork();
+    }
+}
+
 void ServiceEngine::rescanSubtree(const std::string& dir,
                                    std::function<void()> completion) {
+    if (lifecycleBusy() || shuttingDown_.load(std::memory_order_acquire)) {
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+            if (completion) {
+                dispatch_async(dispatch_get_main_queue(), ^{ completion(); });
+            }
+            return;
+        }
+        deferVolumeRescan(dir, std::move(completion));
+        return;
+    }
+    rescanSubtreeNow(dir, std::move(completion));
+}
+
+void ServiceEngine::rescanSubtreeNow(const std::string& dir,
+                                     std::function<void()> completion) {
     auto completionCopy = completion ? std::make_shared<std::function<void()>>(std::move(completion)) : nullptr;
     auto notifyCompletion = [completionCopy] {
         if (!completionCopy) return;
         dispatch_async(dispatch_get_main_queue(), ^{ (*completionCopy)(); });
     };
-    auto engine = safeEngine();
-    if (!engine) {
-        notifyCompletion();
-        return;
-    }
 
     // Copy dir to avoid dangling reference — the caller's temporary may be
     // destroyed before the async block executes.
@@ -390,9 +682,17 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
         notifyCompletion();
         return;
     }
-    dispatch_async(mutationQueue_, ^{
-        if (!this->isGenerationCurrent(generation)) {
+    enqueueMutation(^{
+        // A scan or rebuild can start after the caller checked lifecycleBusy().
+        // Defer instead of mutating an engine that loadRecords() is about to
+        // replace, or an engine that is no longer published.
+        if (this->shuttingDown_.load(std::memory_order_acquire)) {
             notifyCompletion();
+            return;
+        }
+        if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
+            std::function<void()> again = completionCopy ? *completionCopy : std::function<void()>{};
+            this->deferVolumeRescan(dirCopy, std::move(again));
             return;
         }
 
@@ -421,122 +721,222 @@ void ServiceEngine::rescanSubtree(const std::string& dir,
         LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): scanned "
                  << freshRecords.size() << " records");
 
-        if (!this->isGenerationCurrent(generation)) {
-            notifyCompletion();
+        enum class RescanAction { Apply, Defer, Drop };
+        RescanAction action = RescanAction::Apply;
+        bool applied = false;
+        {
+            // setEngine() / loadRecords() publish under this lock. Hold it from
+            // the generation check through the index write so this rescan cannot
+            // modify an engine a rebuild has just swapped in.
+            std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+            if (this->shuttingDown_.load(std::memory_order_acquire)) {
+                action = RescanAction::Drop;
+            } else if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
+                action = RescanAction::Defer;
+            } else if (auto engine = this->safeEngine()) {
+                std::vector<std::string> contentPaths;
+                contentPaths.reserve(freshRecords.size());
+                for (const auto& record : freshRecords) {
+                    if (record.type != 1) continue;
+                    auto fullPath = SearchEngine::makeFullPath(record.path, record.name);
+                    if (this->isPathAllowedByConfig(fullPath, true)) {
+                        contentPaths.push_back(std::move(fullPath));
+                    }
+                }
+
+                auto ci = this->safeContentIndex();
+                auto cp = this->safeContentPersistence();
+                if (ci) {
+                    auto mappingLease = ci->acquireFileIndexMappingLease();
+                    auto oldEntries = ci->removeByPathPrefix(dirCopy);
+                    if (cp) {
+                        for (const auto& [oldIndex, info] : oldEntries) {
+                            cp->walAppendRemove(oldIndex, info.fullPath);
+                        }
+                    }
+                }
+
+                uint32_t removed = engine->batchRescanPrefix(dirCopy, std::move(freshRecords));
+
+                uint32_t total = engine->recordCount();
+                uint32_t live  = engine->liveRecordCount();
+                LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): removed="
+                         << removed << " total=" << total << " live=" << live);
+                if (total > live && (total - live) > total * 3 / 10) {
+                    if (ci) ci->beginFileIndexRemap();
+                    auto remap = engine->compactRecords();
+                    if (!remap.empty() && ci) ci->remapFileIndices(remap);
+                    if (ci) ci->endFileIndexRemap();
+                }
+
+                for (const auto& path : contentPaths) {
+                    this->updateContentForPath(path, false, engine);
+                }
+                this->noteIndexedIdentityForCompletedRescan(dirCopy);
+                applied = true;
+            } else {
+                action = RescanAction::Drop;
+            }
+        }
+        if (action == RescanAction::Defer) {
+            std::function<void()> again = completionCopy ? *completionCopy : std::function<void()>{};
+            this->deferVolumeRescan(dirCopy, std::move(again));
             return;
         }
-
-        std::vector<std::string> contentPaths;
-        contentPaths.reserve(freshRecords.size());
-        for (const auto& record : freshRecords) {
-            if (record.type != 1) continue;
-            auto fullPath = SearchEngine::makeFullPath(record.path, record.name);
-            if (this->isPathAllowedByConfig(fullPath, true)) {
-                contentPaths.push_back(std::move(fullPath));
-            }
-        }
-
-        auto ci = this->safeContentIndex();
-        auto cp = this->safeContentPersistence();
-        if (ci) {
-            auto mappingLease = ci->acquireFileIndexMappingLease();
-            auto oldEntries = ci->removeByPathPrefix(dirCopy);
-            if (cp) {
-                for (const auto& [oldIndex, info] : oldEntries) {
-                    cp->walAppendRemove(oldIndex, info.fullPath);
-                }
-            }
-        }
-
-        uint32_t removed = engine->batchRescanPrefix(dirCopy, std::move(freshRecords));
-
-        // Compact if tombstones exceed 30%
-        uint32_t total = engine->recordCount();
-        uint32_t live  = engine->liveRecordCount();
-        LOG_INFO("ServiceEngine", "rescanSubtree(" << dirCopy << "): removed="
-                 << removed << " total=" << total << " live=" << live);
-        if (total > live && (total - live) > total * 3 / 10) {
-            if (ci) ci->beginFileIndexRemap();
-            auto remap = engine->compactRecords();
-            if (!remap.empty() && ci) ci->remapFileIndices(remap);
-            if (ci) ci->endFileIndexRemap();
-        }
-
-        for (const auto& path : contentPaths) {
-            this->updateContentForPath(path, false, engine);
-        }
-
-        if (onIndexChanged) {
-            onIndexChanged();
-        }
-
+        if (applied && onIndexChanged) onIndexChanged();
         notifyCompletion();
     });
 }
 
 void ServiceEngine::refreshRenamedPath(const std::string& oldPath,
                                        const std::string& newPath) {
-    auto engine = safeEngine();
-    if (!engine || oldPath.empty() || newPath.empty() || oldPath == newPath) return;
+    if (oldPath.empty() || newPath.empty() || oldPath == newPath) return;
+    if (shuttingDown_.load(std::memory_order_acquire)) return;
+    if (lifecycleBusy()) {
+        deferVolumeRename(oldPath, newPath);
+        return;
+    }
+    refreshRenamedPathNow(oldPath, newPath);
+}
 
+void ServiceEngine::refreshRenamedPathNow(const std::string& oldPath,
+                                          const std::string& newPath) {
+    if (oldPath.empty() || newPath.empty() || oldPath == newPath) return;
     const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
     const std::string oldPathCopy = oldPath;
     const std::string newPathCopy = newPath;
     if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) return;
-    dispatch_async(mutationQueue_, ^{
-        if (!this->isGenerationCurrent(generation)) return;
-        std::vector<FileSystemWatcher::Event> events{
-            {oldPathCopy, kFSEventStreamEventFlagItemRemoved},
-            {newPathCopy, kFSEventStreamEventFlagItemRenamed}
-        };
-        this->applyFSEvents(events, engine);
-        if (this->onIndexChanged) this->onIndexChanged();
+    enqueueMutation(^{
+        if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+        if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
+            this->deferVolumeRename(oldPathCopy, newPathCopy);
+            return;
+        }
+
+        bool applied = false;
+        bool defer = false;
+        {
+            // setEngine() publishes a replacement under this lock. Hold it so
+            // the rename cannot update an engine that a scan is about to drop.
+            std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+            if (this->shuttingDown_.load(std::memory_order_acquire)) return;
+            if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
+                defer = true;
+            } else if (auto engine = this->safeEngine()) {
+                std::vector<FileSystemWatcher::Event> events{
+                    {oldPathCopy, kFSEventStreamEventFlagItemRemoved},
+                    {newPathCopy, kFSEventStreamEventFlagItemRenamed}
+                };
+                this->applyFSEvents(events, engine);
+                applied = true;
+            }
+        }
+        if (defer) {
+            this->deferVolumeRename(oldPathCopy, newPathCopy);
+            return;
+        }
+        if (applied && this->onIndexChanged) this->onIndexChanged();
     });
 }
 
 void ServiceEngine::removeSubtree(const std::string& pathPrefix,
                                    std::function<void(uint32_t)> completion) {
-    auto engine = safeEngine();
-    if (!engine) {
+    if (shuttingDown_.load(std::memory_order_acquire)) {
         if (completion) {
             dispatch_async(dispatch_get_main_queue(), ^{ completion(0); });
         }
         return;
     }
+    if (lifecycleBusy()) {
+        deferVolumeRemoval(pathPrefix, std::move(completion), /*cancelIfRemounted=*/true);
+        return;
+    }
+    removeSubtreeNow(pathPrefix, std::move(completion), /*cancelIfRemounted=*/false);
+}
 
-    // Copy pathPrefix to avoid dangling reference.
+void ServiceEngine::removeSubtreeNow(const std::string& pathPrefix,
+                                     std::function<void(uint32_t)> completion,
+                                     bool cancelIfRemounted) {
+    auto completionCopy = completion
+        ? std::make_shared<std::function<void(uint32_t)>>(std::move(completion))
+        : nullptr;
+    auto notify = [completionCopy](uint32_t removed) {
+        if (!completionCopy) return;
+        dispatch_async(dispatch_get_main_queue(), ^{ (*completionCopy)(removed); });
+    };
+
     std::string prefixCopy = pathPrefix;
-    auto completionCopy = completion ? std::make_shared<std::function<void(uint32_t)>>(std::move(completion)) : nullptr;
+    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
+    if (!mutationQueue_ || shuttingDown_.load(std::memory_order_acquire)) {
+        notify(0);
+        return;
+    }
+    enqueueMutation(^{
+        if (this->shuttingDown_.load(std::memory_order_acquire)) {
+            notify(0);
+            return;
+        }
+        if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
+            std::function<void(uint32_t)> again =
+                completionCopy ? *completionCopy : std::function<void(uint32_t)>{};
+            this->deferVolumeRemoval(prefixCopy, std::move(again), /*cancelIfRemounted=*/true);
+            return;
+        }
+        if (cancelIfRemounted && PathUtils::isReachableDirectory(prefixCopy)) {
+            LOG_INFO("ServiceEngine", "Skipping deferred removal; path is mounted again: "
+                     << prefixCopy);
+            notify(0);
+            return;
+        }
 
-    dispatch_async(mutationQueue_, ^{
-        if (shuttingDown_.load(std::memory_order_relaxed)) return;
-
-        auto ci = safeContentIndex();
-        auto mappingLease = ci ? ci->acquireFileIndexMappingLease()
-                               : std::shared_lock<std::shared_mutex>();
-        std::vector<uint32_t> removedIndices;
-        uint32_t removed = engine->removeByPathPrefixCollectingIndices(prefixCopy, &removedIndices);
-        if (safeConfig().contentIndexingEnabled) {
-            if (ci) {
-                auto cp = safeContentPersistence();
-                for (uint32_t idx : removedIndices) {
-                    ContentFileInfo info;
-                    bool hadContent = ci->getFileInfo(idx, info);
-                    ci->removeFile(idx);
-                    if (cp && hadContent) cp->walAppendRemove(idx, info.fullPath);
+        enum class RemovalAction { Apply, Defer, Drop };
+        RemovalAction action = RemovalAction::Apply;
+        uint32_t removed = 0;
+        {
+            // Rebuild publishes a replacement engine under this lock. Hold it
+            // across the delete so the removal cannot land on the engine that
+            // was just swapped out.
+            std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+            if (this->shuttingDown_.load(std::memory_order_acquire)) {
+                action = RemovalAction::Drop;
+            } else if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
+                action = RemovalAction::Defer;
+            } else if (cancelIfRemounted && PathUtils::isReachableDirectory(prefixCopy)) {
+                LOG_INFO("ServiceEngine", "Skipping deferred removal; path is mounted again: "
+                         << prefixCopy);
+                action = RemovalAction::Drop;
+            } else if (auto engine = this->safeEngine()) {
+                auto ci = this->safeContentIndex();
+                auto mappingLease = ci ? ci->acquireFileIndexMappingLease()
+                                       : std::shared_lock<std::shared_mutex>();
+                std::vector<uint32_t> removedIndices;
+                removed = engine->removeByPathPrefixCollectingIndices(prefixCopy, &removedIndices);
+                if (this->safeConfig().contentIndexingEnabled && ci) {
+                    auto cp = this->safeContentPersistence();
+                    for (uint32_t idx : removedIndices) {
+                        ContentFileInfo info;
+                        bool hadContent = ci->getFileInfo(idx, info);
+                        ci->removeFile(idx);
+                        if (cp && hadContent) cp->walAppendRemove(idx, info.fullPath);
+                    }
                 }
+            } else {
+                action = RemovalAction::Drop;
             }
         }
+        if (action == RemovalAction::Drop) {
+            notify(0);
+            return;
+        }
+        if (action == RemovalAction::Defer) {
+            std::function<void(uint32_t)> again =
+                completionCopy ? *completionCopy : std::function<void(uint32_t)>{};
+            this->deferVolumeRemoval(prefixCopy, std::move(again), /*cancelIfRemounted=*/true);
+            return;
+        }
+
         LOG_INFO("ServiceEngine", "removeSubtree(" << prefixCopy << "): removed " << removed << " records");
-
-        if (onIndexChanged) {
-            onIndexChanged();
-        }
-
-        if (completionCopy) {
-            dispatch_async(dispatch_get_main_queue(), ^{
-                (*completionCopy)(removed);
-            });
-        }
+        if (this->onIndexChanged) this->onIndexChanged();
+        notify(removed);
     });
 }

@@ -1,5 +1,39 @@
 #pragma once
+#include "PathUtils.h"
+#include <CoreFoundation/CoreFoundation.h>
+#include <chrono>
+#include <iterator>
+#include <limits>
 #include <sys/mount.h>
+
+static bool waitForMainFlag(const std::atomic<bool>& flag, double seconds) {
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::duration<double>(seconds);
+    while (!flag.load(std::memory_order_acquire)) {
+        if (std::chrono::steady_clock::now() >= deadline) return false;
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.05, true);
+    }
+    return true;
+}
+
+static bool engineHasFileName(ServiceEngine& service, const std::string& query,
+                              const std::string& name) {
+    auto engine = service.safeEngine();
+    if (!engine) return false;
+    for (uint32_t idx : engine->query(query, 20)) {
+        if (engine->getRecord(idx).name == name) return true;
+    }
+    return false;
+}
+
+static void writeVolumeKindFile(const fs::path& file, const std::string& kind,
+                                const std::string& uuid, const std::string& indexedUuid,
+                                const std::string& volumePath) {
+    std::ofstream out(file);
+    out << "v2\n" << kind
+        << ' ' << uuid.size() << ' ' << uuid
+        << ' ' << indexedUuid.size() << ' ' << indexedUuid
+        << ' ' << volumePath.size() << ' ' << volumePath << '\n';
+}
 
 static void runReviewRegressionTests() {
     std::cout << "\n=== Part 78: Review Regression Tests ===\n";
@@ -14,17 +48,79 @@ static void runReviewRegressionTests() {
         check(!scanner.isComplete(), "Review: inaccessible scan root is incomplete");
     }
 
-    // An unplugged external volume is deferred. Other configured roots still
-    // scan, and a missing folder on a mounted volume remains a hard failure.
+    // An unplugged external volume is deferred only after it was classified
+    // while mounted. An unknown or network /Volumes path is a hard failure.
+    // A missing folder on a mounted volume remains a hard failure too.
+    PathUtils::setVolumeKindStorePath("");
+    const std::string missingVolume = "/Volumes/maceverything_unmounted_" +
+        std::to_string(getpid());
+    const std::string missingNetwork = "/Volumes/maceverything_nas_" +
+        std::to_string(getpid());
     {
         DirectoryScanner scanner;
-        const std::string missing = "/Volumes/maceverything_unmounted_" +
-            std::to_string(getpid());
-        scanner.scan(missing);
-        check(scanner.isComplete(), "Review: unmounted volume root is deferred");
-        check(scanner.deferredVolumeCount() == 1, "Review: unmounted volume is counted");
-        check(scanner.reachableRootCount() == 0, "Review: unmounted volume is not reachable");
+        scanner.scan(missingVolume);
+        check(!scanner.isComplete(), "Review: unknown /Volumes root is not deferred");
+        check(scanner.deferredVolumeCount() == 0, "Review: unknown /Volumes root is not counted as deferred");
+    }
+    {
+        PathUtils::rememberVolumeKind(missingNetwork, PathUtils::VolumeKind::Network, "nas-uuid");
+        DirectoryScanner scanner;
+        scanner.scan(missingNetwork);
+        check(!scanner.isComplete(), "Review: offline network volume is not deferred");
+        check(scanner.deferredVolumeCount() == 0, "Review: offline network volume is not counted as deferred");
+        check(!PathUtils::isUnpluggedRemovableVolume(missingNetwork),
+              "Review: offline network volume is not an unplugged external disk");
+    }
+    {
+        PathUtils::rememberVolumeKind(missingVolume, PathUtils::VolumeKind::External, "usb-uuid");
+        PathUtils::noteIndexedVolumeIdentity(missingVolume, "usb-uuid");
+        DirectoryScanner scanner;
+        scanner.scan(missingVolume);
+        check(scanner.isComplete(), "Review: unplugged external volume root is deferred");
+        check(scanner.deferredVolumeCount() == 1, "Review: unplugged external volume is counted");
+        check(scanner.reachableRootCount() == 0, "Review: unplugged external volume is not reachable");
         check(scanner.takeResults().empty(), "Review: deferred volume adds no records");
+    }
+    if (PathUtils::isReachableDirectory("/Volumes/Macintosh HD")) {
+        check(!PathUtils::isUnpluggedRemovableVolume("/Volumes/Macintosh HD"),
+              "Review: boot-volume symlink is not an unplugged disk");
+    }
+    {
+        const std::string reused = "/Volumes/maceverything_reused_" + std::to_string(getpid());
+        PathUtils::rememberVolumeKind(reused, PathUtils::VolumeKind::External, "usb-uuid");
+        PathUtils::noteIndexedVolumeIdentity(reused, "nas-uuid");
+        check(!PathUtils::isUnpluggedRemovableVolume(reused),
+              "Review: external name reused by another volume is not pruned");
+        const std::string unverified = "/Volumes/maceverything_unverified_" + std::to_string(getpid());
+        PathUtils::rememberVolumeKind(unverified, PathUtils::VolumeKind::External, "usb-uuid");
+        check(!PathUtils::isUnpluggedRemovableVolume(unverified),
+              "Review: external volume without indexed identity is not pruned");
+        check(PathUtils::volumeKindFromTraits(true, false, true, true) == PathUtils::VolumeKind::Network,
+              "Review: non-local volume trait is network");
+        check(PathUtils::volumeKindFromTraits(true, true, true, false) == PathUtils::VolumeKind::External,
+              "Review: local non-internal volume trait is external");
+        check(PathUtils::volumeKindFromTraits(true, true, true, true) == PathUtils::VolumeKind::Fixed,
+              "Review: internal volume trait is fixed");
+        check(PathUtils::volumeKindFromTraits(false, false, false, false) == PathUtils::VolumeKind::Unknown,
+              "Review: missing volume traits stay unknown");
+        PathUtils::setMountedVolumeInspectorForTests(+[](const std::string& path) {
+            PathUtils::MountedVolumeTraits traits;
+            if (path.find("Share") != std::string::npos) {
+                traits.kind = PathUtils::VolumeKind::Network;
+                traits.uuid = "nas-uuid";
+            } else {
+                traits.kind = PathUtils::VolumeKind::External;
+                traits.uuid = "usb-uuid";
+            }
+            return traits;
+        });
+        PathUtils::observeVolumeKind("/Volumes/maceverything_Share");
+        check(PathUtils::rememberedVolumeKind("/Volumes/maceverything_Share") == PathUtils::VolumeKind::Network,
+              "Review: injected network traits are stored as network");
+        PathUtils::observeVolumeKind("/Volumes/maceverything_Disk");
+        check(PathUtils::rememberedVolumeClassification("/Volumes/maceverything_Disk").uuid == "usb-uuid",
+              "Review: injected external traits store the volume UUID");
+        PathUtils::setMountedVolumeInspectorForTests(nullptr);
     }
     {
         const auto present = fs::temp_directory_path() /
@@ -35,7 +131,7 @@ static void runReviewRegressionTests() {
         DirectoryScanner scanner;
         scanner.scan(std::vector<std::string>{
             present.string(),
-            "/Volumes/maceverything_unmounted_" + std::to_string(getpid())
+            missingVolume
         });
         check(scanner.isComplete(), "Review: present roots complete while a volume is absent");
         bool found = false;
@@ -47,17 +143,20 @@ static void runReviewRegressionTests() {
     }
     {
         struct statfs* mounts = nullptr;
-        const int mountCount = getmntinfo(&mounts, MNT_NOWAIT);
+        const int mountCount = getmntinfo_r_np(&mounts, MNT_NOWAIT);
         std::string mounted;
-        for (int i = 0; i < mountCount; ++i) {
-            const char* mountPoint = mounts[i].f_mntonname;
-            if (mountPoint[0] == '\0') continue;
-            const std::string point = mountPoint;
-            if (point.rfind("/Volumes/", 0) == 0 && point.size() > std::string("/Volumes/").size()) {
-                mounted = point;
-                break;
+        if (mountCount > 0 && mounts) {
+            for (int i = 0; i < mountCount; ++i) {
+                const char* mountPoint = mounts[i].f_mntonname;
+                if (!mountPoint || mountPoint[0] == '\0') continue;
+                const std::string point = mountPoint;
+                if (point.rfind("/Volumes/", 0) == 0 && point.size() > std::string("/Volumes/").size()) {
+                    mounted = point;
+                    break;
+                }
             }
         }
+        std::free(mounts);
         if (!mounted.empty()) {
             DirectoryScanner scanner;
             scanner.scan(mounted + "/maceverything_missing_child_" + std::to_string(getpid()));
@@ -80,8 +179,9 @@ static void runReviewRegressionTests() {
         config.scanRoot = present.string();
         config.scanRoots = {
             present.string(),
-            "/Volumes/maceverything_unmounted_" + std::to_string(getpid())
+            missingVolume
         };
+        writeVolumeKindFile(cache / "volume-kinds.tsv", "external", "usb-uuid", "usb-uuid", missingVolume);
         config.cachePath = cache.string();
         config.realtimeMonitoring = false;
         config.contentIndexingEnabled = false;
@@ -111,6 +211,646 @@ static void runReviewRegressionTests() {
               didScan.load(std::memory_order_acquire) &&
               completionCount.load(std::memory_order_acquire) > 0,
               "Review: unmounted volume does not block startup of other roots");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // A saved external classification must survive a reload, and an offline
+    // network root must block rebuild before any index file is removed.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_volume_kinds_" + std::to_string(getpid()));
+        fs::remove_all(cache);
+        fs::create_directories(cache);
+        const auto store = cache / "volume-kinds.tsv";
+        const std::string persisted = "/Volumes/maceverything_persisted_" +
+            std::to_string(getpid());
+        {
+            std::ofstream out(store);
+            out << "v1\nexternal " << persisted.size() << ' ' << persisted << '\n';
+        }
+        const std::string poison = "/Volumes/maceverything_poison_" + std::to_string(getpid());
+        PathUtils::setVolumeKindStorePath("");
+        PathUtils::rememberVolumeKind(poison, PathUtils::VolumeKind::External, "poison-uuid");
+        PathUtils::noteIndexedVolumeIdentity(poison, "poison-uuid");
+        PathUtils::setVolumeKindStorePath(store.string());
+        PathUtils::loadVolumeKinds();
+        check(!PathUtils::isUnpluggedRemovableVolume(poison),
+              "Review: switching the classification file drops the previous cache");
+        check(!PathUtils::isUnpluggedRemovableVolume(persisted),
+              "Review: v1 classification without a UUID is not pruned");
+        writeVolumeKindFile(store, "external", "usb-uuid", "usb-uuid", persisted);
+        PathUtils::loadVolumeKinds();
+        check(PathUtils::isUnpluggedRemovableVolume(persisted),
+              "Review: matching external UUID is unplugged when missing");
+        PathUtils::setVolumeKindStorePath("");
+        fs::remove_all(cache);
+    }
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_nas_rebuild_" + std::to_string(getpid()));
+        fs::remove_all(cache);
+        fs::create_directories(cache);
+        const auto sentinel = cache / "index.v6";
+        {
+            std::ofstream out(sentinel);
+            out << "keep";
+        }
+        const std::string nas = "/Volumes/maceverything_rebuild_nas_" +
+            std::to_string(getpid());
+        writeVolumeKindFile(cache / "volume-kinds.tsv", "network", "nas-uuid", "nas-uuid", nas);
+        const std::string poison = "/Volumes/maceverything_rebuild_poison_" + std::to_string(getpid());
+        PathUtils::setVolumeKindStorePath("");
+        PathUtils::rememberVolumeKind(poison, PathUtils::VolumeKind::External, "poison-uuid");
+        PathUtils::noteIndexedVolumeIdentity(poison, "poison-uuid");
+
+        ServiceConfig config;
+        config.scanRoot = nas;
+        config.scanRoots = {nas};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        std::atomic<bool> startupFailed{false};
+        std::atomic<bool> completionCalled{false};
+        service.onStartupFailed = [&](const std::string&) {
+            startupFailed.store(true, std::memory_order_release);
+        };
+        service.rebuildIndex([&](uint32_t, bool) {
+            completionCalled.store(true, std::memory_order_release);
+        });
+        check(startupFailed.load(std::memory_order_acquire) &&
+              completionCalled.load(std::memory_order_acquire),
+              "Review: offline network volume blocks index rebuild");
+        std::ifstream saved(sentinel);
+        std::string body;
+        std::getline(saved, body);
+        check(body == "keep", "Review: offline network volume keeps the old index file");
+        check(PathUtils::isUnpluggedRemovableVolume(poison),
+              "Review: a service keeps its volume classifications out of the process-global store");
+        {
+            std::ifstream kinds(cache / "volume-kinds.tsv");
+            std::string kindsBody((std::istreambuf_iterator<char>(kinds)),
+                                  std::istreambuf_iterator<char>());
+            check(kindsBody.find("nas-uuid") != std::string::npos &&
+                  kindsBody.find("poison-uuid") == std::string::npos,
+                  "Review: constructing a service does not rewrite another cache's volume file");
+        }
+        service.shutdown();
+        PathUtils::setVolumeKindStorePath("");
+        fs::remove_all(cache);
+    }
+
+    // A corrupt length must be rejected. It must not wrap and throw during startup.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_volume_kinds_corrupt_" + std::to_string(getpid()));
+        fs::remove_all(cache);
+        fs::create_directories(cache);
+        const std::string bogus = "/Volumes/maceverything_corrupt_" + std::to_string(getpid());
+        {
+            std::ofstream out(cache / "volume-kinds.tsv");
+            out << "v2\nexternal " << std::numeric_limits<unsigned long>::max()
+                << " x 1 a 0  " << bogus.size() << ' ' << bogus << '\n';
+        }
+        PathUtils::setVolumeKindStorePath((cache / "volume-kinds.tsv").string());
+        PathUtils::loadVolumeKinds();
+        check(!PathUtils::isUnpluggedRemovableVolume(bogus),
+              "Review: an overflowing volume-kinds length is ignored");
+        PathUtils::setVolumeKindStorePath("");
+        fs::remove_all(cache);
+    }
+
+    // Mount lookup errors stay distinct from "not mounted", and each service
+    // writes only its own classification file.
+    {
+        const std::string absent = "/Volumes/maceverything_mount_" + std::to_string(getpid());
+        PathUtils::rememberVolumeKind(absent, PathUtils::VolumeKind::External, "usb-uuid");
+        PathUtils::noteIndexedVolumeIdentity(absent, "usb-uuid");
+        PathUtils::setMountTableOverrideForTests(true, true);
+        check(!PathUtils::isUnpluggedRemovableVolume(absent),
+              "Review: a mount-table failure does not prune an external volume");
+        check(!PathUtils::isNetworkFilesystem(absent + "/child"),
+              "Review: a mount-table failure does not invent a network filesystem");
+        PathUtils::setMountTableOverrideForTests(true, false, {});
+        check(PathUtils::isUnpluggedRemovableVolume(absent),
+              "Review: an empty mount table leaves a missing external volume unplugged");
+        PathUtils::setMountTableOverrideForTests(
+            true, false, {PathUtils::MountTableEntry{absent, MNT_LOCAL}});
+        check(!PathUtils::isUnpluggedRemovableVolume(absent),
+              "Review: a mounted volume name is not treated as unplugged");
+        PathUtils::setMountTableOverrideForTests(
+            true, false, {PathUtils::MountTableEntry{"/Volumes/maceverything_share", 0}});
+        check(PathUtils::isNetworkFilesystem("/Volumes/maceverything_share/pending"),
+              "Review: a non-local mount table entry keeps the network scan policy");
+        PathUtils::setMountTableOverrideForTests(false, false);
+        PathUtils::setVolumeKindStorePath("/tmp/maceverything-volume-reset");
+        PathUtils::setVolumeKindStorePath("");
+
+        const auto cacheA = fs::temp_directory_path() /
+            ("maceverything_volume_store_a_" + std::to_string(getpid()));
+        const auto cacheB = fs::temp_directory_path() /
+            ("maceverything_volume_store_b_" + std::to_string(getpid()));
+        fs::remove_all(cacheA);
+        fs::remove_all(cacheB);
+        fs::create_directories(cacheA);
+        fs::create_directories(cacheB);
+        const std::string volA = "/Volumes/maceverything_store_a_" + std::to_string(getpid());
+        const std::string volB = "/Volumes/maceverything_store_b_" + std::to_string(getpid());
+        PathUtils::VolumeKindStore storeA;
+        PathUtils::VolumeKindStore storeB;
+        PathUtils::setVolumeKindStorePath(storeA, (cacheA / "volume-kinds.tsv").string());
+        PathUtils::setVolumeKindStorePath(storeB, (cacheB / "volume-kinds.tsv").string());
+        PathUtils::rememberVolumeKind(storeA, volA, PathUtils::VolumeKind::External, "uuid-a");
+        PathUtils::noteIndexedVolumeIdentity(storeA, volA, "uuid-a");
+        PathUtils::rememberVolumeKind(storeB, volB, PathUtils::VolumeKind::Network, "uuid-b");
+        PathUtils::noteIndexedVolumeIdentity(storeB, volB, "uuid-b");
+        check(PathUtils::isUnpluggedRemovableVolume(storeA, volA),
+              "Review: one volume store can prune its own external disk");
+        check(!PathUtils::isUnpluggedRemovableVolume(storeB, volA),
+              "Review: another volume store does not see the first store's classification");
+        std::ifstream fileA(cacheA / "volume-kinds.tsv");
+        std::string bodyA((std::istreambuf_iterator<char>(fileA)), std::istreambuf_iterator<char>());
+        std::ifstream fileB(cacheB / "volume-kinds.tsv");
+        std::string bodyB((std::istreambuf_iterator<char>(fileB)), std::istreambuf_iterator<char>());
+        check(bodyA.find("uuid-a") != std::string::npos && bodyA.find("uuid-b") == std::string::npos,
+              "Review: the first volume store file does not receive the second store's UUID");
+        check(bodyB.find("uuid-b") != std::string::npos && bodyB.find("uuid-a") == std::string::npos,
+              "Review: the second volume store file does not receive the first store's UUID");
+        fs::remove_all(cacheA);
+        fs::remove_all(cacheB);
+
+        check(PathUtils::scannedPathCoversConfiguredVolumeRoots(
+                  "/Volumes/Disk", {"/Volumes/Disk/Photos", "/tmp/other"}),
+              "Review: rescanning a volume root covers that volume's configured roots");
+        check(!PathUtils::scannedPathCoversConfiguredVolumeRoots(
+                  "/Volumes/Disk/Photos", {"/Volumes/Disk/Photos", "/Volumes/Disk/Docs"}),
+              "Review: a partial subtree does not cover every root on the volume");
+        check(PathUtils::scannedPathCoversConfiguredVolumeRoots(
+                  "/Volumes/Disk/Photos", {"/Volumes/Disk/Photos", "/Users/username"}),
+              "Review: the only configured root on a volume can record its UUID");
+        check(!PathUtils::scannedPathCoversConfiguredVolumeRoots(
+                  "/Users/username/Desktop", {"/Users/username"}),
+              "Review: a path outside /Volumes does not update a volume identity");
+    }
+
+    // A removal queued during a scan must not delete a path that is still
+    // present when the scan publishes. A later rename must update that engine.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_rename_lifecycle_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        {
+            std::ofstream out(root / "old-name.txt");
+            out << "keep";
+        }
+        for (int i = 0; i < 4000; ++i) {
+            std::ofstream out(root / ("pad-" + std::to_string(i) + ".txt"));
+            out << "p";
+        }
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) {
+            dispatch_semaphore_signal(done);
+        });
+        service.removeSubtree(root.string(), [](uint32_t) {});
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 15 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+
+        bool kept = false;
+        for (int attempt = 0; attempt < 40; ++attempt) {
+            kept = false;
+            auto engine = service.safeEngine();
+            if (engine) {
+                for (uint32_t idx : engine->query("old-name", 10)) {
+                    if (engine->getRecord(idx).name == "old-name.txt") kept = true;
+                }
+            }
+            dispatch_semaphore_t pause = dispatch_semaphore_create(0);
+            dispatch_semaphore_wait(pause, dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC));
+            dispatch_release(pause);
+        }
+        check(completed && kept,
+              "Review: deferred removal does not delete a path mounted again after the scan");
+
+        fs::rename(root / "old-name.txt", root / "new-name.txt");
+        service.refreshRenamedPath((root / "old-name.txt").string(),
+                                   (root / "new-name.txt").string());
+        bool renamed = false;
+        for (int attempt = 0; attempt < 50 && !renamed; ++attempt) {
+            auto engine = service.safeEngine();
+            if (engine) {
+                for (uint32_t idx : engine->query("new-name", 10)) {
+                    if (engine->getRecord(idx).name == "new-name.txt") renamed = true;
+                }
+            }
+            if (!renamed) {
+                dispatch_semaphore_t pause = dispatch_semaphore_create(0);
+                dispatch_semaphore_wait(pause, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC));
+                dispatch_release(pause);
+            }
+        }
+        check(renamed, "Review: rename refresh updates the published engine");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // A rename that arrives while the full scan flag is set must land on the
+    // engine that scan publishes, not on the engine it replaces.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_rename_during_scan_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        std::ofstream(root / "old-name.txt") << "keep";
+        for (int i = 0; i < 3000; ++i) {
+            std::ofstream(root / ("pad-" + std::to_string(i) + ".txt")) << "p";
+        }
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) {
+            dispatch_semaphore_signal(done);
+        });
+        check(service.isScanning(), "Review: full scan owns the index before it returns");
+        fs::rename(root / "old-name.txt", root / "new-name.txt");
+        std::ofstream(root / "arrived-during-scan.txt") << "new";
+        service.refreshRenamedPath((root / "old-name.txt").string(),
+                                   (root / "new-name.txt").string());
+        std::atomic<bool> rescanDone{false};
+        service.rescanSubtree(root.string(), [&] { rescanDone.store(true, std::memory_order_release); });
+        std::atomic<bool> removeDone{false};
+        std::atomic<uint32_t> removedCount{999};
+        // The root is still mounted. A removal queued during the scan must not
+        // erase it after the scan publishes.
+        service.removeSubtree(root.string(), [&](uint32_t removed) {
+            removedCount.store(removed, std::memory_order_release);
+            removeDone.store(true, std::memory_order_release);
+        });
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+        const bool callbacks = waitForMainFlag(rescanDone, 20) && waitForMainFlag(removeDone, 5);
+
+        bool renamed = false;
+        bool arrived = false;
+        for (int attempt = 0; attempt < 50 && !(renamed && arrived); ++attempt) {
+            renamed = engineHasFileName(service, "new-name", "new-name.txt");
+            arrived = engineHasFileName(service, "arrived-during-scan", "arrived-during-scan.txt");
+            if (!(renamed && arrived)) {
+                dispatch_semaphore_t pause = dispatch_semaphore_create(0);
+                dispatch_semaphore_wait(pause, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC));
+                dispatch_release(pause);
+            }
+        }
+        check(completed && callbacks && renamed && arrived &&
+              removedCount.load(std::memory_order_acquire) == 0,
+              "Review: rename, rescan, and removal during a full scan land on the published engine");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // The first scan can fail after volume work was queued. Those completions
+    // still have to run.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_failed_scan_deferred_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        const auto missing = cache / "missing-root";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        std::ofstream(root / "keep.txt") << "keep";
+        for (int i = 0; i < 2000; ++i) {
+            std::ofstream(root / ("pad-" + std::to_string(i) + ".txt")) << "p";
+        }
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string(), missing.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        std::atomic<bool> startupFailed{false};
+        service.onStartupFailed = [&](const std::string&) {
+            startupFailed.store(true, std::memory_order_release);
+        };
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool ok) {
+            if (!ok) dispatch_semaphore_signal(done);
+        });
+        check(service.isScanning(), "Review: failed scan still owns the index while it runs");
+        std::atomic<bool> removeDone{false};
+        std::atomic<bool> rescanDone{false};
+        service.removeSubtree(root.string(), [&](uint32_t) {
+            removeDone.store(true, std::memory_order_release);
+        });
+        service.rescanSubtree(root.string(), [&] {
+            rescanDone.store(true, std::memory_order_release);
+        });
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+        const bool callbacks = waitForMainFlag(removeDone, 20) && waitForMainFlag(rescanDone, 20);
+        bool kept = false;
+        for (int attempt = 0; attempt < 40 && !kept; ++attempt) {
+            kept = engineHasFileName(service, "keep", "keep.txt");
+            if (!kept) {
+                dispatch_semaphore_t pause = dispatch_semaphore_create(0);
+                dispatch_semaphore_wait(pause, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_MSEC));
+                dispatch_release(pause);
+            }
+        }
+        check(completed && startupFailed.load(std::memory_order_acquire) &&
+              callbacks && kept,
+              "Review: a failed first scan still finishes deferred removal and rescan");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // Rename is queued before a removal event. Both must run in that order,
+    // including when the drain is already on the mutation queue. The missing
+    // root keeps this scan from publishing a snapshot, which would drop the
+    // removal event instead of ordering it after the rename.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_deferred_order_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        const auto missing = cache / "missing-root";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        std::ofstream(root / "old-name.txt") << "keep";
+        for (int i = 0; i < 2500; ++i) {
+            std::ofstream(root / ("pad-" + std::to_string(i) + ".txt")) << "p";
+        }
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string(), missing.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) {
+            dispatch_semaphore_signal(done);
+        });
+        check(service.isScanning(), "Review: deferred-order scan owns the index");
+        fs::rename(root / "old-name.txt", root / "new-name.txt");
+        service.refreshRenamedPath((root / "old-name.txt").string(),
+                                   (root / "new-name.txt").string());
+        service.queueWatcherEventsForTests({
+            {(root / "new-name.txt").string(), kFSEventStreamEventFlagItemRemoved}
+        });
+        std::atomic<bool> drained{false};
+        service.removeSubtree((root / "zz-barrier-not-a-file").string(), [&](uint32_t) {
+            drained.store(true, std::memory_order_release);
+        });
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+        const bool barrier = waitForMainFlag(drained, 20);
+        const bool oldGone = !engineHasFileName(service, "old-name", "old-name.txt");
+        const bool newGone = !engineHasFileName(service, "new-name", "new-name.txt");
+        check(completed && barrier && oldGone && newGone,
+              "Review: deferred rename runs before a later removal event");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // A removal queued for the generation being scanned must not delete that
+    // path from the index a rebuild publishes.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_stale_events_rebuild_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        std::ofstream(root / "keep.txt") << "keep";
+        for (int i = 0; i < 2500; ++i) {
+            std::ofstream(root / ("pad-" + std::to_string(i) + ".txt")) << "p";
+        }
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        std::atomic<bool> armed{false};
+        dispatch_semaphore_t done = dispatch_semaphore_create(0);
+        service.onScanProgress = [&](uint64_t, uint64_t) {
+            bool expected = false;
+            if (!armed.compare_exchange_strong(expected, true)) return;
+            service.queueWatcherEventsForTests({
+                {(root / "keep.txt").string(), kFSEventStreamEventFlagItemRemoved}
+            });
+            service.rebuildIndex([&](uint32_t, bool) {
+                dispatch_semaphore_signal(done);
+            });
+        };
+        service.startFullScan([&](uint32_t, bool) {});
+        const bool completed = dispatch_semaphore_wait(
+            done, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) == 0;
+        dispatch_release(done);
+        bool kept = false;
+        for (int attempt = 0; attempt < 40 && !kept; ++attempt) {
+            kept = engineHasFileName(service, "keep", "keep.txt");
+            if (!kept) {
+                dispatch_semaphore_t pause = dispatch_semaphore_create(0);
+                dispatch_semaphore_wait(pause, dispatch_time(DISPATCH_TIME_NOW, 25 * NSEC_PER_MSEC));
+                dispatch_release(pause);
+            }
+        }
+        check(completed && armed.load(std::memory_order_acquire) && kept &&
+              fs::exists(root / "keep.txt"),
+              "Review: events queued before rebuild are not applied to the new index");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // Events already removed from the shared deferred queue must not delete
+    // files a later background full replacement just loaded. Rebuild bumps
+    // the lifecycle generation; this path keeps that generation.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_stale_events_replace_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        std::ofstream(root / "keep.txt") << "keep";
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        dispatch_semaphore_t started = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) {
+            dispatch_semaphore_signal(started);
+        });
+        const bool scanDone = dispatch_semaphore_wait(
+            started, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC)) == 0;
+        dispatch_release(started);
+        const auto startupDeadline =
+            std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < startupDeadline &&
+               (!service.startupCompletedForTests() ||
+                service.deferredDrainCountForTests() == 0)) {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
+        }
+        const bool startupDone = service.startupCompletedForTests() &&
+            service.deferredDrainCountForTests() > 0;
+        check(scanDone && startupDone,
+              "Review: replacement race starts from a published index");
+
+        service.publishFreshScanOnNextDeferredDrainForTests();
+        service.queueWatcherEventsForTests({
+            {(root / "keep.txt").string(), kFSEventStreamEventFlagItemRemoved}
+        });
+        std::atomic<bool> staleDrained{false};
+        service.removeSubtree((root / "zz-barrier-not-a-file").string(), [&](uint32_t) {
+            staleDrained.store(true, std::memory_order_release);
+        });
+        const bool staleBarrier = waitForMainFlag(staleDrained, 20);
+        const bool kept = engineHasFileName(service, "keep", "keep.txt");
+        check(staleBarrier && kept && fs::exists(root / "keep.txt"),
+              "Review: events taken off the deferred queue do not delete a background replacement");
+
+        fs::remove(root / "keep.txt");
+        service.queueWatcherEventsForTests({
+            {(root / "keep.txt").string(), kFSEventStreamEventFlagItemRemoved}
+        });
+        std::atomic<bool> freshDrained{false};
+        service.removeSubtree((root / "zz-barrier-not-a-file").string(), [&](uint32_t) {
+            freshDrained.store(true, std::memory_order_release);
+        });
+        const bool freshBarrier = waitForMainFlag(freshDrained, 20);
+        check(freshBarrier && !engineHasFileName(service, "keep", "keep.txt"),
+              "Review: an event queued after replacement still updates the new index");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // A full scan publishes a new engine without retiring the lifecycle
+    // generation. Events queued while that scan owns the index must not
+    // delete files the scan just recorded, and a watcher started from "now"
+    // must not suppress replay from the scan's event id.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_scan_publish_events_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        fs::remove_all(cache);
+        fs::create_directories(root);
+        std::ofstream(root / "keep.txt") << "keep";
+        for (int i = 0; i < 2500; ++i) {
+            std::ofstream(root / ("pad-" + std::to_string(i) + ".txt")) << "p";
+        }
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = true;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+
+        ServiceEngine service(config);
+        auto waitUntilReady = [&](uint64_t previousDrains) {
+            const auto deadline =
+                std::chrono::steady_clock::now() + std::chrono::seconds(30);
+            while (std::chrono::steady_clock::now() < deadline) {
+                if (service.startupCompletedForTests() &&
+                    service.deferredDrainCountForTests() > previousDrains) {
+                    return true;
+                }
+                CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
+            }
+            return service.startupCompletedForTests() &&
+                service.deferredDrainCountForTests() > previousDrains;
+        };
+
+        dispatch_semaphore_t firstDone = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) {
+            dispatch_semaphore_signal(firstDone);
+        });
+        const bool firstScan = dispatch_semaphore_wait(
+            firstDone, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) == 0;
+        dispatch_release(firstDone);
+        const bool firstReady = waitUntilReady(0);
+        check(firstScan && firstReady && service.isMonitoring(),
+              "Review: full scan starts live monitoring");
+
+        std::atomic<bool> attempted{false};
+        std::atomic<bool> monitoringDuringScan{true};
+        service.onScanProgress = [&](uint64_t, uint64_t) {
+            bool expected = false;
+            if (!attempted.compare_exchange_strong(expected, true)) return;
+            service.attemptVolumeMonitoringForTests();
+            monitoringDuringScan.store(service.isMonitoring(), std::memory_order_release);
+            service.queueWatcherEventsForTests({
+                {(root / "keep.txt").string(), kFSEventStreamEventFlagItemRemoved}
+            });
+        };
+        service.armVolumeMonitoringBeforeReplayForTests();
+        const uint64_t drainsBeforeSecond = service.deferredDrainCountForTests();
+        dispatch_semaphore_t secondDone = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) {
+            dispatch_semaphore_signal(secondDone);
+        });
+        const bool secondScan = dispatch_semaphore_wait(
+            secondDone, dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC)) == 0;
+        dispatch_release(secondDone);
+        const bool secondReady = waitUntilReady(drainsBeforeSecond);
+        std::atomic<bool> drained{false};
+        service.removeSubtree((root / "zz-barrier-not-a-file").string(), [&](uint32_t) {
+            drained.store(true, std::memory_order_release);
+        });
+        const bool barrier = waitForMainFlag(drained, 20);
+        const bool kept = engineHasFileName(service, "keep", "keep.txt");
+        const uint64_t anchor = service.monitoringAnchorForTests();
+        check(secondScan && secondReady && attempted.load(std::memory_order_acquire) &&
+              !monitoringDuringScan.load(std::memory_order_acquire),
+              "Review: a volume notification does not start monitoring during a full scan");
+        check(barrier && kept && fs::exists(root / "keep.txt"),
+              "Review: events queued during a full scan do not delete the published scan");
+        check(service.isMonitoring() && anchor != 0 &&
+              anchor != kFSEventStreamEventIdSinceNow,
+              "Review: full scan replay replaces a watcher that started from now");
         service.shutdown();
         fs::remove_all(cache);
     }

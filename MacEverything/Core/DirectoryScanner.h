@@ -9,6 +9,10 @@
 #include <atomic>
 #include <string>
 
+namespace PathUtils {
+struct VolumeKindStore;
+}
+
 struct ScanConfig {
     std::vector<std::string> excludedPaths;
     std::vector<std::string> excludedPatterns;
@@ -16,6 +20,9 @@ struct ScanConfig {
     bool includeHidden = false;
     bool includeSystem = false;
     bool includeAppBundleContents = false;
+    /// When null, classification uses the process-wide store. ServiceEngine
+    /// passes its own store so two caches cannot overwrite each other.
+    PathUtils::VolumeKindStore* volumeKinds = nullptr;
 };
 
 struct InodeKey {
@@ -52,9 +59,10 @@ public:
     }
     bool isCancelled() const { return cancelled_.load(std::memory_order_relaxed); }
     // A scan is complete when every requested root was either traversed or
-    // deferred because its external volume is unplugged. A missing local
-    // folder is still a hard failure: callers must not replace a healthy
-    // index with that partial result.
+    // deferred because it is a previously seen local external disk that is
+    // unplugged. An offline network volume, an unknown /Volumes path, and a
+    // missing local folder are hard failures: callers must not replace a
+    // healthy index with that partial result.
     bool isComplete() const {
         return !cancelled_.load(std::memory_order_relaxed) &&
                rootFailureCount_.load(std::memory_order_acquire) == 0;

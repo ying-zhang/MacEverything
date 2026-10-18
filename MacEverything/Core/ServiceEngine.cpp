@@ -110,8 +110,10 @@ std::vector<std::string> exclusionsForRoots(const std::vector<std::string>& root
 // ═══════════════════════════════════════════════════════
 
 ServiceEngine::ServiceEngine(const ServiceConfig& config)
-    : config_(config)
+    : config_(config),
+      volumeKinds_(std::make_unique<PathUtils::VolumeKindStore>())
 {
+    useVolumeKindStore(config_);
     engine_ = std::make_shared<SearchEngine>(searchOptionsFromConfig(config_));
     watcher_ = std::make_shared<FileSystemWatcher>("live");
     contentIndex_ = std::make_shared<ContentIndex>();
@@ -142,6 +144,7 @@ void ServiceEngine::updateConfig(const ServiceConfig& config) {
                        config_.scanRoot != config.scanRoot;
         config_ = config;
     }
+    useVolumeKindStore(config);
 
     if (restartHttp) {
         stopHttpServer();
@@ -369,16 +372,56 @@ bool ServiceEngine::isVolumeUnmounting(const std::string& path) const {
     return false;
 }
 
+PathUtils::VolumeKindStore& ServiceEngine::ownVolumeKinds() {
+    return *volumeKinds_;
+}
+
+void ServiceEngine::useVolumeKindStore(const ServiceConfig& config) {
+    auto& store = ownVolumeKinds();
+    if (config.cachePath.empty()) {
+        PathUtils::setVolumeKindStorePath(store, {});
+        return;
+    }
+    PathUtils::setVolumeKindStorePath(store, config.cachePath + "/volume-kinds.tsv");
+    PathUtils::loadVolumeKinds(store);
+}
+
+bool ServiceEngine::lifecycleBusy() const {
+    return isSyncing_.load(std::memory_order_acquire) ||
+           isScanning_.load(std::memory_order_acquire);
+}
+
 void ServiceEngine::pruneUnmountedVolumes(const std::shared_ptr<SearchEngine>& engine) {
     if (!engine) return;
     for (const auto& root : effectiveScanRoots()) {
-        if (!PathUtils::isUnmountedVolumePath(root)) continue;
+        // Offline NAS shares and unknown /Volumes paths stay in the cache.
+        // Only a local external disk we previously saw mounted is removed.
+        if (!PathUtils::isUnpluggedRemovableVolume(ownVolumeKinds(), root)) continue;
         const uint32_t removed = engine->removeByPathPrefix(root);
         if (removed > 0) {
             LOG_INFO("ServiceEngine", "Dropped " << removed
-                     << " cached records for unmounted volume: " << root);
+                     << " cached records for unplugged external volume: " << root);
         }
     }
+}
+
+void ServiceEngine::noteIndexedScanRoots(const std::vector<std::string>& roots) {
+    for (const auto& root : roots) {
+        if (!PathUtils::isReachableDirectory(root)) continue;
+        const auto traits = PathUtils::inspectMountedVolume(ownVolumeKinds(), root);
+        if (traits.uuid.empty()) continue;
+        PathUtils::noteIndexedVolumeIdentity(ownVolumeKinds(), root, traits.uuid);
+    }
+}
+
+void ServiceEngine::noteIndexedIdentityForCompletedRescan(const std::string& scannedPath) {
+    if (!PathUtils::scannedPathCoversConfiguredVolumeRoots(scannedPath, effectiveScanRoots())) {
+        return;
+    }
+    if (!PathUtils::isReachableDirectory(scannedPath)) return;
+    const auto traits = PathUtils::inspectMountedVolume(ownVolumeKinds(), scannedPath);
+    if (traits.uuid.empty()) return;
+    PathUtils::noteIndexedVolumeIdentity(ownVolumeKinds(), scannedPath, traits.uuid);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -386,14 +429,30 @@ void ServiceEngine::pruneUnmountedVolumes(const std::shared_ptr<SearchEngine>& e
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startFullScan(StartupCallback completion) {
-    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
     const ServiceConfig config = safeConfig();
-    isScanning_.store(true, std::memory_order_relaxed);
+    uint64_t generation = 0;
+    {
+        // Publish "scan owns the index" before any mutation can pass its
+        // lifecycle check. The store and that check share lifecycleStateMutex_.
+        std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+        generation = lifecycleGeneration_.load(std::memory_order_acquire);
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+            if (completion) completion(0, false);
+            return;
+        }
+        isScanning_.store(true, std::memory_order_release);
+    }
     stopMonitoring();
 
     if (!ensureInstanceLock(config)) {
-        isScanning_.store(false, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+            if (isGenerationCurrent(generation)) {
+                isScanning_.store(false, std::memory_order_release);
+            }
+        }
         if (completion) completion(0, false);
+        applyDeferredVolumeWork(/*requireStartup=*/false);
         return;
     }
 
@@ -437,9 +496,15 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
             const auto reason = "Full scan incomplete: " +
                 std::to_string(stats.errorCount.load(std::memory_order_relaxed)) + " root or traversal error(s)";
             LOG_ERROR("ServiceEngine", reason);
-            this->isScanning_.store(false, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+                if (!this->isGenerationCurrent(generation)) return;
+                this->isScanning_.store(false, std::memory_order_release);
+            }
             if (onStartupFailed) onStartupFailed(reason);
             if (completion) completion(0, false);
+            // Startup will not complete, so the normal drain never runs.
+            this->applyDeferredVolumeWork(/*requireStartup=*/false);
             return;
         }
 
@@ -455,17 +520,35 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
         {
             std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
             if (!this->isGenerationCurrent(generation)) return;
+            // The scan result replaces every event observed against the
+            // previous snapshot. Real changes since scanStartEventId are
+            // replayed by the watcher started below.
+            this->retireDeferredEventSnapshotUnlocked();
             this->setEngine(engine);
             this->isScanning_.store(false, std::memory_order_relaxed);
         }
+        // The classification file must describe the index that was published.
+        // A superseded scan returns above, before setEngine().
+        if (this->isGenerationCurrent(generation)) {
+            this->noteIndexedScanRoots(roots);
+        }
 
-        // Replay changes that occurred while the full scanner was running.
-        this->watcher_->setLastEventId(scanStartEventId);
         if (completion) completion(count, true);
 
-        if (config.realtimeMonitoring && this->isGenerationCurrent(generation)) {
-            this->startMonitoring(scanStartEventId);
+        // Deferred mount work waits until startup has completed. The no-cache
+        // callback sets the flag too; a direct startFullScan caller does not.
+        // A superseded scan must not start its own watcher, but it may drain
+        // work that the current lifecycle is already idle enough to accept.
+        if (this->isGenerationCurrent(generation)) {
+            this->startupCompleted_.store(true, std::memory_order_release);
+            if (this->armVolumeMonitoringBeforeReplay_.exchange(false, std::memory_order_acq_rel)) {
+                this->startOrRestartVolumeMonitoring();
+            }
+            if (config.realtimeMonitoring) {
+                this->startMonitoring(scanStartEventId);
+            }
         }
+        this->applyDeferredVolumeWork();
 
         // Content indexing in background
         dispatch_group_async(this->backgroundGroup_, dispatch_get_global_queue(QOS_CLASS_UTILITY, 0), ^{
@@ -483,16 +566,30 @@ void ServiceEngine::startFullScan(StartupCallback completion) {
 // ═══════════════════════════════════════════════════════
 
 void ServiceEngine::startIncremental(StartupCallback completion) {
-    const uint64_t generation = lifecycleGeneration_.load(std::memory_order_acquire);
     const ServiceConfig config = safeConfig();
-    isScanning_.store(true, std::memory_order_relaxed);
-    startupCompleted_.store(false, std::memory_order_relaxed);
-    isSyncing_.store(false, std::memory_order_relaxed);
+    uint64_t generation = 0;
+    {
+        std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+        generation = lifecycleGeneration_.load(std::memory_order_acquire);
+        if (shuttingDown_.load(std::memory_order_acquire)) {
+            if (completion) completion(0, false);
+            return;
+        }
+        isScanning_.store(true, std::memory_order_release);
+        startupCompleted_.store(false, std::memory_order_release);
+        isSyncing_.store(false, std::memory_order_release);
+    }
     stopMonitoring();
 
     if (!ensureInstanceLock(config)) {
-        isScanning_.store(false, std::memory_order_relaxed);
+        {
+            std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+            if (isGenerationCurrent(generation)) {
+                isScanning_.store(false, std::memory_order_release);
+            }
+        }
         if (completion) completion(0, false);
+        applyDeferredVolumeWork(/*requireStartup=*/false);
         return;
     }
 
@@ -515,8 +612,8 @@ void ServiceEngine::startIncremental(StartupCallback completion) {
         uint64_t lastEventId = persistence->load(this->configSignature());
         if (!this->isGenerationCurrent(generation)) return;
         auto indexLoadDone = std::chrono::steady_clock::now();
-        // Drop records for external disks that were unplugged while the app
-        // was not running. The root stays configured and is scanned on mount.
+        // Drop records for local external disks that were unplugged while the
+        // app was not running. Network volumes and unknown roots stay cached.
         this->pruneUnmountedVolumes(engine);
         uint32_t loadedCount = engine->liveRecordCount();
 
@@ -631,14 +728,14 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
     }
 
     // Rebuild replaces the in-memory engine and removes persisted files before
-    // scanning. An unplugged external volume is skipped and indexed again when
-    // it mounts. A missing local folder still blocks the rebuild so it cannot
-    // destroy the last usable index.
+    // scanning. A previously seen local external disk may be unplugged and is
+    // indexed again when it mounts. An offline NAS, an unknown /Volumes path,
+    // or a missing local folder blocks the rebuild so the last index survives.
     for (const auto& root : effectiveScanRoots()) {
         struct stat rootStat{};
         if (stat(root.c_str(), &rootStat) == 0 && S_ISDIR(rootStat.st_mode)) continue;
-        if (PathUtils::isUnmountedVolumePath(root)) {
-            LOG_INFO("ServiceEngine", "Rebuild skipping unmounted volume: " << root);
+        if (PathUtils::isUnpluggedRemovableVolume(ownVolumeKinds(), root)) {
+            LOG_INFO("ServiceEngine", "Rebuild skipping unplugged external volume: " << root);
             continue;
         }
         const std::string reason = "Rebuild blocked: scan root unavailable: " + root;
@@ -668,6 +765,9 @@ void ServiceEngine::rebuildIndex(StartupCallback completion) {
             contentIndex_ = newContent;
         }
     }
+    // Events queued for the previous generation must not run against the
+    // engine this rebuild is about to publish.
+    discardDeferredEvents();
     if (onIndexChanged) onIndexChanged();
 
     dispatch_async(lifecycleQueue_, ^{
@@ -761,6 +861,42 @@ void ServiceEngine::runPhase2Completion(uint64_t generation) {
     dispatch_release(sleeper);
 }
 
+void ServiceEngine::retireDeferredEventSnapshotUnlocked() {
+    indexRevision_.fetch_add(1, std::memory_order_acq_rel);
+    discardDeferredEvents();
+}
+
+ServiceEngine::SnapshotPublishResult ServiceEngine::publishScannedRecords(
+    const std::shared_ptr<SearchEngine>& engine,
+    std::vector<FileRecord> records,
+    const std::shared_ptr<ContentIndex>& replacementContent,
+    const std::shared_ptr<IndexPersistence>& persistence,
+    uint64_t generation)
+{
+    // lifecycleStateMutex_ then deferredVolumeMutex_ (discardDeferredEvents).
+    // Event applies take the lifecycle lock first, then the deferred lock if
+    // they queue again, so this order cannot invert.
+    std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+    if (!isGenerationCurrent(generation)) return SnapshotPublishResult::Superseded;
+    SnapshotPublishResult result = SnapshotPublishResult::Unchanged;
+    if (engine && safeEngine() == engine) {
+        // Local drains already hold batches stamped with the previous id.
+        // discardDeferredEvents() only sees the shared queue.
+        retireDeferredEventSnapshotUnlocked();
+        engine->loadRecords(std::move(records));
+        if (replacementContent) {
+            std::unique_lock contentLock(contentMutex_);
+            contentIndex_ = replacementContent;
+        }
+        if (persistence) persistence->setContentIndex(replacementContent);
+        result = SnapshotPublishResult::Replaced;
+    }
+    if (isGenerationCurrent(generation)) {
+        isSyncing_.store(false, std::memory_order_release);
+    }
+    return result;
+}
+
 void ServiceEngine::backgroundSyncEngine(
     std::shared_ptr<SearchEngine> engine,
     std::shared_ptr<IndexPersistence> sharedPersistence,
@@ -777,10 +913,15 @@ void ServiceEngine::backgroundSyncEngine(
         std::vector<std::string> networkRoots;
         std::vector<std::string> localRoots;
         for (const auto& root : roots) {
-            if (PathUtils::isUnmountedVolumePath(root)) {
-                LOG_INFO("ServiceEngine", "Deferring unmounted volume during sync: " << root);
+            if (!PathUtils::isReachableDirectory(root)) {
+                if (PathUtils::isUnpluggedRemovableVolume(this->ownVolumeKinds(), root)) {
+                    LOG_INFO("ServiceEngine", "Deferring unplugged external volume during sync: " << root);
+                } else {
+                    LOG_INFO("ServiceEngine", "Keeping cached records for unavailable scan root: " << root);
+                }
                 continue;
             }
+            PathUtils::observeVolumeKind(this->ownVolumeKinds(), root);
             if (PathUtils::isNetworkFilesystem(root)) {
                 hasNetworkRoot = true;
                 networkRoots.push_back(root);
@@ -798,7 +939,11 @@ void ServiceEngine::backgroundSyncEngine(
                 this->rescanSubtree(root);
             }
             if (localRoots.empty()) {
-                this->isSyncing_.store(false, std::memory_order_relaxed);
+                {
+                    std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+                    if (!this->isGenerationCurrent(generation)) return;
+                    this->isSyncing_.store(false, std::memory_order_release);
+                }
                 if (config.realtimeMonitoring) this->startMonitoring();
                 if (config.automaticMaintenanceEnabled) {
                     sharedPersistence->startAutoCompaction(300.0, this->watcher_);
@@ -810,6 +955,7 @@ void ServiceEngine::backgroundSyncEngine(
                     });
                 }
                 if (this->onIndexChanged) this->onIndexChanged();
+                this->applyDeferredVolumeWork();
                 return;
             }
             // Reconcile NAS roots by polling, but still replay local roots
@@ -821,7 +967,11 @@ void ServiceEngine::backgroundSyncEngine(
 
         if (roots.empty()) {
             LOG_INFO("ServiceEngine", "No mounted local roots to replay");
-            this->isSyncing_.store(false, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+                if (!this->isGenerationCurrent(generation)) return;
+                this->isSyncing_.store(false, std::memory_order_release);
+            }
             if (config.realtimeMonitoring) this->startMonitoring();
             if (config.automaticMaintenanceEnabled) {
                 sharedPersistence->startAutoCompaction(300.0, this->watcher_);
@@ -833,6 +983,7 @@ void ServiceEngine::backgroundSyncEngine(
                 });
             }
             if (this->onIndexChanged) this->onIndexChanged();
+            this->applyDeferredVolumeWork();
             return;
         }
 
@@ -849,7 +1000,15 @@ void ServiceEngine::backgroundSyncEngine(
             roots,
             lastEventId,
             [this, engine, generation](std::vector<FileSystemWatcher::Event> events) {
-                if (this->isGenerationCurrent(generation)) this->applyFSEvents(events, engine);
+                if (!this->mutationQueue_ || events.empty()) return;
+                // The watcher queue must not block on the mutation queue: stop()
+                // drains the watcher queue, and a mutation can stop a watcher.
+                const uint64_t indexRevision =
+                    this->indexRevision_.load(std::memory_order_acquire);
+                dispatch_async(this->mutationQueue_, ^{
+                    this->applyOrDeferEvents(generation, indexRevision, events, engine,
+                                             /*allowWhileSyncing=*/true);
+                });
             },
             [replayDone, journalTruncated, watcherPtr, sem] {
                 replayDone->store(true);
@@ -860,6 +1019,19 @@ void ServiceEngine::backgroundSyncEngine(
 
         long result = dispatch_semaphore_wait(sem, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));
         watcherForReplay->stop();
+        // Continue the live stream after the last event this replay actually
+        // delivered. A zero id means the callback stored nothing, so keep the
+        // watermark replay started from. Event id 0 would replay the journal
+        // from the beginning.
+        const FSEventStreamEventId deliveredReplayId = watcherPtr->getLastEventId();
+        const FSEventStreamEventId replayResumeId =
+            deliveredReplayId != 0 ? deliveredReplayId :
+            (lastEventId != 0 ? lastEventId : kFSEventStreamEventIdSinceNow);
+        // Finish replay blocks that stop() only queued. loadRecords below takes
+        // the same lifecycle lock those blocks use.
+        if (this->mutationQueue_) {
+            dispatch_sync(this->mutationQueue_, ^{});
+        }
         if (!this->isGenerationCurrent(generation)) return;
 
         if (result == 0 && replayDone->load() && !journalTruncated->load()) {
@@ -874,9 +1046,13 @@ void ServiceEngine::backgroundSyncEngine(
                      << "FSEvents replay " << replayTime << "s, "
                      << "total " << totalTime << "s");
 
-            this->isSyncing_.store(false, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+                if (!this->isGenerationCurrent(generation)) return;
+                this->isSyncing_.store(false, std::memory_order_release);
+            }
             if (config.realtimeMonitoring) {
-                this->startMonitoring();
+                this->startMonitoring(replayResumeId);
             }
             if (config.automaticMaintenanceEnabled) {
                 sharedPersistence->startAutoCompaction(300.0, this->watcher_);
@@ -889,6 +1065,7 @@ void ServiceEngine::backgroundSyncEngine(
                 });
             }
             if (this->onIndexChanged) this->onIndexChanged();
+            this->applyDeferredVolumeWork();
             return;
         }
 
@@ -915,6 +1092,10 @@ void ServiceEngine::backgroundSyncEngine(
         });
         dispatch_resume(timer);
 
+        // Changes the walker has already passed are not in the snapshot.
+        // Replay them from this id once the replacement is published.
+        const FSEventStreamEventId scanStartEventId =
+            FileSystemWatcher::getCurrentSystemEventId();
         scanner->scan(this->effectiveScanRoots(), this->scanConfig());
         dispatch_source_cancel(timer);
         dispatch_release(timer);
@@ -925,19 +1106,22 @@ void ServiceEngine::backgroundSyncEngine(
             const auto& stats = scanner->getStats();
             LOG_ERROR("ServiceEngine", "Background scan incomplete; preserving cached index ("
                       << stats.errorCount.load(std::memory_order_relaxed) << " errors)");
-            this->isSyncing_.store(false, std::memory_order_relaxed);
+            {
+                std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
+                if (!this->isGenerationCurrent(generation)) return;
+                this->isSyncing_.store(false, std::memory_order_release);
+            }
+            this->applyDeferredVolumeWork();
             return;
         }
 
         auto freshRecords = scanner->takeResults();
-        engine->loadRecords(std::move(freshRecords));
-        uint32_t finalCount = engine->liveRecordCount();
-
-        // A full replacement can reorder record indices, so persisted content
-        // entries cannot be safely reused by numeric fileIndex.
-        if (config.contentIndexingEnabled) {
+        // isSyncing_ is still true, so live mutations stay queued. Stop the
+        // previous content store before publishing the replacement index.
+        std::shared_ptr<ContentIndex> replacementContent;
+        if (config.contentIndexingEnabled && this->isGenerationCurrent(generation)) {
             auto previousContent = this->safeContentIndex();
-            auto replacementContent = std::make_shared<ContentIndex>();
+            replacementContent = std::make_shared<ContentIndex>();
             if (previousContent) {
                 replacementContent->setExtensions(previousContent->getExtensions());
                 replacementContent->setMaxFileSize(previousContent->getMaxFileSize());
@@ -948,11 +1132,6 @@ void ServiceEngine::backgroundSyncEngine(
             if (previousCP) previousCP->stopAutoCompactionAndWait();
             this->setContentPersistence(nullptr);
             previousCP.reset();
-            {
-                std::unique_lock contentLock(this->contentMutex_);
-                this->contentIndex_ = replacementContent;
-            }
-            sharedPersistence->setContentIndex(replacementContent);
             std::error_code ec;
             fs::remove(config.cachePath + "/content_index.bin", ec);
             ec.clear();
@@ -967,6 +1146,23 @@ void ServiceEngine::backgroundSyncEngine(
             }
         }
 
+        // Hold the publish lock across the replacement so a rescan or replay
+        // cannot write this engine between the check and loadRecords. The
+        // snapshot bump also retires event batches that applyDeferredVolumeWork
+        // already swapped out of the shared queue.
+        const SnapshotPublishResult published = this->publishScannedRecords(
+            engine, std::move(freshRecords), replacementContent, sharedPersistence,
+            generation);
+        if (published == SnapshotPublishResult::Superseded) return;
+        if (published != SnapshotPublishResult::Replaced) {
+            this->applyDeferredVolumeWork();
+            return;
+        }
+        if (this->isGenerationCurrent(generation)) {
+            this->noteIndexedScanRoots(this->effectiveScanRoots());
+        }
+        uint32_t finalCount = engine->liveRecordCount();
+
         auto scanNow = std::chrono::steady_clock::now();
         auto loadTime = std::chrono::duration<double>(indexLoadDone - incrementalStart).count();
         auto scanTime = std::chrono::duration<double>(scanNow - indexLoadDone).count();
@@ -976,8 +1172,6 @@ void ServiceEngine::backgroundSyncEngine(
                  << "index load " << loadTime << "s, "
                  << "rescan " << scanTime << "s, "
                  << "total " << totalTime << "s");
-
-        this->isSyncing_.store(false, std::memory_order_relaxed);
 
         sharedPersistence->stopAutoCompactionAndWait();
 
@@ -994,7 +1188,9 @@ void ServiceEngine::backgroundSyncEngine(
         newPersistence->setContentIndex(this->safeContentIndex());
 
         if (config.realtimeMonitoring) {
-            this->startMonitoring();
+            this->startMonitoring(scanStartEventId == 0
+                                  ? kFSEventStreamEventIdSinceNow
+                                  : scanStartEventId);
         }
         if (config.automaticMaintenanceEnabled) {
             newPersistence->startAutoCompaction(300.0, this->watcher_);
@@ -1011,6 +1207,7 @@ void ServiceEngine::backgroundSyncEngine(
             });
         }
         if (this->onIndexChanged) this->onIndexChanged();
+        this->applyDeferredVolumeWork();
     });
 }
 
@@ -1045,6 +1242,7 @@ ScanConfig ServiceEngine::scanConfigForRoots(const std::vector<std::string>& roo
     config.includeHidden = cfg.includeHidden;
     config.includeSystem = cfg.includeSystem;
     config.includeAppBundleContents = cfg.includeAppBundleContents;
+    config.volumeKinds = volumeKinds_.get();
     return config;
 }
 
@@ -1186,7 +1384,10 @@ void ServiceEngine::shutdown() {
         return; // Already shutting down or shut down
     }
 
-    lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    {
+        std::lock_guard<std::mutex> stateLock(lifecycleStateMutex_);
+        lifecycleGeneration_.fetch_add(1, std::memory_order_acq_rel);
+    }
     rebuilding_.store(false, std::memory_order_release);
     stopHttpServer();
     LOG_INFO("ServiceEngine", "shutdown started");
