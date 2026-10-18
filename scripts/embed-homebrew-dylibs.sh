@@ -237,10 +237,12 @@ rewrite_dylib_references() {
 }
 
 copy_dependency_closure
+# Sign nested dylibs before the main executables. codesign rejects a main
+# binary whose bundle still contains an unsigned framework.
+rewrite_dylib_references
 for binary in "${BINARIES[@]}"; do
   rewrite_binary_references "$binary"
 done
-rewrite_dylib_references
 if [[ "$signed_any" -eq 1 ]] || ! codesign --verify --deep --strict "$APP_PATH" 2>/dev/null; then
   sign_app_bundle
 fi
