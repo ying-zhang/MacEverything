@@ -3,170 +3,76 @@ set -euo pipefail
 
 root_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 dest="${1:-$root_dir/third_party/re2}"
+arch="${RE2_ARCH:-$(uname -m)}"
+deployment_target=15.0
+re2_version=2025-11-05
+abseil_version=20260107.1
+source_root="$root_dir/build/dependency-sources"
+build_root="$root_dir/build/deps/cmake-$arch"
+manifest="static-v2 $arch $deployment_target $re2_version $abseil_version"
 
-mkdir -p "$dest/include" "$dest/lib"
-rm -rf "$dest/include/re2" "$dest/include/absl"
-rm -f "$dest/lib"/libre2*.dylib "$dest/lib"/libabsl*.dylib
+case "$arch" in
+  arm64|x86_64) ;;
+  *) echo "error: unsupported architecture: $arch" >&2; exit 64 ;;
+esac
 
-copy_header_dir() {
-  local header_dir="$1"
-  [[ -d "$header_dir" ]] || return 1
-  cp -a "$header_dir" "$dest/include/"
+if [[ -f "$dest/manifest.txt" && "$(cat "$dest/manifest.txt")" == "$manifest" &&
+      -f "$dest/lib/libre2_bundle.a" && -d "$dest/include/re2" &&
+      -d "$dest/include/absl" && -f "$dest/share/ThirdPartyLicenses.txt" ]]; then
+  echo "Static RE2 dependencies already prepared in $dest"
+  exit 0
+fi
+
+if ! command -v cmake >/dev/null 2>&1; then
+  echo "error: cmake is required to build static RE2/Abseil dependencies" >&2
+  exit 69
+fi
+
+mkdir -p "$source_root" "$(dirname "$dest")"
+dest="$(cd "$(dirname "$dest")" && pwd)/$(basename "$dest")"
+download_source() {
+  local name="$1" url="$2" checksum="$3"
+  local archive="$source_root/$name.tar.gz"
+  if [[ ! -f "$archive" ]]; then
+    /usr/bin/nscurl --output "$archive.download" "$url" >&2
+    printf '%s  %s\n' "$checksum" "$archive.download" | shasum -a 256 -c - >&2
+    mv "$archive.download" "$archive"
+  fi
+  printf '%s  %s\n' "$checksum" "$archive" | shasum -a 256 -c - >&2
+  if [[ ! -d "$source_root/$name" ]]; then
+    tar -xzf "$archive" -C "$source_root"
+  fi
 }
 
-copy_matching_libs() {
-  local lib_root="$1"
-  local pattern="$2"
-  compgen -G "$lib_root/$pattern" >/dev/null || return 1
-  cp -a "$lib_root"/$pattern "$dest/lib/"
-}
+download_source "re2-$re2_version" \
+  "https://codeload.github.com/google/re2/tar.gz/refs/tags/$re2_version" \
+  87f6029d2f6de8aa023654240a03ada90e876ce9a4676e258dd01ea4c26ffd67
+download_source "abseil-cpp-$abseil_version" \
+  "https://codeload.github.com/abseil/abseil-cpp/tar.gz/refs/tags/$abseil_version" \
+  4314e2a7cbac89cac25a2f2322870f343d81579756ceff7f431803c2c9090195
 
-artifact_framework_dirs() {
-  find "$root_dir/artifacts" "$root_dir/build" -path '*/MacEverything.app/Contents/Frameworks' -type d -print 2>/dev/null || true
-}
-
-copied_re2_headers=0
-copied_absl_headers=0
-copied_re2_libs=0
-copied_absl_libs=0
-
-for prefix in \
-  "${RE2_PREFIX:-}" \
-  /opt/homebrew/opt/re2 \
-  /usr/local/opt/re2 \
-  /opt/local; do
-  [[ -n "${prefix:-}" ]] || continue
-  if copy_header_dir "$prefix/include/re2"; then
-    copied_re2_headers=1
-    break
-  fi
-done
-
-for source_root in \
-  "${RE2_SOURCE_DIR:-}" \
-  "$root_dir/third_party/re2/include" \
-  "$root_dir/third_party/re2" \
-  "$root_dir/artifacts/re2-source" \
-  /tmp/re2-main; do
-  [[ $copied_re2_headers -eq 0 ]] || break
-  [[ -n "${source_root:-}" ]] || continue
-  if copy_header_dir "$source_root/re2"; then
-    copied_re2_headers=1
-  fi
-done
-
-for prefix in \
-  "${ABSEIL_PREFIX:-}" \
-  "${RE2_PREFIX:-}" \
-  /opt/homebrew/opt/abseil \
-  /usr/local/opt/abseil \
-  /opt/homebrew/opt/re2 \
-  /usr/local/opt/re2 \
-  /opt/local; do
-  [[ -n "${prefix:-}" ]] || continue
-  if copy_header_dir "$prefix/include/absl"; then
-    copied_absl_headers=1
-    break
-  fi
-done
-
-for source_root in \
-  "${ABSEIL_SOURCE_DIR:-}" \
-  "$root_dir/third_party/re2/include" \
-  "$root_dir/third_party/re2" \
-  "$root_dir/artifacts/abseil-source" \
-  /tmp/abseil-master; do
-  [[ $copied_absl_headers -eq 0 ]] || break
-  [[ -n "${source_root:-}" ]] || continue
-  if copy_header_dir "$source_root/absl"; then
-    copied_absl_headers=1
-  fi
-done
-
-for prefix in \
-  "${RE2_PREFIX:-}" \
-  /opt/homebrew/opt/re2 \
-  /usr/local/opt/re2 \
-  /opt/local; do
-  [[ -n "${prefix:-}" ]] || continue
-  if copy_matching_libs "$prefix/lib" "libre2*.dylib"; then
-    copied_re2_libs=1
-    break
-  fi
-done
-
-while IFS= read -r lib_root; do
-  [[ -n "$lib_root" ]] || continue
-  if copy_matching_libs "$lib_root" "libre2*.dylib"; then
-    copied_re2_libs=1
-  fi
-  [[ $copied_re2_libs -eq 0 ]] || break
-done < <(artifact_framework_dirs)
-for lib_root in \
-  "${RE2_LIB_DIR:-}" \
-  "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks" \
-  "$root_dir/artifacts/MacEverything-macOS-arm64/build/arm64/Release/MacEverything.app/Contents/Frameworks" \
-  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks"; do
-  [[ $copied_re2_libs -eq 0 ]] || break
-  [[ -n "${lib_root:-}" ]] || continue
-  if copy_matching_libs "$lib_root" "libre2*.dylib"; then
-    copied_re2_libs=1
-  fi
-done
-
-for prefix in \
-  "${ABSEIL_PREFIX:-}" \
-  "${RE2_PREFIX:-}" \
-  /opt/homebrew/opt/abseil \
-  /usr/local/opt/abseil \
-  /opt/homebrew/opt/re2 \
-  /usr/local/opt/re2 \
-  /opt/local; do
-  [[ -n "${prefix:-}" ]] || continue
-  if copy_matching_libs "$prefix/lib" "libabsl*.dylib"; then
-    copied_absl_libs=1
-    break
-  fi
-done
-
-while IFS= read -r lib_root; do
-  [[ -n "$lib_root" ]] || continue
-  if copy_matching_libs "$lib_root" "libabsl*.dylib"; then
-    copied_absl_libs=1
-  fi
-  [[ $copied_absl_libs -eq 0 ]] || break
-done < <(artifact_framework_dirs)
-for lib_root in \
-  "${ABSEIL_LIB_DIR:-}" \
-  "${RE2_LIB_DIR:-}" \
-  "$root_dir/artifacts/MacEverything-macOS/build/Release/MacEverything.app/Contents/Frameworks" \
-  "$root_dir/artifacts/MacEverything-macOS-arm64/build/arm64/Release/MacEverything.app/Contents/Frameworks" \
-  "$root_dir/artifacts/MacEverything-macOS-x86_64/build/x86_64/Release/MacEverything.app/Contents/Frameworks"; do
-  [[ $copied_absl_libs -eq 0 ]] || break
-  [[ -n "${lib_root:-}" ]] || continue
-  if copy_matching_libs "$lib_root" "libabsl*.dylib"; then
-    copied_absl_libs=1
-  fi
-done
-
-if [[ $copied_re2_headers -ne 1 ]]; then
-  echo "error: RE2 headers not found. Provide RE2_PREFIX/RE2_SOURCE_DIR or install re2." >&2
-  exit 69
-fi
-
-if [[ $copied_absl_headers -ne 1 ]]; then
-  echo "error: Abseil headers not found. Provide ABSEIL_PREFIX/ABSEIL_SOURCE_DIR or install abseil." >&2
-  exit 69
-fi
-
-if [[ $copied_re2_libs -ne 1 ]]; then
-  echo "error: libre2 dylib not found. Provide RE2_PREFIX/RE2_LIB_DIR or install re2." >&2
-  exit 69
-fi
-
-if [[ $copied_absl_libs -ne 1 ]]; then
-  echo "error: libabsl dylibs not found. Provide ABSEIL_PREFIX/ABSEIL_LIB_DIR or install abseil." >&2
-  exit 69
-fi
-
-echo "Prepared RE2 dependencies in $dest"
+staging="$(mktemp -d "$dest.tmp.XXXXXX")"
+trap 'rm -rf "$staging"' EXIT
+cmake -S "$root_dir/scripts/re2" -B "$build_root" \
+  -DCMAKE_BUILD_TYPE=Release \
+  -DCMAKE_CXX_STANDARD=20 \
+  -DCMAKE_CXX_FLAGS="-ffile-prefix-map=$root_dir=." \
+  -DCMAKE_OSX_ARCHITECTURES="$arch" \
+  -DCMAKE_OSX_DEPLOYMENT_TARGET="$deployment_target" \
+  -DCMAKE_INSTALL_PREFIX="$staging" \
+  -DRE2_SOURCE_DIR="$source_root/re2-$re2_version" \
+  -DABSEIL_SOURCE_DIR="$source_root/abseil-cpp-$abseil_version"
+cmake --build "$build_root" --parallel "${BUILD_JOBS:-$(sysctl -n hw.ncpu)}"
+cmake --install "$build_root"
+/usr/bin/libtool -static -o "$staging/lib/libre2_bundle.a" "$staging"/lib/*.a
+mkdir -p "$staging/share"
+{
+  printf 'RE2 %s\n\n' "$re2_version"
+  cat "$source_root/re2-$re2_version/LICENSE"
+  printf '\nAbseil %s\n\n' "$abseil_version"
+  cat "$source_root/abseil-cpp-$abseil_version/LICENSE"
+} > "$staging/share/ThirdPartyLicenses.txt"
+printf '%s\n' "$manifest" > "$staging/manifest.txt"
+rm -rf "$dest"
+mv "$staging" "$dest"
+echo "Prepared static $arch RE2/Abseil dependencies in $dest"

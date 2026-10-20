@@ -724,23 +724,27 @@ Phase 2 是最耗时的部分（可能数秒），但不持有任何锁，查询
 ### 10.1 构建
 
 ```bash
+# 安装构建工具并准备固定版本静态依赖
+brew install cmake ripgrep
+scripts/prepare-re2-deps.sh
+
 # 构建 Release
 DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer \
   xcodebuild -project MacEverything.xcodeproj \
   -scheme MacEverything -configuration Release build SYMROOT=build
 
-# 打包 DMG
-hdiutil create -volname MacEverything \
-  -srcfolder build/Release/MacEverything.app \
-  -ov -format UDZO MacEverything.dmg
+scripts/verify-release-app.sh build/Release/MacEverything.app
+
+# 完整双架构构建、签名检查与 DMG 打包，最终产物放入 artifacts/
+scripts/build-release-dmgs.sh
 ```
 
-**环境要求**：macOS 15+, Xcode 16+
+**环境要求**：macOS 15+、Xcode 16+、CMake 3.22+、ripgrep。RE2/Abseil 从固定版本并校验 SHA-256 的源码静态编译，不复用 Homebrew 或旧应用中的 dylib。
 
 ### 10.2 测试
 
 ```bash
-make test          # 快速测试（<5s）
+make test          # 快速回归，包含 C++、Swift、Bridge、签名和文档检查
 make test-slow     # 慢速测试（含全盘扫描）
 make test-asan     # AddressSanitizer
 make test-tsan     # ThreadSanitizer
@@ -748,7 +752,7 @@ make benchmark     # 性能基准测试
 ```
 
 **测试架构**：
-- 测试实现分布在 87 个 C++ 头文件和 6 个 Swift 文件中
+- 测试实现分布在 `tests/` 中的 C++ 头文件、Swift 和 Python 测试文件中，数量以当前工作树为准
 - `test_all.cpp` 仅负责 `#include` 和 `main()` 调度，不包含测试实现
 - 支持 `--fast`/`--slow`/`--bench`/`--part N` 参数选择
 - Swift 测试由 Makefile 中对应目标独立编译

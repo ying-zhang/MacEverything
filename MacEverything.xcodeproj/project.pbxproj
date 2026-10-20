@@ -250,7 +250,7 @@
 /* End PBXVariantGroup section */
 
 /* Begin PBXShellScriptBuildPhase section */
-		E6000001 /* Embed Runtime Dylibs */ = {
+		E6000001 /* Verify Static Dependencies */ = {
 			isa = PBXShellScriptBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -258,21 +258,22 @@
 			inputFileListPaths = (
 			);
 			inputPaths = (
-				"$(SRCROOT)/scripts/embed-homebrew-dylibs.sh",
-				"$(RE2_DEPENDENCY_ROOT)/lib/libre2.dylib",
+				"$(SRCROOT)/scripts/prepare-app-resources.sh",
+				"$(SRCROOT)/scripts/verify-static-dependencies.sh",
+				"$(RE2_DEPENDENCY_ROOT)/share/ThirdPartyLicenses.txt",
 				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/$(EXECUTABLE_NAME)",
 				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/MacEverythingMCP",
 				"$(TARGET_BUILD_DIR)/$(WRAPPER_NAME)/Contents/MacOS/mace",
 			);
-			name = "Embed Runtime Dylibs";
+			name = "Verify Static Dependencies";
 			outputFileListPaths = (
 			);
 			outputPaths = (
-				"$(DERIVED_FILE_DIR)/embed-runtime-dylibs.stamp",
+				"$(TARGET_BUILD_DIR)/$(UNLOCALIZED_RESOURCES_FOLDER_PATH)/ThirdPartyLicenses.txt",
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/bash \"${SRCROOT}/scripts/embed-homebrew-dylibs.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\" \"${EXECUTABLE_NAME}\" \"MacEverythingMCP\" \"mace\"\n";
+			shellScript = "/bin/bash \"${SRCROOT}/scripts/prepare-app-resources.sh\" \"${TARGET_BUILD_DIR}/${WRAPPER_NAME}\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -476,7 +477,7 @@
 				A3000001 /* Frameworks */,
 				A3000002 /* Resources */,
 				D6000001 /* Copy Helper Binaries */,
-				E6000001 /* Embed Runtime Dylibs */,
+				E6000001 /* Verify Static Dependencies */,
 			);
 			buildRules = (
 			);
@@ -752,7 +753,7 @@
 					"$(RE2_DEPENDENCY_ROOT)/lib",
 				);
 				OTHER_LDFLAGS = (
-					"-lre2",
+					"$(RE2_DEPENDENCY_ROOT)/lib/libre2_bundle.a",
 					"-framework",
 					CoreFoundation,
 				);
@@ -788,7 +789,7 @@
 					"$(RE2_DEPENDENCY_ROOT)/lib",
 				);
 				OTHER_LDFLAGS = (
-					"-lre2",
+					"$(RE2_DEPENDENCY_ROOT)/lib/libre2_bundle.a",
 					"-framework",
 					CoreFoundation,
 				);

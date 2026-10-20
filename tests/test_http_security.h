@@ -126,7 +126,7 @@ static void runHttpSecurityTests() {
     auto dummyContent = std::make_shared<ContentIndex>();
 
     HttpServer server;
-    server.setServerMetadata({"test", 1, "1.0.0-test"});
+    server.setServerMetadata({"test", 1, "1.10.20"});
     server.setAuthToken("abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234abcd1234");
     auto configuredExtensions = std::make_shared<std::vector<std::string>>(std::vector<std::string>{"txt"});
     auto configuredMaxSize = std::make_shared<uint64_t>(1024 * 1024);
@@ -430,7 +430,7 @@ static void runHttpSecurityTests() {
         auto resp = httpSendRaw(port, req);
         check(resp.find("\"processType\":\"test\"") != std::string::npos,
               "/api/health contains processType");
-        check(resp.find("\"appVersion\":\"1.0.0-test\"") != std::string::npos,
+        check(resp.find("\"appVersion\":\"1.10.20\"") != std::string::npos,
               "/api/health contains appVersion");
         check(resp.find("\"pid\"") != std::string::npos,
               "/api/health contains pid");

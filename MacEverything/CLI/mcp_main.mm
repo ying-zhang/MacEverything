@@ -28,7 +28,6 @@
 // ═══════════════════════════════════════════════════════
 
 static constexpr const char* kServerName = "MacEverything";
-static constexpr const char* kServerVersion = "1.0.0";
 static constexpr const char* kProtocolVersion = "2025-03-26";
 static constexpr const char* kHttpHost = "127.0.0.1";
 static constexpr uint16_t kDefaultHttpPort = 19860;
@@ -380,11 +379,14 @@ static void handleRequest(NSDictionary* request) {
 
     // Requests — must send a response
     if (method == "initialize") {
+        std::string version = cppString([[NSBundle mainBundle]
+            objectForInfoDictionaryKey:@"CFBundleShortVersionString"]);
+        if (version.empty()) version = "unknown";
         std::ostringstream result;
         result << "{\"protocolVersion\":\"" << kProtocolVersion << "\""
                << ",\"capabilities\":{\"tools\":{}}"
                << ",\"serverInfo\":{\"name\":\"" << kServerName
-               << "\",\"version\":\"" << kServerVersion << "\"}"
+               << "\",\"version\":\"" << jsonEscape(version) << "\"}"
                << ",\"instructions\":\"MacEverything provides fast file search across your entire Mac. "
                << "Use search_files for filename search, search_content for full-text search.\""
                << "}";

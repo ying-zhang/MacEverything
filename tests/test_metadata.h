@@ -23,7 +23,7 @@ static void runIndexMetadataTests() {
         IndexMetadata meta;
         meta.lastEventId = 42;
         meta.extra[IndexMetadata::kScanRoot] = "/";
-        meta.extra[IndexMetadata::kAppVersion] = "1.1.0";
+        meta.extra[IndexMetadata::kAppVersion] = "1.5.30";
         meta.extra[IndexMetadata::kOSVersion] = "14.5.0";
         meta.extra[IndexMetadata::kRecordFormat] = "v3_inode";
         meta.extra["custom_key"] = "custom_value";
@@ -45,7 +45,7 @@ static void runIndexMetadataTests() {
         // Check metadata key-value pairs
         check(loadedMeta.extra.count(IndexMetadata::kScanRoot) == 1, "v3: has scan_root key");
         check(loadedMeta.extra[IndexMetadata::kScanRoot] == "/", "v3: scan_root == '/'");
-        check(loadedMeta.extra[IndexMetadata::kAppVersion] == "1.1.0", "v3: app_version == '1.1.0'");
+        check(loadedMeta.extra[IndexMetadata::kAppVersion] == "1.5.30", "v3: app_version preserved");
         check(loadedMeta.extra[IndexMetadata::kOSVersion] == "14.5.0", "v3: os_version == '14.5.0'");
         check(loadedMeta.extra[IndexMetadata::kRecordFormat] == "v3_inode", "v3: record_format == 'v3_inode'");
         check(loadedMeta.extra["custom_key"] == "custom_value", "v3: custom_key preserved");

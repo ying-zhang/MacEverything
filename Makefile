@@ -4,20 +4,19 @@ FRAMEWORKS = -framework CoreServices -framework CoreFoundation
 CORE_SRCS = $(wildcard MacEverything/Core/*.cpp)
 CORE_HEADERS = $(wildcard MacEverything/Core/*.h)
 TEST_HEADERS = $(wildcard tests/*.h)
-HOMEBREW_PREFIX ?= /opt/homebrew
 RE2_PREFIX ?= $(CURDIR)/third_party/re2
 RE2_CFLAGS = -I$(RE2_PREFIX)/include
-RE2_LDFLAGS = -L$(RE2_PREFIX)/lib -Wl,-rpath,$(RE2_PREFIX)/lib -lre2
+RE2_LDFLAGS = $(RE2_PREFIX)/lib/libre2_bundle.a
 
 # === Build targets ===
 .PHONY: test test-fast lint-localizations lint-docs test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n test-slow test-all test-asan test-tsan build clean app dmg cli benchmark-trigram-simd benchmark-posting-simd help
 
-test_all: test_all.cpp $(CORE_SRCS) $(CORE_HEADERS) $(TEST_HEADERS)
+test_all: test_all.cpp $(CORE_SRCS) $(CORE_HEADERS) $(TEST_HEADERS) Makefile $(RE2_PREFIX)/lib/libre2_bundle.a
 	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) \
 		-IMacEverything/Core test_all.cpp $(CORE_SRCS) -o $@
 
-benchmark: benchmark.cpp $(CORE_SRCS)
-	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) $^ -o $@
+benchmark: benchmark.cpp $(CORE_SRCS) $(CORE_HEADERS) Makefile $(RE2_PREFIX)/lib/libre2_bundle.a
+	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) benchmark.cpp $(CORE_SRCS) -o $@
 
 benchmark-trigram-simd: benchmarks/bench_trigram_simd.cpp
 	mkdir -p build
@@ -46,6 +45,7 @@ lint-localizations:
 
 lint-docs:
 	bash scripts/check-docs.sh
+	python3 tests/test_release_versions.py
 
 # === Sanitizer targets ===
 test-asan: test_all.cpp $(CORE_SRCS)
@@ -61,8 +61,12 @@ test-tsan: test_all.cpp $(CORE_SRCS)
 # === Test targets ===
 test: test-fast
 
-test-fast: test_all lint-bridge lint-localizations lint-docs test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n
+test-fast: test_all lint-bridge lint-localizations lint-docs test-release-signing test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n
 	./test_all --fast --quiet
+
+.PHONY: test-release-signing
+test-release-signing:
+	RE2_PREFIX="$(RE2_PREFIX)" python3 tests/test_release_signing.py
 
 test-mace-client:
 	mkdir -p build/tests
@@ -126,14 +130,10 @@ test-all: test_all
 	./test_all
 
 # === Xcode build ===
-# Ad-hoc Release build. The embed script signs bundled dylibs with the same identity.
 app:
 	xcodebuild -scheme MacEverything -configuration Release build
 	app_path=$$(xcodebuild -scheme MacEverything -configuration Release -showBuildSettings 2>/dev/null | awk -F ' = ' '/^    BUILT_PRODUCTS_DIR /{print $$2; exit}')/MacEverything.app; \
-	if ! codesign --verify --deep --strict "$$app_path"; then \
-		echo "error: Release app failed codesign verification"; \
-		exit 1; \
-	fi
+	scripts/verify-release-app.sh "$$app_path"
 
 # === Package ===
 dmg:

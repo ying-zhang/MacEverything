@@ -1,6 +1,6 @@
-# MacEverything 1.7.25 发布说明
+# 桌面交互与自动化开发记录
 
-MacEverything 1.7.25 面向 macOS 15 及以上系统，提供 Apple Silicon 与 Intel 独立安装包。本版本从 1.5.30 基线继续迭代，集中完成搜索、索引、持久化、界面、自动化和安全能力的升级。
+本文保留桌面交互、搜索、索引、持久化和自动化的阶段性开发记录，不代表一次独立发布。以 1.5.30 为基线的累计更新统一收录到 [1.10.20 发布说明](157-release-1.10.20.md)。
 
 ## 功能概览
 
@@ -21,7 +21,7 @@ MacEverything 1.7.25 面向 macOS 15 及以上系统，提供 Apple Silicon 与 
 - **自动化生态**：从 GUI Bridge 抽取 ServiceEngine，提供本地 HTTP API、`mace` CLI 和 MCP Server；支持 token 认证、严格 Host/Origin 校验、JSON-RPC 批量请求和嵌入式依赖部署。
 - **工程质量**：持续补充 C++、Swift、Bridge、HTTP、InstanceLock、导出和交互测试，加入 AddressSanitizer/ThreadSanitizer 定时检查，并完善 arm64/Intel 发布构建与 Homebrew Cask 发布辅助流程。
 
-## 1.7.25 重点更新
+## 阶段重点更新
 
 - 完善英文界面本地化：搜索结果的文件大小与日期按英文格式显示，快速筛选、设置页选项、高级筛选及独立帮助窗口在切换语言后立即刷新。
 - 主界面新增信息面板：顶部直接显示 Quick Look 预览，中部提供打开、复制文件名、复制完整路径、在访达中显示和删除到废纸篓等操作，底部显示可复制的完整文件名、路径、大小、类型和时间信息。
@@ -39,25 +39,9 @@ MacEverything 1.7.25 面向 macOS 15 及以上系统，提供 Apple Silicon 与 
 - 修复分页任务与筛选、排序或内容索引清理并发时的数组越界；信息面板改名后同步刷新文件名、内容索引和 WAL。
 - 加固 FSEvents watcher 生命周期，运行状态改用原子快照，停止时清理早退信号量，并避免在回调执行期间销毁 callable。
 
-## 安装
-
-Homebrew Cask：
-
-```bash
-brew tap ying-zhang/maceverything
-brew install --cask maceverything
-```
-
-也可以从 GitHub Releases 下载：
-
-- Apple Silicon：`MacEverything-arm64.dmg`
-- Intel：`MacEverything-x86_64.dmg`
-
-应用采用 ad-hoc 签名。若 macOS 阻止首次启动，请先尝试打开应用，再前往“系统设置 → 隐私与安全性”点击“仍要打开”。
-
 ## 验证
 
 - 快速测试：C++、Objective-C++ bridge lint、Swift 导出/交互/MCP/高亮/刷新节流测试。
 - HTTP 安全、InstanceLock 强制保护、FSEvents 批量变更和 MCP JSON-RPC 协议回归测试。
 - AddressSanitizer 与 ThreadSanitizer 每周定时任务。
-- arm64 与 x86_64 Release 构建分别验证主程序、`mace`、MCP 和嵌入 dylib 的目标架构及动态库路径。
+- 当前 arm64 与 x86_64 发布构建统一静态链接 RE2/Abseil，并验证主程序、`mace`、MCP 的架构、签名及系统动态依赖；详见[静态依赖修复](158-static-re2-release.md)。

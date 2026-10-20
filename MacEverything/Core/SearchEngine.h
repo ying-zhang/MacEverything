@@ -69,7 +69,7 @@ struct IndexMetadata {
 
     // Well-known metadata keys
     static constexpr const char* kScanRoot     = "scan_root";      // e.g. "/"
-    static constexpr const char* kAppVersion   = "app_version";    // e.g. "1.0.0"
+    static constexpr const char* kAppVersion   = "app_version";
     static constexpr const char* kOSVersion    = "os_version";     // e.g. "14.5"
     static constexpr const char* kRecordFormat = "record_format";  // e.g. "v2_inode"
 };

@@ -38,7 +38,9 @@
 | std::string::find | 1.44 |
 | RE2 dot-star prefix | 0.21 |
 
-## 编译方式
+## 历史编译方式
+
+以下仅记录当时独立基准程序使用的 Homebrew 环境；该源文件不在当前受版本管理的代码中，不作为当前构建入口。当前工程统一使用静态依赖，构建和测试命令见[项目指南](../project-guide.md#10-构建与测试)。
 
 ```bash
 clang++ -std=c++20 -O2 -Wall -Wextra \

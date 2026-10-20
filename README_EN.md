@@ -4,7 +4,7 @@
 
 <h1 align="center">MacEverything</h1>
 
-<p align="center">Current version: 1.10.18 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+<p align="center">Latest release: 1.10.20 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
 
 <p align="center">
   <b>Instant file search for macOS</b> — find any file among millions in milliseconds.<br/>
@@ -196,7 +196,7 @@ Make sure `~/.local/bin` is in `PATH`, or invoke `/Applications/MacEverything.ap
 
 #### Release Status and Downloads
 
-The current stable version is **1.10.18**.
+**1.10.20 is officially released (October 21, 2026, build 14).** Static RE2/Abseil linking fixes the post-install startup crash, with startup verified by the user on another Mac. GitHub Releases, the Homebrew Cask, and the personal blog download page provide Apple Silicon and Intel packages; 1.5.30 remains available as a historical release.
 
 Install or upgrade with Homebrew Cask:
 
@@ -216,30 +216,30 @@ Alternatively, download the appropriate DMG from [Releases](https://github.com/y
 
 #### Build from Source
 
-**Requirements:** macOS 15+, Xcode 16+ (full Xcode, not just Command Line Tools), plus RE2/Abseil headers and dynamic libraries for the target architecture. Homebrew is not required.
+**Requirements:** macOS 15+, Xcode 16+ (full Xcode, not just Command Line Tools), and CMake 3.22+. Homebrew is not required.
 
-For a Homebrew-free setup, install an official MacEverything release first and reuse the verified arm64 libraries bundled with the app. This script downloads matching RE2 `2025-11-05` and Abseil `20260107.1` headers from the official Google repositories:
-
-```bash
-scripts/prepare-re2-deps-from-app.sh
-```
-
-Dependencies are placed in the Git-ignored `third_party/re2/` directory. The app and destination paths can also be passed explicitly:
+This script downloads official RE2 `2025-11-05` and Abseil `20260107.1` sources using macOS system network settings, verifies SHA-256 checksums, and builds static libraries. It no longer reuses dylibs from an installed app:
 
 ```bash
-scripts/prepare-re2-deps-from-app.sh /Applications/MacEverything.app third_party/re2
+scripts/prepare-re2-deps.sh
 ```
 
-For dependencies prepared another way, call `scripts/prepare-re2-deps.sh` with `RE2_SOURCE_DIR`, `ABSEIL_SOURCE_DIR`, `RE2_LIB_DIR`, and `ABSEIL_LIB_DIR`. Homebrew remains an optional source, but is not part of the default local build workflow.
+Dependencies go into the Git-ignored `third_party/re2/` directory; sources and intermediate files stay in `build/`. To specify the architecture and destination:
+
+```bash
+RE2_ARCH=x86_64 scripts/prepare-re2-deps.sh build/deps/re2-x86_64
+```
+
+Apple Silicon can cross-compile Intel dependencies and apps using the same Xcode toolchain, without another Homebrew installation.
 
 ```bash
 git clone https://github.com/ying-zhang/MacEverything.git && cd MacEverything
-scripts/prepare-re2-deps-from-app.sh
+scripts/prepare-re2-deps.sh
 make test-fast
 scripts/build-release-dmgs.sh arm64
 ```
 
-Release builds and GitHub Actions artifacts embed `libre2` and the Abseil dependency closure it actually uses into `.app/Contents/Frameworks`, so the distributed app does not depend on the development machine. The release script verifies the app, MCP, `mace`, and embedded dylib architectures and dependency paths; the final arm64 DMG is written to `artifacts/MacEverything-arm64.dmg`.
+Local and GitHub Actions builds use the same static RE2/Abseil dependencies, with no third-party dylibs and with Hardened Runtime and library validation preserved. Release checks verify signatures, runtime protection, all Mach-O architectures, and system-only dependencies. `make test-release-signing` also launches a relocated static RE2 fixture. Final apps and DMGs go into `artifacts/`; run `scripts/build-release-dmgs.sh` for both architectures.
 
 <h2 align="center">For Developers: Technical Deep Dive</h2>
 

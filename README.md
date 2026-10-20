@@ -4,7 +4,7 @@
 
 <h1 align="center">MacEverything</h1>
 
-<p align="center">当前版本：1.10.18 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+<p align="center">最新正式版本：1.10.20 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
 
 <p align="center">
   <b>macOS 极速文件搜索工具</b> — 在数百万文件中毫秒级定位任意文件。<br/>
@@ -196,7 +196,7 @@ ln -sf /Applications/MacEverything.app/Contents/MacOS/mace ~/.local/bin/mace
 
 #### 发布状态与下载
 
-当前稳定版本为 **1.10.18**。
+**1.10.20 已正式发布（2026-10-21，构建号 14）。** 安装后闪退问题已通过静态链接 RE2/Abseil 修复，并经用户异机启动验证。GitHub Releases、Homebrew Cask 和个人博客下载页同步提供 Apple Silicon 与 Intel 安装包；1.5.30 保留为历史正式版本。
 
 使用 Homebrew Cask 安装或升级：
 
@@ -216,30 +216,30 @@ brew install --cask maceverything
 
 #### 从源码构建
 
-**环境要求：** macOS 15+、Xcode 16+（完整 Xcode，不只是 Command Line Tools），以及 RE2/Abseil 头文件和目标架构动态库。Homebrew 不是必需依赖。
+**环境要求：** macOS 15+、Xcode 16+（完整 Xcode，不只是 Command Line Tools）和 CMake 3.22+。Homebrew 不是必需依赖。
 
-不使用 Homebrew 时，可先安装官方发布版 MacEverything，再从应用包复用已经验证过的 arm64 动态库；脚本会从 Google 官方仓库下载与动态库匹配的 RE2 `2025-11-05` 和 Abseil `20260107.1` 头文件：
-
-```bash
-scripts/prepare-re2-deps-from-app.sh
-```
-
-依赖会放入 Git 忽略的 `third_party/re2/`。也可以把应用路径和输出目录显式传给脚本：
+依赖脚本通过 macOS 系统网络设置下载官方 RE2 `2025-11-05` 和 Abseil `20260107.1` 源码，校验 SHA-256 后编译静态库，不再从已安装应用复用动态库：
 
 ```bash
-scripts/prepare-re2-deps-from-app.sh /Applications/MacEverything.app third_party/re2
+scripts/prepare-re2-deps.sh
 ```
 
-如已通过其他方式准备 RE2/Abseil，可使用 `RE2_SOURCE_DIR`、`ABSEIL_SOURCE_DIR`、`RE2_LIB_DIR` 和 `ABSEIL_LIB_DIR` 调用 `scripts/prepare-re2-deps.sh`。Homebrew 仍可作为可选的依赖来源，但不参与默认本地构建流程。
+依赖会放入 Git 忽略的 `third_party/re2/`；源码和中间产物位于 `build/`。也可以显式指定架构和输出目录：
+
+```bash
+RE2_ARCH=x86_64 scripts/prepare-re2-deps.sh build/deps/re2-x86_64
+```
+
+Apple Silicon 可用同一套 Xcode 工具链交叉编译 Intel 依赖和应用，无需第二套 Homebrew。
 
 ```bash
 git clone https://github.com/ying-zhang/MacEverything.git && cd MacEverything
-scripts/prepare-re2-deps-from-app.sh
+scripts/prepare-re2-deps.sh
 make test-fast
 scripts/build-release-dmgs.sh arm64
 ```
 
-Release 构建和 GitHub Actions 发布包会自动把 `libre2` 及其实际使用的 Abseil 依赖闭包嵌入 `.app/Contents/Frameworks`，避免发布包依赖开发机环境。发布脚本会验证主应用、MCP、`mace` 和内嵌 dylib 的架构与依赖路径；最终 arm64 DMG 位于 `artifacts/MacEverything-arm64.dmg`。
+Release 构建和 GitHub Actions 使用相同的静态 RE2/Abseil 依赖，不再携带第三方 dylib，保留 Hardened Runtime 和库验证。发布脚本验证签名、运行时保护、全部 Mach-O 的架构和系统依赖；`make test-release-signing` 还会实际启动迁移后的静态 RE2 测试应用。最终 `.app` 和 `.dmg` 位于 `artifacts/`；运行 `scripts/build-release-dmgs.sh` 可生成两种架构。
 
 <h2 align="center">开发者篇：技术深度</h2>
 

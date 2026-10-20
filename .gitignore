@@ -6,6 +6,7 @@ test_all
 /benchmark
 /mace
 *.o
+__pycache__/
 *.dmg
 
 # Xcode
@@ -18,6 +19,7 @@ DerivedData/
 
 # macOS
 .DS_Store
+/ErrorMsg.txt
 test_all_master
 .claude/string_search_bench
 .claude/worktrees/

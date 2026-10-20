@@ -29,12 +29,6 @@ if [[ -n "$duplicates" ]]; then
     exit 1
 fi
 
-version="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-    "$repo_root/MacEverything/Info.plist")"
-if [[ "$version" != "0.0.0" ]] && \
-   ! compgen -G "$repo_root/docs/changelog/*release-$version.md" >/dev/null; then
-    echo "No release notes found for app version $version" >&2
-    exit 1
-fi
+python3 "$repo_root/scripts/check-release-versions.py"
 
 echo "Documentation checks passed"

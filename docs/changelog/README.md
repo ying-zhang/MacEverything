@@ -2,13 +2,16 @@
 
 项目从 2026-04-14 开始开发，以下按时间顺序记录所有重要变更。
 
+应用正式发布记录仅保留 **1.5.30** 和 **1.10.20**；当前最新版本为 **1.10.20（2026-10-21）**。其他条目属于开发记录，不代表独立发布。
+
 > **注意：** 编号 058、060、097、106、107、113、117 各有两个条目，源于并行分支开发同时产出。文件名保留原样以维护 Git 历史引用。
 
 ## 变更索引
 
 | # | 类型 | 标题 | 日期 |
 |---|------|------|------|
-| [157](157-release-1.10.18.md) | release | MacEverything 1.10.18 发布说明 | 2026-10-18 |
+| [158](158-static-re2-release.md) | bugfix | 静态 RE2 依赖与启动校验 | 2026-10-20 |
+| [157](157-release-1.10.20.md) | release | MacEverything 1.10.20 发布说明 | 2026-10-21 |
 | [156](156-volume-lifecycle-guards.md) | bugfix | 卷生命周期与监听时序修复 | 2026-10-18 |
 | [155](155-candidate-reuse-topk.md) | performance | 连续输入候选复用与匹配阶段 Top-K | 2026-10-17 |
 | [153](153-review-fixes-nas-lifecycle.md) | bugfix | NAS 同步与启动失败处理修复 | 2026-09-27 |
@@ -164,10 +167,10 @@
 | [143](143-per-thread-re2.md) | performance | Per-Thread RE2 Clones 消除 DFA 互斥锁竞争 | 2026-04-20 |
 | [144](144-fsevents-search-latency-test.md) | test | FSEvents → Search 延迟测试 | 2026-04-20 |
 | [145](145-session-query-cancel.md) | bugfix | Per-Session 查询取消 | 2026-04-20 |
-| [146](146-release-1.5.md) | docs | MacEverything 1.5 Release Notes | 2026-05-21 |
+| [146](146-release-1.5.30.md) | release | MacEverything 1.5.30 发布说明 | 2026-06-14 |
 | [147](147-结果显示控件与五档缩放.md) | feature | 结果显示控件与五档缩放 | 2026-07-22 |
 | [149](149-runtime-security-and-workflow-cleanup.md) | feature | 运行时安全与搜索工作流收尾 | 2026-07-25 |
-| [150](150-release-1.7.25.md) | docs | MacEverything 1.7.25 发布说明 | 2026-07-25 |
+| [150](150-desktop-automation-updates.md) | docs | 桌面交互与自动化开发记录 | 2026-07-25 |
 
 ## 统计
 

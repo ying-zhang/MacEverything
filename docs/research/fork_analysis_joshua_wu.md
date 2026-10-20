@@ -2,7 +2,7 @@
 
 **分析日期**: 2026-07-25
 **Fork 仓库**: https://github.com/joshua-wu/MacEverything
-**Fork 分支**: main (v1.2, 2026-04 开源快照) + master (v1.5, 持续开发)
+**Fork 分支**: main（2026-04 开源快照）+ master（分析时的开发分支）；不作为本项目发布版本记录
 **本项目状态**: 下一版本开发中
 
 ## 分叉关系

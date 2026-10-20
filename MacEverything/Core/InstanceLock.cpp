@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <ctime>
 #include <cstring>
+#include <algorithm>
 
 InstanceLock::~InstanceLock() {
     unlock();
@@ -65,7 +66,8 @@ bool InstanceLock::tryLock(const std::string& lockFilePath,
                            appVersion.empty() ? "unknown" : appVersion.c_str(),
                            timeStr);
         if (len > 0) {
-            ssize_t written = write(fd_, buf, static_cast<size_t>(len));
+            size_t bytes = std::min(static_cast<size_t>(len), sizeof(buf) - 1);
+            ssize_t written = write(fd_, buf, bytes);
             (void)written; // best-effort; lock is already held
         }
     }
