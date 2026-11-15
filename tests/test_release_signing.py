@@ -67,7 +67,8 @@ class ReleaseSigningTests(unittest.TestCase):
             'int main() { return RE2::FullMatch("file123.txt", '
             '"file[0-9]+\\\\.txt") ? 0 : 1; }', [archive])
         self.sign()
-        self.assertEqual(self.verify(platform.machine()).returncode, 0)
+        verification = self.verify(platform.machine())
+        self.assertEqual(verification.returncode, 0, verification.stderr)
         relocated = self.root / "Another Location" / self.app.name
         relocated.parent.mkdir()
         shutil.move(self.app, relocated)
