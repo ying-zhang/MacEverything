@@ -27,7 +27,7 @@ fi
 if [[ -n "$arch" ]]; then
   while IFS= read -r path; do
     file -b "$path" | grep -q 'Mach-O' || continue
-    if ! lipo -verify_arch "$arch" "$path"; then
+    if ! lipo "$path" -verify_arch "$arch"; then
       echo "error: $path does not contain required architecture $arch" >&2
       exit 65
     fi
