@@ -330,7 +330,7 @@
 "File Size and Modified Date Filters" = "文件大小与修改日期筛选";
 "%d active filters" = "%d 个筛选条件已启用";
 "Files containing keyword" = "包含 keyword 的文件";
-"ECMAScript regex (case-insensitive)" = "ECMAScript 正则表达式（不区分大小写）";
+"RE2 regex (case-insensitive)" = "RE2 正则表达式（不区分大小写）";
 "Example: regex:^test  regex:\\.cpp$" = "示例：regex:^test  regex:\\.cpp$";
 "Extension Filter" = "扩展名过滤";
 "Files with .cpp extension" = ".cpp 扩展名文件";
@@ -349,7 +349,7 @@
 "Path Filter" = "路径过滤";
 "Path contains keyword" = "路径包含 keyword";
 "Path does not contain keyword" = "路径不包含 keyword";
-"Immediate parent matches" = "直接父文件夹匹配";
+"Exact full parent directory path" = "直接父目录完整路径相等";
 "Directory depth less than 3" = "目录深度小于 3";
 "Directory depth greater than 5" = "目录深度大于 5";
 "Date Filter" = "日期过滤";
@@ -365,14 +365,14 @@
 "Modified between Jan and Jun 2024" = "2024 年 1 月到 6 月之间修改";
 "Also: datemodified:  datecreated:  dateaccessed:" = "也可使用：datemodified:  datecreated:  dateaccessed:";
 "Name Length Filter" = "文件名长度过滤";
-"Filename longer than 10 chars" = "文件名长于 10 个字符";
-"Filename shorter than 5 chars" = "文件名短于 5 个字符";
-"Filename at least 8 chars" = "文件名至少 8 个字符";
+"Filename longer than 10 UTF-8 bytes" = "文件名长于 10 个 UTF-8 字节";
+"Filename shorter than 5 UTF-8 bytes" = "文件名短于 5 个 UTF-8 字节";
+"Filename at least 8 UTF-8 bytes" = "文件名至少 8 个 UTF-8 字节";
 "Match Modifiers" = "匹配修饰符";
 "Force case-sensitive match" = "强制区分大小写匹配";
 "Force case-insensitive match" = "强制不区分大小写匹配";
 "Whole word match" = "全词匹配";
-"Whole filename match (without extension)" = "完整文件名匹配（不含扩展名）";
+"Whole filename match (including extension)" = "完整文件名匹配（包含扩展名）";
 "Aliases: wholeword:  wholefilename:" = "别名：wholeword:  wholefilename:";
 "File Type Macros" = "文件类型宏";
 "Structured Path Query" = "结构化路径查询";

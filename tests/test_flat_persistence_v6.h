@@ -8,6 +8,8 @@
 #include <fstream>
 #include <thread>
 #include <vector>
+#include <sys/resource.h>
+#include <signal.h>
 
 namespace fs = std::filesystem;
 
@@ -879,12 +881,74 @@ static void testV6InodeDevIdRoundtrip() {
     fs::remove_all(tmpDir);
 }
 
+// Exercise actual stdio failures without mocking the serialization logic. The
+// runner executes tests serially; restore process limits before any assertions.
+static void testV6FailedRewritePreservesSnapshot() {
+    const auto dir = fs::temp_directory_path() / ("test_v6_io_" + std::to_string(getpid()));
+    fs::create_directories(dir);
+    const auto path = (dir / "index.v6").string();
+    SearchEngine engine;
+    engine.addRecord({"old.txt", "/data", 1, 42, 1000});
+    FlatIndexWriter writer(path);
+    IndexMetadata oldMeta;
+    oldMeta.lastEventId = 17;
+    check(writer.fullRewrite(engine, oldMeta), "V6-IO: original snapshot saved");
+    auto readBytes = [&] {
+        std::ifstream input(path, std::ios::binary);
+        return std::string(std::istreambuf_iterator<char>(input), {});
+    };
+    const auto original = readBytes();
+    for (int i = 0; i < 300; ++i)
+        engine.addRecord({"new_" + std::to_string(i) + ".txt", "/new", 1, 99, 2000});
+    IndexMetadata newMeta;
+    newMeta.lastEventId = 23;
+    newMeta.extra["large"] = std::string(16384, 'x');
+    const auto probe = (dir / "probe.v6").string();
+    check(FlatIndexWriter(probe).fullRewrite(engine, newMeta), "V6-IO: probe snapshot saved");
+    const auto fullSize = fs::file_size(probe);
+    struct rlimit originalLimit{};
+    const bool gotLimit = getrlimit(RLIMIT_FSIZE, &originalLimit) == 0;
+    check(gotLimit, "V6-IO: can read file size limit");
+    if (gotLimit) {
+        struct sigaction ignore{}, previous{};
+        ignore.sa_handler = SIG_IGN;
+        sigemptyset(&ignore.sa_mask);
+        const bool changedSignal = sigaction(SIGXFSZ, &ignore, &previous) == 0;
+        check(changedSignal, "V6-IO: can handle injected write failure");
+        if (changedSignal) {
+            for (rlim_t limit : {rlim_t(0), rlim_t(80), rlim_t(320), rlim_t(4096), rlim_t(fullSize - 1)}) {
+                struct rlimit limited = originalLimit;
+                limited.rlim_cur = limit;
+                const bool set = setrlimit(RLIMIT_FSIZE, &limited) == 0;
+                const bool saved = set && writer.fullRewrite(engine, newMeta);
+                const bool restored = setrlimit(RLIMIT_FSIZE, &originalLimit) == 0;
+                check(set && restored, "V6-IO: inject and restore file size limit");
+                check(!saved, "V6-IO: failed write is reported");
+                check(readBytes() == original, "V6-IO: old snapshot remains byte-identical");
+                check(!fs::exists(path + ".tmp"), "V6-IO: failed temporary snapshot is removed");
+                SearchEngine loaded;
+                IndexMetadata meta;
+                check(writer.load(loaded, &meta) && loaded.liveRecordCount() == 1 && meta.lastEventId == 17,
+                      "V6-IO: old records and event watermark remain readable");
+            }
+            sigaction(SIGXFSZ, &previous, nullptr);
+        }
+    }
+    check(writer.fullRewrite(engine, newMeta), "V6-IO: saving recovers after write failures");
+    SearchEngine loaded;
+    IndexMetadata meta;
+    check(writer.load(loaded, &meta) && loaded.liveRecordCount() == 301 && meta.lastEventId == 23,
+          "V6-IO: successful retry publishes new snapshot");
+    fs::remove_all(dir);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Runner
 // ─────────────────────────────────────────────────────────────────────────────
 static void runFlatPersistenceV6Tests() {
     std::cout << "\n=== Flat Persistence v6 Tests ===\n";
 
+    testV6FailedRewritePreservesSnapshot();
     testV6BasicRoundtrip();            // Test 1
     testV6TombstonePreservation();     // Test 2
     testV6CRCCorruption();             // Test 3

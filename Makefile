@@ -9,7 +9,7 @@ RE2_CFLAGS = -I$(RE2_PREFIX)/include
 RE2_LDFLAGS = $(RE2_PREFIX)/lib/libre2_bundle.a
 
 # === Build targets ===
-.PHONY: test test-fast lint-localizations lint-docs test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n test-slow test-all test-asan test-tsan build clean app dmg cli benchmark-trigram-simd benchmark-posting-simd help
+.PHONY: test test-fast lint-localizations lint-docs test-mace-client test-swift-content-roots test-swift-cli-install test-swift-interaction test-swift-mcp test-swift-export test-swift-highlight test-swift-throttle test-swift-l10n test-slow test-all test-asan test-tsan build clean app dmg cli benchmark-linear-trigram benchmark-trigram-simd benchmark-posting-simd help
 
 test_all: test_all.cpp $(CORE_SRCS) $(CORE_HEADERS) $(TEST_HEADERS) Makefile $(RE2_PREFIX)/lib/libre2_bundle.a
 	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) \
@@ -17,6 +17,12 @@ test_all: test_all.cpp $(CORE_SRCS) $(CORE_HEADERS) $(TEST_HEADERS) Makefile $(R
 
 benchmark: benchmark.cpp $(CORE_SRCS) $(CORE_HEADERS) Makefile $(RE2_PREFIX)/lib/libre2_bundle.a
 	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) benchmark.cpp $(CORE_SRCS) -o $@
+
+benchmark-linear-trigram: benchmarks/bench_linear_trigram.cpp $(CORE_SRCS) $(CORE_HEADERS) Makefile $(RE2_PREFIX)/lib/libre2_bundle.a
+	mkdir -p build
+	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) $(FRAMEWORKS) $(RE2_LDFLAGS) \
+		-IMacEverything/Core benchmarks/bench_linear_trigram.cpp $(CORE_SRCS) -o build/benchmark-linear-trigram
+	./build/benchmark-linear-trigram
 
 benchmark-trigram-simd: benchmarks/bench_trigram_simd.cpp
 	mkdir -p build
@@ -104,11 +110,12 @@ test-swift-export:
 		-o build/tests/test_search_export
 	./build/tests/test_search_export
 
-test-swift-highlight:
+test-swift-highlight: $(RE2_PREFIX)/lib/libre2_bundle.a
 	mkdir -p build/tests
-	xcrun swiftc -DTESTING -framework SwiftUI \
+	$(CXX) $(CXXFLAGS) $(RE2_CFLAGS) -c MacEverything/Core/RegexHighlight.cpp -o build/tests/RegexHighlight.o
+	xcrun swiftc -DTESTING -framework SwiftUI -import-objc-header MacEverything/Core/RegexHighlight.h \
 		MacEverything/App/HighlightHint.swift MacEverything/App/TextHighlight.swift tests/test_highlight_ranges.swift \
-		-o build/tests/test_highlight_ranges
+		build/tests/RegexHighlight.o $(RE2_LDFLAGS) -lc++ -o build/tests/test_highlight_ranges
 	./build/tests/test_highlight_ranges
 
 test-swift-throttle:
@@ -157,6 +164,7 @@ help:
 	@echo "  make dmg        - Build + package into DMG"
 	@echo "  make cli        - Build the short query client (mace)"
 	@echo "  make benchmark  - Build benchmark binary"
+	@echo "  make benchmark-linear-trigram - Compare linear and adaptive Trigram queries across index sizes"
 	@echo "  make benchmark-trigram-simd - Compare scalar, auto-vectorized, and NEON trigram packing"
 	@echo "  make benchmark-posting-simd - Compare scalar and NEON posting-list intersection"
 	@echo "  make clean      - Remove build artifacts"

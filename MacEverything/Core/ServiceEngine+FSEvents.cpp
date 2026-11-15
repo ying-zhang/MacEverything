@@ -3,87 +3,99 @@
 #include "RescanDebounce.h"
 #include "Logger.h"
 #include <algorithm>
-#include <sys/stat.h>
 #include "PathUtils.h"
+#include <filesystem>
+#include <sys/stat.h>
+#include <fnmatch.h>
+#include <cerrno>
+#include <cctype>
 
-// ═══════════════════════════════════════════════════════
-//  FSEvents application (replay path)
-// ═══════════════════════════════════════════════════════
+namespace fs = std::filesystem;
+
+namespace {
+bool mapEventPathToConfiguredRoot(const std::string& root, const std::string& path,
+                                 std::string& mappedPath);
+
+bool hasAppBundleSuffix(const std::string& path) {
+    if (path.size() < 4) return false;
+    const size_t offset = path.size() - 4;
+    return path[offset] == '.' && std::tolower(static_cast<unsigned char>(path[offset + 1])) == 'a' &&
+           std::tolower(static_cast<unsigned char>(path[offset + 2])) == 'p' &&
+           std::tolower(static_cast<unsigned char>(path[offset + 3])) == 'p';
+}
+}
+
+int ServiceEngine::lstatEventPath(const std::string& path, struct stat& result) const {
+    const int error = eventLstatErrorForTests_.load(std::memory_order_acquire);
+    if (error != 0) {
+        errno = error;
+        return -1;
+    }
+    return lstat(path.c_str(), &result);
+}
 
 void ServiceEngine::applyFSEvents(
     const std::vector<FileSystemWatcher::Event>& events,
-    std::shared_ptr<SearchEngine> engine)
-{
-    auto cfg = safeConfig();
+    std::shared_ptr<SearchEngine> engine) {
+    if (!engine || events.empty()) return;
+    directEventApplyCount_.fetch_add(events.size(), std::memory_order_acq_rel);
 
-    // Collect all mutation ops first, then apply in a single batch lock
+    const auto cfg = safeConfig();
+    const auto roots = effectiveScanRoots();
     std::vector<SearchEngine::MutationOp> ops;
-    ops.reserve(events.size());
-
-    // Content index updates are collected separately (they use their own lock)
     std::vector<std::string> contentRemovals;
     std::vector<std::string> contentUpserts;
+    ops.reserve(events.size());
+    contentRemovals.reserve(events.size());
+    contentUpserts.reserve(events.size());
 
     for (const auto& event : events) {
-        const std::string& path = event.path;
-        FSEventStreamEventFlags flags = event.flags;
-
-        if (!isPathAllowedByConfig(path, false)) continue;
+        const auto& eventPath = event.path;
+        std::string path = eventPath;
+        for (const auto& root : roots) {
+            if (mapEventPathToConfiguredRoot(root, eventPath, path)) break;
+        }
+        if (!isPathAllowedByConfig(path, false) || rescanDirectoryForEvent(path).empty()) continue;
         if (!cfg.includeAppBundleContents && isInsideAppBundle(path)) continue;
 
-        bool itemRemoved = (flags & kFSEventStreamEventFlagItemRemoved) != 0;
-        bool itemRenamed = (flags & kFSEventStreamEventFlagItemRenamed) != 0;
-
-        struct stat st;
-        bool exists = (lstat(path.c_str(), &st) == 0);
-
-        if (itemRemoved || (itemRenamed && !exists)) {
-            if (cfg.contentIndexingEnabled) {
-                contentRemovals.push_back(path);
-            }
+        struct stat st {};
+        const bool exists = lstatEventPath(path, st) == 0;
+        if (!exists) {
+            // An inaccessible file is not evidence of deletion. A later event
+            // or reconciliation can retry without destroying the last snapshot.
+            if (errno != ENOENT && errno != ENOTDIR) continue;
+            if (cfg.contentIndexingEnabled) contentRemovals.push_back(path);
             ops.push_back({SearchEngine::MutationOp::REMOVE, path, {}});
-        } else if (exists) {
-            std::string dirPath, fileName;
-            size_t lastSlash = path.rfind('/');
-            if (lastSlash != std::string::npos) {
-                dirPath = path.substr(0, lastSlash);
-                fileName = path.substr(lastSlash + 1);
-            } else {
-                dirPath = ".";
-                fileName = path;
-            }
-            if (fileName.empty()) continue;
+            continue;
+        }
 
-            uint8_t type = 4;
-            if (S_ISREG(st.st_mode))       type = 1;
-            else if (S_ISDIR(st.st_mode))   type = pathEndsWithApp(path) ? 5 : 2;
-            else if (S_ISLNK(st.st_mode))   type = 3;
+        const size_t slash = path.rfind('/');
+        const std::string dirPath = slash == std::string::npos ? "." : path.substr(0, slash);
+        const std::string fileName = slash == std::string::npos ? path : path.substr(slash + 1);
+        if (fileName.empty()) continue;
 
-            FileRecord record;
-            record.name = fileName;
-            record.path = dirPath;
-            record.type = type;
-            record.size = S_ISREG(st.st_mode) ? static_cast<uint64_t>(st.st_size) : 0;
-            record.modTime = st.st_mtime;
-            record.inode = st.st_ino;
-            record.devId = static_cast<int32_t>(st.st_dev);
+        uint8_t type = 4;
+        if (S_ISREG(st.st_mode)) type = 1;
+        else if (S_ISDIR(st.st_mode)) type = pathEndsWithApp(path) ? 5 : 2;
+        else if (S_ISLNK(st.st_mode)) type = 3;
 
-            ops.push_back({SearchEngine::MutationOp::UPDATE, path, std::move(record)});
-
-            if (type == 1 && cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
-                contentUpserts.push_back(path);
-            }
+        FileRecord record;
+        record.name = fileName;
+        record.path = dirPath;
+        record.type = type;
+        record.size = S_ISREG(st.st_mode) ? static_cast<uint64_t>(st.st_size) : 0;
+        record.modTime = st.st_mtime;
+        record.inode = st.st_ino;
+        record.devId = static_cast<int32_t>(st.st_dev);
+        ops.push_back({SearchEngine::MutationOp::UPDATE, path, std::move(record)});
+        if (type == 1 && cfg.contentIndexingEnabled && isPathAllowedByConfig(path, true)) {
+            contentUpserts.push_back(path);
         }
     }
 
-    // Removals need the old fileIndex, while upserts need the new record metadata.
-    for (const auto& path : contentRemovals) {
-        updateContentForPath(path, true, engine);
-    }
+    for (const auto& path : contentRemovals) updateContentForPath(path, true, engine);
     engine->batchMutate(std::move(ops));
-    for (const auto& path : contentUpserts) {
-        updateContentForPath(path, false, engine);
-    }
+    for (const auto& path : contentUpserts) updateContentForPath(path, false, engine);
 }
 
 // ═══════════════════════════════════════════════════════
@@ -92,6 +104,21 @@ void ServiceEngine::applyFSEvents(
 
 namespace {
 
+bool mapEventPathToConfiguredRoot(const std::string& root, const std::string& path,
+                                  std::string& mappedPath) {
+    if (PathUtils::pathContainsOrEquals(root, path)) {
+        mappedPath = path;
+        return true;
+    }
+    std::error_code ec;
+    const fs::path realRoot = fs::canonical(root, ec);
+    if (ec || !PathUtils::pathContainsOrEquals(realRoot.string(), path)) return false;
+    const fs::path relative = fs::path(path).lexically_relative(realRoot);
+    if (relative.empty() && path != realRoot.string()) return false;
+    mappedPath = relative.empty() ? root : (fs::path(root) / relative).lexically_normal().string();
+    return true;
+}
+
 bool replayStartsEarlier(FSEventStreamEventId requested, FSEventStreamEventId anchor) {
     if (requested == kFSEventStreamEventIdSinceNow) return false;
     if (anchor == 0 || anchor == kFSEventStreamEventIdSinceNow) return true;
@@ -99,6 +126,65 @@ bool replayStartsEarlier(FSEventStreamEventId requested, FSEventStreamEventId an
 }
 
 } // namespace
+
+std::string ServiceEngine::rescanDirectoryForEvent(const std::string& path,
+                                                   bool useEventDirectory) const {
+    if (path.empty()) return {};
+    const auto roots = effectiveScanRoots();
+    const auto cfg = safeConfig();
+    for (const auto& root : roots) {
+        std::string mappedPath;
+        if (!mapEventPathToConfiguredRoot(root, path, mappedPath)) continue;
+
+        fs::path scanRoot(PathUtils::trimTrailingSlash(fs::path(root).lexically_normal().string()));
+        fs::path event(PathUtils::trimTrailingSlash(fs::path(mappedPath).lexically_normal().string()));
+        std::error_code ec;
+        const bool eventIsDirectory = fs::is_directory(event, ec);
+        fs::path candidate = (useEventDirectory && eventIsDirectory)
+            ? event : event.parent_path();
+        if (useEventDirectory && eventIsDirectory && !cfg.includeAppBundleContents &&
+            hasAppBundleSuffix(mappedPath)) {
+            candidate = event.parent_path();
+        }
+        if (candidate.empty()) candidate = scanRoot;
+        if (event == scanRoot) candidate = scanRoot;
+        if (!PathUtils::pathContainsOrEquals(scanRoot.string(), candidate.string())) continue;
+
+        // A path below an excluded component must not be promoted to a scan
+        // root: doing so would bypass the scanner's ancestor pruning.
+        fs::path cursor = scanRoot;
+        auto relative = candidate.lexically_relative(scanRoot);
+        if (relative.empty() && candidate != scanRoot) continue;
+        bool allowed = true;
+        for (const auto& component : relative) {
+            if (component == "." || component.empty()) continue;
+            cursor /= component;
+            const std::string ancestor = cursor.string();
+            const std::string name = cursor.filename().string();
+            const bool isAppBundleDescendant = !cfg.includeAppBundleContents &&
+                isInsideAppBundle(ancestor + "/child");
+            if ((!cfg.includeHidden && !name.empty() && name.front() == '.') ||
+                isAppBundleDescendant) {
+                allowed = false;
+                break;
+            }
+            for (const auto& pattern : cfg.excludedPatterns) {
+                if (!pattern.empty() && fnmatch(pattern.c_str(), name.c_str(), FNM_CASEFOLD) == 0) {
+                    allowed = false;
+                    break;
+                }
+            }
+            if (!allowed || !isPathAllowedByConfig(ancestor, false)) {
+                allowed = false;
+                break;
+            }
+        }
+        // A broader root may prune this ancestor while an explicit nested
+        // root still scans it. Match any root, as the full scanner does.
+        if (allowed) return candidate.string();
+    }
+    return {};
+}
 
 void ServiceEngine::startOrRestartVolumeMonitoring() {
     if (!safeConfig().realtimeMonitoring) return;
@@ -587,12 +673,52 @@ void ServiceEngine::applyOrDeferEvents(uint64_t generation,
     directEvents.reserve(events.size());
     for (auto& event : events) {
         if (event.flags & kFSEventStreamEventFlagMustScanSubDirs) {
-            rescanDirs.push_back(std::move(event.path));
+            auto dir = rescanDirectoryForEvent(event.path, true);
+            if (!dir.empty()) rescanDirs.push_back(std::move(dir));
         } else {
             directEvents.push_back(std::move(event));
         }
     }
 
+    auto observedEngine = safeEngine();
+    std::vector<std::vector<std::string>> priorRenamePaths(directEvents.size());
+    std::vector<struct stat> renameStats(directEvents.size());
+    std::vector<bool> renameExists(directEvents.size(), false);
+    std::vector<bool> removedDirectories(directEvents.size(), false);
+    const bool canInspectSnapshot = observedEngine &&
+        isGenerationCurrent(generation) &&
+        indexRevision_.load(std::memory_order_acquire) == indexRevision &&
+        !isScanning_.load(std::memory_order_acquire) &&
+        (allowWhileSyncing || !isSyncing_.load(std::memory_order_acquire));
+    for (size_t i = 0; i < directEvents.size(); ++i) {
+        if (!canInspectSnapshot) break;
+        const bool renamed = (directEvents[i].flags & kFSEventStreamEventFlagItemRenamed) != 0;
+        const bool removed = (directEvents[i].flags & kFSEventStreamEventFlagItemRemoved) != 0;
+        renameExists[i] = lstatEventPath(directEvents[i].path, renameStats[i]) == 0;
+        const int statError = renameExists[i] ? 0 : errno;
+        if (!observedEngine) continue;
+        if (renamed && renameExists[i]) {
+            priorRenamePaths[i] = observedEngine->pathsForFileIdentity(
+                static_cast<uint64_t>(renameStats[i].st_ino),
+                static_cast<int32_t>(renameStats[i].st_dev));
+        } else if ((removed || renamed) && (statError == ENOENT || statError == ENOTDIR)) {
+            // Moving a directory outside the watched scope can report only
+            // the missing old path with ItemRenamed, without ItemRemoved.
+            std::string indexedPath = directEvents[i].path;
+            for (const auto& root : effectiveScanRoots()) {
+                if (mapEventPathToConfiguredRoot(root, directEvents[i].path, indexedPath)) break;
+            }
+            const auto index = observedEngine->indexForPath(indexedPath);
+            if (index != UINT32_MAX) {
+                const auto type = observedEngine->getRecord(index).type;
+                removedDirectories[i] = type == 2 || type == 5;
+            }
+        }
+    }
+
+    std::vector<std::string> reconcileDirs;
+    std::vector<FileSystemWatcher::Event> eventsToApply;
+    eventsToApply.reserve(directEvents.size());
     bool applied = false;
     bool defer = false;
     {
@@ -610,11 +736,45 @@ void ServiceEngine::applyOrDeferEvents(uint64_t generation,
         const bool syncing = isSyncing_.load(std::memory_order_acquire);
         auto engine = safeEngine();
         const bool engineMismatch = requiredEngine && engine != requiredEngine;
-        if (scanning || (!allowWhileSyncing && syncing) || !engine || engineMismatch) {
+        if (scanning || (!allowWhileSyncing && syncing) || !engine || engineMismatch ||
+            engine != observedEngine) {
             defer = true;
         } else if (!directEvents.empty()) {
-            applyFSEvents(directEvents, engine);
-            applied = true;
+            for (size_t i = 0; i < directEvents.size(); ++i) {
+                const auto& event = directEvents[i];
+                if (removedDirectories[i]) {
+                    const auto parent = rescanDirectoryForEvent(event.path);
+                    if (!parent.empty()) reconcileDirs.push_back(parent);
+                    continue;
+                }
+                if ((event.flags & kFSEventStreamEventFlagItemRenamed) == 0 || !renameExists[i]) {
+                    eventsToApply.push_back(event);
+                    continue;
+                }
+
+                if (S_ISDIR(renameStats[i].st_mode)) {
+                    const auto newParent = rescanDirectoryForEvent(event.path);
+                    if (!newParent.empty()) reconcileDirs.push_back(newParent);
+                    for (const auto& oldPath : priorRenamePaths[i]) {
+                        const auto oldParent = rescanDirectoryForEvent(oldPath);
+                        if (!oldParent.empty()) reconcileDirs.push_back(oldParent);
+                    }
+                } else {
+                    for (const auto& oldPath : priorRenamePaths[i]) {
+                        struct stat oldStat {};
+                        const bool oldPathMissing = lstat(oldPath.c_str(), &oldStat) != 0 &&
+                            (errno == ENOENT || errno == ENOTDIR);
+                        if (oldPath != event.path && oldPathMissing) {
+                            eventsToApply.push_back({oldPath, kFSEventStreamEventFlagItemRemoved});
+                        }
+                    }
+                    eventsToApply.push_back(event);
+                }
+            }
+            if (!eventsToApply.empty()) {
+                applyFSEvents(eventsToApply, engine);
+                applied = true;
+            }
         }
     }
     if (defer) {
@@ -624,6 +784,12 @@ void ServiceEngine::applyOrDeferEvents(uint64_t generation,
         for (auto& dir : rescanDirs) deferVolumeRescan(std::move(dir), {});
         return;
     }
+    if (!reconcileDirs.empty()) {
+        for (const auto& dir : minimizeRescanPaths(std::move(reconcileDirs))) {
+            rescanSubtree(dir);
+        }
+    }
+    if (applied && !allowWhileSyncing && onIndexChanged) onIndexChanged();
     if (!rescanDirs.empty()) {
         // Replay runs while monitoring is stopped. Queue the subtree work
         // instead of dropping it in scheduleRescanForPaths().
@@ -633,7 +799,6 @@ void ServiceEngine::applyOrDeferEvents(uint64_t generation,
             scheduleRescanForPaths(rescanDirs);
         }
     }
-    if (applied && !allowWhileSyncing && onIndexChanged) onIndexChanged();
 }
 
 void ServiceEngine::deferVolumeRename(std::string oldPath, std::string newPath) {
@@ -702,6 +867,12 @@ void ServiceEngine::rescanSubtreeNow(const std::string& dir,
             return;
         }
         std::vector<std::string> roots{dirCopy};
+        // Preserve explicit roots that bypass ancestor pruning in a full scan.
+        for (const auto& root : this->effectiveScanRoots()) {
+            if (root != dirCopy && PathUtils::pathContainsOrEquals(dirCopy, root)) {
+                roots.push_back(root);
+            }
+        }
         scanner->scan(roots, this->scanConfigForRoots(roots));
         this->unregisterScanner(scanner);
         if (scanner->deferredVolumeCount() > 0 && scanner->reachableRootCount() == 0) {
@@ -734,6 +905,25 @@ void ServiceEngine::rescanSubtreeNow(const std::string& dir,
             } else if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
                 action = RescanAction::Defer;
             } else if (auto engine = this->safeEngine()) {
+                // DirectoryScanner emits children, not its root. Prefix
+                // replacement also removes the exact root record, so restore
+                // that record when it was part of the published index. Keep
+                // batchRescanPrefix's replacement contract unchanged.
+                const auto rootIndex = engine->indexForPath(dirCopy);
+                if (rootIndex != UINT32_MAX) {
+                    struct stat st {};
+                    if (lstat(dirCopy.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)) {
+                        notifyCompletion();
+                        return;
+                    }
+                    auto record = engine->getRecord(rootIndex);
+                    record.size = 0;
+                    record.modTime = st.st_mtime;
+                    record.inode = st.st_ino;
+                    record.devId = static_cast<int32_t>(st.st_dev);
+                    record.type = pathEndsWithApp(dirCopy) ? 5 : 2;
+                    freshRecords.push_back(std::move(record));
+                }
                 std::vector<std::string> contentPaths;
                 contentPaths.reserve(freshRecords.size());
                 for (const auto& record : freshRecords) {
@@ -812,30 +1002,13 @@ void ServiceEngine::refreshRenamedPathNow(const std::string& oldPath,
             this->deferVolumeRename(oldPathCopy, newPathCopy);
             return;
         }
-
-        bool applied = false;
-        bool defer = false;
-        {
-            // setEngine() publishes a replacement under this lock. Hold it so
-            // the rename cannot update an engine that a scan is about to drop.
-            std::lock_guard<std::mutex> stateLock(this->lifecycleStateMutex_);
-            if (this->shuttingDown_.load(std::memory_order_acquire)) return;
-            if (!this->isGenerationCurrent(generation) || this->lifecycleBusy()) {
-                defer = true;
-            } else if (auto engine = this->safeEngine()) {
-                std::vector<FileSystemWatcher::Event> events{
-                    {oldPathCopy, kFSEventStreamEventFlagItemRemoved},
-                    {newPathCopy, kFSEventStreamEventFlagItemRenamed}
-                };
-                this->applyFSEvents(events, engine);
-                applied = true;
-            }
-        }
-        if (defer) {
-            this->deferVolumeRename(oldPathCopy, newPathCopy);
-            return;
-        }
-        if (applied && this->onIndexChanged) this->onIndexChanged();
+        std::vector<FileSystemWatcher::Event> events{
+            {oldPathCopy, kFSEventStreamEventFlagItemRemoved},
+            {newPathCopy, kFSEventStreamEventFlagItemRenamed}
+        };
+        this->applyOrDeferEvents(
+            generation, this->indexRevision_.load(std::memory_order_acquire),
+            std::move(events), this->safeEngine(), false);
     });
 }
 

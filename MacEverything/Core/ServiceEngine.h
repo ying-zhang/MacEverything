@@ -92,6 +92,14 @@ public:
     /// and publishes that snapshot through the background replacement path
     /// before applying the batch it has already taken off the shared queue.
     void publishFreshScanOnNextDeferredDrainForTests();
+    /// Counts direct events reaching application, including no-op upserts.
+    uint64_t directEventApplyCountForTests() const {
+        return directEventApplyCount_.load(std::memory_order_acquire);
+    }
+    /// Inject a filesystem error in event lstat only; zero restores real I/O.
+    void setEventLstatErrorForTests(int error) {
+        eventLstatErrorForTests_.store(error, std::memory_order_release);
+    }
     bool startupCompletedForTests() const {
         return startupCompleted_.load(std::memory_order_acquire);
     }
@@ -181,8 +189,6 @@ private:
     IndexMetadata buildMetadata();
 
     // ── FSEvents methods (ServiceEngine+FSEvents.cpp) ──
-    void applyFSEvents(const std::vector<FileSystemWatcher::Event>& events,
-                       std::shared_ptr<SearchEngine> engine);
     void startMonitoring(FSEventStreamEventId sinceEventId = kFSEventStreamEventIdSinceNow);
     /// Caller holds `monitoringMutex_` and has already stopped any stream
     /// that this start replaces.
@@ -257,6 +263,8 @@ private:
                           std::function<void(uint32_t)> completion,
                           bool cancelIfRemounted);
     void refreshRenamedPathNow(const std::string& oldPath, const std::string& newPath);
+    void applyFSEvents(const std::vector<FileSystemWatcher::Event>& events,
+                       std::shared_ptr<SearchEngine> engine);
     void startOrRestartVolumeMonitoring();
     /// `requireStartup` is false when the scan failed and no later success
     /// will drain the queue. Removals, rescans, and renames still run.
@@ -265,6 +273,9 @@ private:
     void stopMonitoringObservers();
     ScanConfig scanConfigForRoots(const std::vector<std::string>& roots) const;
     ScanConfig scanConfig() const;
+    std::string rescanDirectoryForEvent(const std::string& path,
+                                        bool useEventDirectory = false) const;
+    int lstatEventPath(const std::string& path, struct stat& result) const;
     bool isPathAllowedByConfig(const std::string& path, bool forContent) const;
     std::string configSignature() const;
     bool isGenerationCurrent(uint64_t generation) const;
@@ -341,6 +352,8 @@ private:
     std::atomic<uint64_t> indexRevision_{1};
     std::atomic<bool> publishFreshScanOnNextDeferredDrain_{false};
     std::atomic<uint64_t> deferredDrainCount_{0};
+    std::atomic<uint64_t> directEventApplyCount_{0};
+    std::atomic<int> eventLstatErrorForTests_{0};
     std::atomic<bool> rebuilding_{false};
 
     // ── Volume unmount tracking ──

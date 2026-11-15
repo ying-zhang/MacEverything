@@ -56,7 +56,7 @@ struct SearchSyntaxHelpView: View {
 
     private var regexSection: some View {
         SyntaxSection(title: L10n.tr("Regex")) {
-            SyntaxRow("regex:pattern", L10n.tr("ECMAScript regex (case-insensitive)"))
+            SyntaxRow("regex:pattern", L10n.tr("RE2 regex (case-insensitive)"))
             SyntaxNote(L10n.tr("Example: regex:^test  regex:\\.cpp$"))
         }
     }
@@ -91,7 +91,7 @@ struct SearchSyntaxHelpView: View {
         SyntaxSection(title: L10n.tr("Path Filter")) {
             SyntaxRow("path:keyword", L10n.tr("Path contains keyword"))
             SyntaxRow("nopath:keyword", L10n.tr("Path does not contain keyword"))
-            SyntaxRow("parent:dirname", L10n.tr("Immediate parent matches"))
+            SyntaxRow("parent:/usr/local/bin", L10n.tr("Exact full parent directory path"))
             SyntaxRow("depth:<3", L10n.tr("Directory depth less than 3"))
             SyntaxRow("depth:>5", L10n.tr("Directory depth greater than 5"))
         }
@@ -115,9 +115,9 @@ struct SearchSyntaxHelpView: View {
 
     private var lengthFilterSection: some View {
         SyntaxSection(title: L10n.tr("Name Length Filter")) {
-            SyntaxRow("len:>10", L10n.tr("Filename longer than 10 chars"))
-            SyntaxRow("len:<5", L10n.tr("Filename shorter than 5 chars"))
-            SyntaxRow("len:>=8", L10n.tr("Filename at least 8 chars"))
+            SyntaxRow("len:>10", L10n.tr("Filename longer than 10 UTF-8 bytes"))
+            SyntaxRow("len:<5", L10n.tr("Filename shorter than 5 UTF-8 bytes"))
+            SyntaxRow("len:>=8", L10n.tr("Filename at least 8 UTF-8 bytes"))
         }
     }
 
@@ -126,7 +126,7 @@ struct SearchSyntaxHelpView: View {
             SyntaxRow("case:term", L10n.tr("Force case-sensitive match"))
             SyntaxRow("nocase:term", L10n.tr("Force case-insensitive match"))
             SyntaxRow("ww:hello", L10n.tr("Whole word match"))
-            SyntaxRow("wfn:readme", L10n.tr("Whole filename match (without extension)"))
+            SyntaxRow("wfn:readme.md", L10n.tr("Whole filename match (including extension)"))
             SyntaxNote(L10n.tr("Aliases: wholeword:  wholefilename:"))
         }
     }

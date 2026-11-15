@@ -3,6 +3,7 @@
 #include "PathUtils.h"
 #include <cstdio>
 #include <cstring>
+#include <limits>
 #include <fcntl.h>
 #include <unistd.h>
 #include <sys/stat.h>
@@ -21,7 +22,10 @@ bool FlatIndexWriter::exists() const {
 bool FlatIndexWriter::writeStringPoolSection(FILE* f, const StringPool& pool,
                                               uint32_t& outSize, uint32_t& outCRC) {
     long startPos = ftell(f);
+    if (startPos < 0) return false;
 
+    if (pool.rawSize() > UINT32_MAX ||
+        pool.entryCount() > UINT32_MAX / sizeof(StringPool::Entry)) return false;
     uint32_t bufSize = static_cast<uint32_t>(pool.rawSize());
     if (fwrite(&bufSize, sizeof(uint32_t), 1, f) != 1) return false;
     if (bufSize > 0 && fwrite(pool.rawBuffer(), 1, bufSize, f) != bufSize) return false;
@@ -34,14 +38,15 @@ bool FlatIndexWriter::writeStringPoolSection(FILE* f, const StringPool& pool,
     }
 
     long endPos = ftell(f);
+    if (endPos < startPos || static_cast<unsigned long>(endPos - startPos) > UINT32_MAX) return false;
     outSize = static_cast<uint32_t>(endPos - startPos);
 
     // Compute CRC over what we just wrote
     std::vector<uint8_t> buf(outSize);
-    fseek(f, startPos, SEEK_SET);
+    if (fseek(f, startPos, SEEK_SET) != 0) return false;
     if (fread(buf.data(), 1, outSize, f) != outSize) return false;
     outCRC = IndexWAL::crc32(buf.data(), outSize);
-    fseek(f, endPos, SEEK_SET);
+    if (fseek(f, endPos, SEEK_SET) != 0) return false;
 
     return true;
 }
@@ -78,6 +83,7 @@ bool FlatIndexWriter::readStringPoolSection(const uint8_t* data, size_t len, Str
 template<typename T>
 bool FlatIndexWriter::writeArraySection(FILE* f, const std::vector<T>& vec,
                                          uint32_t& outSize, uint32_t& outCRC) {
+    if (vec.size() > UINT32_MAX / sizeof(T)) return false;
     size_t bytes = vec.size() * sizeof(T);
     outSize = static_cast<uint32_t>(bytes);
     if (bytes > 0 && fwrite(vec.data(), 1, bytes, f) != bytes) return false;
@@ -94,11 +100,14 @@ bool FlatIndexWriter::writeArraySection(FILE* f, const std::vector<T>& vec,
 bool FlatIndexWriter::writeMetadataSection(FILE* f, const IndexMetadata& meta,
                                             uint32_t& outSize, uint32_t& outCRC) {
     long startPos = ftell(f);
+    if (startPos < 0) return false;
 
+    if (meta.extra.size() > UINT32_MAX) return false;
     uint32_t count = static_cast<uint32_t>(meta.extra.size());
     if (fwrite(&count, sizeof(uint32_t), 1, f) != 1) return false;
 
     for (const auto& [key, value] : meta.extra) {
+        if (key.size() > UINT32_MAX || value.size() > UINT32_MAX) return false;
         uint32_t kLen = static_cast<uint32_t>(key.size());
         if (fwrite(&kLen, sizeof(uint32_t), 1, f) != 1) return false;
         if (kLen > 0 && fwrite(key.data(), 1, kLen, f) != kLen) return false;
@@ -109,13 +118,14 @@ bool FlatIndexWriter::writeMetadataSection(FILE* f, const IndexMetadata& meta,
     }
 
     long endPos = ftell(f);
+    if (endPos < startPos || static_cast<unsigned long>(endPos - startPos) > UINT32_MAX) return false;
     outSize = static_cast<uint32_t>(endPos - startPos);
 
     std::vector<uint8_t> buf(outSize);
-    fseek(f, startPos, SEEK_SET);
+    if (fseek(f, startPos, SEEK_SET) != 0) return false;
     if (fread(buf.data(), 1, outSize, f) != outSize) return false;
     outCRC = IndexWAL::crc32(buf.data(), outSize);
-    fseek(f, endPos, SEEK_SET);
+    if (fseek(f, endPos, SEEK_SET) != 0) return false;
 
     return true;
 }
@@ -184,6 +194,7 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // Reserve space for section table
     SectionEntry sections[kSectionCount] = {};
     long sectionTablePos = ftell(f);
+    if (sectionTablePos < 0) { fclose(f); remove(tmpPath.c_str()); return false; }
     if (fwrite(sections, sizeof(SectionEntry), kSectionCount, f) != kSectionCount) {
         fclose(f); remove(tmpPath.c_str()); return false;
     }
@@ -198,96 +209,35 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
         sections[idx].crc32 = crc;
     };
 
-    bool ok = true;
-
-    // Section 1: NAMES_ORIG
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
+    // Stop at the first failure: a failed write leaves the stream position
+    // indeterminate, so no later section may inspect or use it.
+    auto writeSection = [&](uint32_t idx, uint32_t id, auto&& write) {
+        long offset = ftell(f);
+        if (offset < 0) return false;
         uint32_t size = 0, crc = 0;
-        ok = ok && writeStringPoolSection(f, snap.origNamePool, size, crc);
-        fillSection(0, kSectionNamesOrig, offset, size, crc);
-    }
-
-    // Section 2: NAMES_LOWER
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeStringPoolSection(f, snap.namePool, size, crc);
-        fillSection(1, kSectionNamesLower, offset, size, crc);
-    }
-
-    // Section 3: PATH_POOL
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeStringPoolSection(f, snap.pathPool, size, crc);
-        fillSection(2, kSectionPathPool, offset, size, crc);
-    }
-
-    // kSectionLowerPathPool (4) is no longer written — computed on-the-fly
-
-    // Section 4: PATH_INDICES
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeArraySection(f, snap.pathIndices, size, crc);
-        fillSection(3, kSectionPathIndices, offset, size, crc);
-    }
-
-    // Section 5: TYPES
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeArraySection(f, snap.types, size, crc);
-        fillSection(4, kSectionTypes, offset, size, crc);
-    }
-
-    // Section 6: SIZES
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeArraySection(f, snap.sizes, size, crc);
-        fillSection(5, kSectionSizes, offset, size, crc);
-    }
-
-    // Section 7: MOD_TIMES
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeArraySection(f, snap.modTimes, size, crc);
-        fillSection(6, kSectionModTimes, offset, size, crc);
-    }
-
-    // Section 8: INODES
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeArraySection(f, snap.inodes, size, crc);
-        fillSection(7, kSectionInodes, offset, size, crc);
-    }
-
-    // Section 9: DEV_IDS
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeArraySection(f, snap.devIds, size, crc);
-        fillSection(8, kSectionDevIds, offset, size, crc);
-    }
-
-    // Section 10: METADATA_KV
-    {
-        uint64_t offset = static_cast<uint64_t>(ftell(f));
-        uint32_t size = 0, crc = 0;
-        ok = ok && writeMetadataSection(f, meta, size, crc);
-        fillSection(9, kSectionMetadataKV, offset, size, crc);
-    }
-
+        if (!write(size, crc)) return false;
+        fillSection(idx, id, static_cast<uint64_t>(offset), size, crc);
+        return true;
+    };
+    bool ok =
+        writeSection(0, kSectionNamesOrig, [&](auto& size, auto& crc) { return writeStringPoolSection(f, snap.origNamePool, size, crc); })
+        && writeSection(1, kSectionNamesLower, [&](auto& size, auto& crc) { return writeStringPoolSection(f, snap.namePool, size, crc); })
+        && writeSection(2, kSectionPathPool, [&](auto& size, auto& crc) { return writeStringPoolSection(f, snap.pathPool, size, crc); })
+        && writeSection(3, kSectionPathIndices, [&](auto& size, auto& crc) { return writeArraySection(f, snap.pathIndices, size, crc); })
+        && writeSection(4, kSectionTypes, [&](auto& size, auto& crc) { return writeArraySection(f, snap.types, size, crc); })
+        && writeSection(5, kSectionSizes, [&](auto& size, auto& crc) { return writeArraySection(f, snap.sizes, size, crc); })
+        && writeSection(6, kSectionModTimes, [&](auto& size, auto& crc) { return writeArraySection(f, snap.modTimes, size, crc); })
+        && writeSection(7, kSectionInodes, [&](auto& size, auto& crc) { return writeArraySection(f, snap.inodes, size, crc); })
+        && writeSection(8, kSectionDevIds, [&](auto& size, auto& crc) { return writeArraySection(f, snap.devIds, size, crc); })
+        && writeSection(9, kSectionMetadataKV, [&](auto& size, auto& crc) { return writeMetadataSection(f, meta, size, crc); });
     if (!ok) {
         fclose(f); remove(tmpPath.c_str()); return false;
     }
 
     // Write section table back
-    fseek(f, sectionTablePos, SEEK_SET);
+    if (fseek(f, sectionTablePos, SEEK_SET) != 0) {
+        fclose(f); remove(tmpPath.c_str()); return false;
+    }
     if (fwrite(sections, sizeof(SectionEntry), kSectionCount, f) != kSectionCount) {
         fclose(f); remove(tmpPath.c_str()); return false;
     }
@@ -296,14 +246,14 @@ bool FlatIndexWriter::fullRewrite(SearchEngine& engine, const IndexMetadata& met
     // +recordCount(4)+liveCount(4)+timestamp(8)+lastEventId(8)+sectionCount(4)),
     // excluding the headerCRC field itself. headerCRC lives at offset 36,
     // reserved at offset 40.
-    fseek(f, 0, SEEK_SET);
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); remove(tmpPath.c_str()); return false; }
     uint8_t headerBytes[kHeaderSize];
     if (fread(headerBytes, 1, kHeaderSize, f) != kHeaderSize) {
         fclose(f); remove(tmpPath.c_str()); return false;
     }
     uint32_t hdrCRC = IndexWAL::crc32(headerBytes, 36);
     header.headerCRC = hdrCRC;
-    fseek(f, 0, SEEK_SET);
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); remove(tmpPath.c_str()); return false; }
     if (fwrite(&header, sizeof(Header), 1, f) != 1) {
         fclose(f); remove(tmpPath.c_str()); return false;
     }
@@ -339,7 +289,7 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     long fileEnd = ftell(f);
     if (fileEnd < static_cast<long>(kHeaderSize)) { fclose(f); return false; }
     const uint64_t fileSize = static_cast<uint64_t>(fileEnd);
-    rewind(f);
+    if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return false; }
 
     // Read header
     Header header{};
@@ -367,7 +317,7 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
     // Verify header CRC
     {
         uint8_t headerBytes[kHeaderSize];
-        fseek(f, 0, SEEK_SET);
+        if (fseek(f, 0, SEEK_SET) != 0) { fclose(f); return false; }
         if (fread(headerBytes, 1, kHeaderSize, f) != kHeaderSize) {
             fclose(f); return false;
         }
@@ -383,7 +333,7 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
         LOG_ERROR("FlatIndexWriter", "Invalid sectionCount: " << header.sectionCount);
         fclose(f); return false;
     }
-    fseek(f, kHeaderSize, SEEK_SET);
+    if (fseek(f, kHeaderSize, SEEK_SET) != 0) { fclose(f); return false; }
     std::vector<SectionEntry> sections(header.sectionCount);
     if (fread(sections.data(), sizeof(SectionEntry), header.sectionCount, f)
         != header.sectionCount) {
@@ -410,7 +360,8 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
         if (sectionIdx[sectionId] == 0xFFFFFFFF) return false;
         const auto& entry = sections[sectionIdx[sectionId]];
         out.resize(entry.byteLength);
-        fseek(f, static_cast<long>(entry.offset), SEEK_SET);
+        if (entry.offset > static_cast<uint64_t>(std::numeric_limits<long>::max()) ||
+            fseek(f, static_cast<long>(entry.offset), SEEK_SET) != 0) return false;
         if (fread(out.data(), 1, entry.byteLength, f) != entry.byteLength) {
             LOG_ERROR("FlatIndexWriter", "Failed to read section " << sectionId);
             return false;
@@ -432,7 +383,8 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
         const auto& entry = sections[sectionIdx[sectionId]];
         // Read the entire section into a temp buffer for CRC verification
         std::vector<uint8_t> raw(entry.byteLength);
-        fseek(f, static_cast<long>(entry.offset), SEEK_SET);
+        if (entry.offset > static_cast<uint64_t>(std::numeric_limits<long>::max()) ||
+            fseek(f, static_cast<long>(entry.offset), SEEK_SET) != 0) return false;
         if (fread(raw.data(), 1, entry.byteLength, f) != entry.byteLength) {
             LOG_ERROR("FlatIndexWriter", "Failed to read section " << name);
             return false;
@@ -482,7 +434,8 @@ bool FlatIndexWriter::load(SearchEngine& engine, IndexMetadata* outMeta) {
             return false;
         }
         vec.resize(expectedCount);
-        fseek(f, static_cast<long>(entry.offset), SEEK_SET);
+        if (entry.offset > static_cast<uint64_t>(std::numeric_limits<long>::max()) ||
+            fseek(f, static_cast<long>(entry.offset), SEEK_SET) != 0) return false;
         if (fread(vec.data(), 1, expectedBytes, f) != expectedBytes) {
             LOG_ERROR("FlatIndexWriter", "Failed to read section " << name);
             return false;

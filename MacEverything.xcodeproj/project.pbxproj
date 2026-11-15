@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		A0FE00000000000000000001 /* RegexHighlight.cpp in Sources */ = {isa = PBXBuildFile; fileRef = A0FE00000000000000000002; };
 		C1000001 /* mcp_main.mm in Sources */ = {isa = PBXBuildFile; fileRef = C2000001; };
 		F1000001 /* mace_main.cpp in Sources */ = {isa = PBXBuildFile; fileRef = F2000001; };
 		A1000001 /* MacEverythingApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2000001; };
@@ -102,6 +103,8 @@
 /* End PBXContainerItemProxy section */
 
 /* Begin PBXFileReference section */
+		A0FE00000000000000000002 /* RegexHighlight.cpp */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.cpp.cpp; path = RegexHighlight.cpp; sourceTree = "<group>"; };
+		A0FE00000000000000000003 /* RegexHighlight.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = RegexHighlight.h; sourceTree = "<group>"; };
 		A2000001 /* MacEverythingApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacEverythingApp.swift; sourceTree = "<group>"; };
 		A2000002 /* AppDelegate.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppDelegate.swift; sourceTree = "<group>"; };
 		A2000003 /* SearchViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchViewModel.swift; sourceTree = "<group>"; };
@@ -427,6 +430,8 @@
 				A2000030 /* PagedIndexWriter.cpp */,
 				A2000048 /* FlatIndexWriter.h */,
 				A2000049 /* FlatIndexWriter.cpp */,
+				A0FE00000000000000000002 /* RegexHighlight.cpp */,
+				A0FE00000000000000000003 /* RegexHighlight.h */,
 				A2000033 /* HttpServer.h */,
 				A2000034 /* HttpServer.cpp */,
 				A2000035 /* ServiceEngine.h */,
@@ -612,6 +617,7 @@
 				A100001E /* SearchHistoryStore.swift in Sources */,
 				A100001F /* PagedIndexWriter.cpp in Sources */,
 				A1000034 /* FlatIndexWriter.cpp in Sources */,
+				A0FE00000000000000000001 /* RegexHighlight.cpp in Sources */,
 				A1000021 /* HttpServer.cpp in Sources */,
 				A1000022 /* ServiceEngine.cpp in Sources */,
 				A1000023 /* ServiceEngine+FSEvents.cpp in Sources */,

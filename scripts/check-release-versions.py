@@ -6,7 +6,7 @@ import sys
 from urllib.parse import unquote, urlsplit
 
 
-ALLOWED_VERSIONS = {"1.5.30", "1.10.20"}
+ALLOWED_VERSIONS = {"1.5.30", "1.11.15"}
 VERSION_PATTERN = re.compile(r"(?<![\w.])v?1\.\d+\.\d+(?![\w.])")
 TEXT_SUFFIXES = {".md", ".h", ".cpp", ".mm", ".swift", ".plist", ".py", ".sh"}
 
@@ -16,7 +16,7 @@ def audit(root):
     plist = root / "MacEverything/Info.plist"
     with plist.open("rb") as stream:
         version = plistlib.load(stream)["CFBundleShortVersionString"]
-    if version != "1.10.20":
+    if version != "1.11.15":
         errors.append(f"{plist.relative_to(root)}: unexpected app version {version}")
     paths = [root / "README.md", root / "README_EN.md"]
     for directory in ("MacEverything", "docs", "scripts", "tests"):

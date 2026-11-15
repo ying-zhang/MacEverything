@@ -191,224 +191,41 @@ func buildHighlightedText(text: String, ranges: [Range<String.Index>],
         return Text(text).font(font).foregroundColor(color)
     }
 
-    var result = Text("")
-    var currentIndex = text.startIndex
-
+    var attributed = AttributedString(text)
+    attributed.font = font
+    attributed.foregroundColor = color
     for range in ranges {
-        if currentIndex < range.lowerBound {
-            result = result + Text(text[currentIndex..<range.lowerBound])
-                .font(font).foregroundColor(color)
+        if let start = AttributedString.Index(range.lowerBound, within: attributed),
+           let end = AttributedString.Index(range.upperBound, within: attributed) {
+            attributed[start..<end].foregroundColor = highlightColor
+            attributed[start..<end].font = font.bold()
         }
-        result = result + Text(text[range])
-            .font(font).foregroundColor(highlightColor).bold()
-        currentIndex = range.upperBound
     }
 
-    if currentIndex < text.endIndex {
-        result = result + Text(text[currentIndex..<text.endIndex])
-            .font(font).foregroundColor(color)
-    }
-
-    return result
+    return Text(attributed)
 }
 
 // MARK: - Hint-based highlighting
 
-/// ICU regular expressions use a backtracking engine. Search itself uses RE2,
-/// so this conservative guard rejects common nested-quantifier and repeated
-/// alternation shapes before they can freeze the main actor. Rejection only
-/// disables highlighting; search results still use the RE2 query path.
-private func isSafeHighlightRegex(_ pattern: String) -> Bool {
-    guard pattern.utf8.count <= 1024 else { return false }
-    let bytes = Array(pattern.utf8)
-    struct GroupState {
-        let start: Int
-        var hasQuantifier = false
-        var hasAlternation = false
-    }
-
-    func quantifierLength(at index: Int) -> Int {
-        guard index < bytes.count, index > 0 else { return 0 }
-        let previous = bytes[index - 1]
-        guard previous != 40 && previous != 124 else { return 0 }
-        switch bytes[index] {
-        case 42, 43: // * or +
-            return 1
-        case 63: // ?; (?i), (?:...), etc. are group syntax, not quantifiers.
-            if previous == 63 { return 0 }
-            if index + 1 < bytes.count && (bytes[index + 1] == 58 ||
-                                            bytes[index + 1] == 61 ||
-                                            bytes[index + 1] == 33 ||
-                                            bytes[index + 1] == 60 ||
-                                            bytes[index + 1] == 35) {
-                return 0
-            }
-            return 1
-        case 123: // {m}, {m,}, or {m,n}
-            var cursor = index + 1
-            var sawDigit = false
-            while cursor < bytes.count && bytes[cursor] >= 48 && bytes[cursor] <= 57 {
-                sawDigit = true
-                cursor += 1
-            }
-            if !sawDigit { return 0 }
-            if cursor < bytes.count && bytes[cursor] == 44 {
-                cursor += 1
-                while cursor < bytes.count && bytes[cursor] >= 48 && bytes[cursor] <= 57 {
-                    cursor += 1
-                }
-            }
-            return cursor < bytes.count && bytes[cursor] == 125 ? cursor - index + 1 : 0
-        default:
-            return 0
+/// Convert bounded RE2 UTF-8 matches into Swift string ranges.
+private func regexHighlightRanges(in text: String, pattern: String,
+                                  caseSensitive: Bool) -> [Range<String.Index>] {
+    var matches = [MERegexRange](repeating: MERegexRange(offset: 0, length: 0), count: 256)
+    let count = pattern.withCString { patternBytes in
+        text.withCString { textBytes in
+            MERegexHighlightRanges(patternBytes, pattern.utf8.count, textBytes, text.utf8.count,
+                                   caseSensitive, &matches, matches.count)
         }
     }
-
-    func firstLiteralToken(from start: Int, to end: Int) -> [UInt8]? {
-        guard start < end else { return nil }
-        var index = start
-        if bytes[index] == 63 { // non-capturing/lookaround group prefix
-            guard index + 1 < end,
-                  bytes[index + 1] == 58 || bytes[index + 1] == 61 ||
-                  bytes[index + 1] == 33 || bytes[index + 1] == 60 else { return nil }
-            index += 2
-            if index >= end { return nil }
-        }
-        if bytes[index] == 92 {
-            guard index + 1 < end else { return nil }
-            return [bytes[index], bytes[index + 1]]
-        }
-        var token: [UInt8] = []
-        while index < end {
-            switch bytes[index] {
-            case 40, 41, 46, 91, 94, 36, 42, 43, 63, 123, 124:
-                return token.isEmpty ? nil : token
-            default:
-                token.append(bytes[index])
-                index += 1
-            }
-        }
-        return token.isEmpty ? nil : token
+    return matches.prefix(Int(count)).compactMap { match in
+        guard let lower = text.utf8.index(text.utf8.startIndex, offsetBy: Int(match.offset),
+                                         limitedBy: text.utf8.endIndex),
+              let upper = text.utf8.index(lower, offsetBy: Int(match.length),
+                                         limitedBy: text.utf8.endIndex),
+              let start = String.Index(lower, within: text),
+              let end = String.Index(upper, within: text), start < end else { return nil }
+        return start..<end
     }
-
-    func repeatedAlternationIsAmbiguous(from start: Int, to end: Int) -> Bool {
-        var depth = 0
-        var branchStart = start + 1
-        var prefixes: [[UInt8]] = []
-        var index = branchStart
-        while index < end {
-            if bytes[index] == 92 {
-                index += min(2, end - index)
-                continue
-            }
-            if bytes[index] == 91 {
-                while index < end {
-                    let escaped = bytes[index] == 92
-                    index += escaped ? min(2, end - index) : 1
-                    if !escaped && index > 0 && bytes[index - 1] == 93 { break }
-                }
-                continue
-            }
-            if bytes[index] == 40 { depth += 1 }
-            else if bytes[index] == 41 && depth > 0 { depth -= 1 }
-            else if bytes[index] == 124 && depth == 0 {
-                guard let prefix = firstLiteralToken(from: branchStart, to: index) else { return true }
-                prefixes.append(prefix)
-                branchStart = index + 1
-            }
-            index += 1
-        }
-        guard !prefixes.isEmpty,
-              let finalPrefix = firstLiteralToken(from: branchStart, to: end) else { return true }
-        prefixes.append(finalPrefix)
-        for left in prefixes {
-            for right in prefixes where left != right {
-                if left.starts(with: right) || right.starts(with: left) { return true }
-            }
-        }
-        return false
-    }
-
-    var groups: [GroupState] = []
-    var inCharacterClass = false
-    var escaped = false
-    var previousWasQuantifier = false
-    var index = 0
-    while index < bytes.count {
-        let byte = bytes[index]
-        if escaped {
-            escaped = false
-            previousWasQuantifier = false
-            index += 1
-            continue
-        }
-        if byte == 92 { // backslash
-            escaped = true
-            index += 1
-            continue
-        }
-        if inCharacterClass {
-            if byte == 93 { inCharacterClass = false } // ]
-            index += 1
-            continue
-        }
-        if byte == 91 { // [
-            inCharacterClass = true
-            index += 1
-            continue
-        }
-        if byte == 40 { // (
-            groups.append(GroupState(start: index))
-            previousWasQuantifier = false
-            index += 1
-            continue
-        }
-        if byte == 124 { // |
-            if !groups.isEmpty { groups[groups.count - 1].hasAlternation = true }
-            previousWasQuantifier = false
-            index += 1
-            continue
-        }
-        if byte == 41 { // )
-            guard !groups.isEmpty else {
-                index += 1
-                continue
-            }
-            var group = groups.removeLast()
-            let repeatLength = quantifierLength(at: index + 1)
-            if repeatLength > 0 {
-                // Repeating a group that already contains a repeat or an
-                // alternation is the common source of catastrophic backtracking.
-                if group.hasQuantifier ||
-                    (group.hasAlternation && repeatedAlternationIsAmbiguous(from: group.start,
-                                                                             to: index)) {
-                    return false
-                }
-                group.hasQuantifier = true
-            }
-            if !groups.isEmpty {
-                groups[groups.count - 1].hasQuantifier =
-                    groups[groups.count - 1].hasQuantifier || group.hasQuantifier
-                groups[groups.count - 1].hasAlternation =
-                    groups[groups.count - 1].hasAlternation || group.hasAlternation
-            }
-            previousWasQuantifier = repeatLength > 0
-            index += repeatLength > 0 ? repeatLength + 1 : 1
-            continue
-        }
-
-        let repeatLength = quantifierLength(at: index)
-        if repeatLength > 0 {
-            if previousWasQuantifier { return false }
-            if !groups.isEmpty { groups[groups.count - 1].hasQuantifier = true }
-            previousWasQuantifier = true
-            index += repeatLength
-            continue
-        }
-        previousWasQuantifier = false
-        index += 1
-    }
-    return true
 }
 
 /// Compute matching ranges for a single HighlightHint in the given text.
@@ -439,15 +256,7 @@ func computeRangesForHint(in text: String, hint: HighlightHint) -> [Range<String
         return findAllLiteralRanges(in: text, literals: literals, options: compareOptions)
 
     case .regex:
-        guard isSafeHighlightRegex(hint.text) else { return [] }
-        var options: NSRegularExpression.Options = []
-        if !hint.caseSensitive { options.insert(.caseInsensitive) }
-        guard let regex = try? NSRegularExpression(pattern: hint.text, options: options) else {
-            return []
-        }
-        let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        let matches = regex.matches(in: text, range: nsRange)
-        return matches.compactMap { Range($0.range, in: text) }
+        return regexHighlightRanges(in: text, pattern: hint.text, caseSensitive: hint.caseSensitive)
 
     case .wholeWord:
         let escaped = NSRegularExpression.escapedPattern(for: hint.text)

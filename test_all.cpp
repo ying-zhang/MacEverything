@@ -1,5 +1,5 @@
 // MacEverything — Full Test Suite + Performance Report
-// Compile: clang++ -std=c++20 -O2 -framework CoreServices MacEverything/Core/*.cpp test_all.cpp -o test_all
+// Compile: make test_all  (uses the configured RE2 bundle and system frameworks)
 // Run:     ./test_all [root_path]            (all tests, default root: /)
 //          ./test_all --fast                 (local fast tests; skips benchmarks/stress tests)
 //          ./test_all --slow [root_path]     (slow integration tests: 1, 4, 6)

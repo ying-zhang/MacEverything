@@ -1,10 +1,5 @@
 /// Tests for hint-based highlight range computation (TextHighlight.swift).
-/// Compile & run:
-///   swiftc -o test_highlight_ranges \
-///     -sdk $(xcrun --show-sdk-path) \
-///     MacEverything/App/HighlightHint.swift \
-///     MacEverything/App/TextHighlight.swift \
-///     tests/test_highlight_ranges.swift && ./test_highlight_ranges
+/// Compile & run: make test-swift-highlight (links the shared RE2 highlighter).
 
 import Foundation
 
@@ -225,19 +220,19 @@ func testRegexInvalid() {
     assertEqual(ranges.count, 0, "invalid regex should produce no ranges")
 }
 
-func testRegexNestedQuantifierRejected() {
-    print("  test: regex safety — nested quantifiers are rejected")
+func testRegexNestedQuantifierRE2() {
+    print("  test: regex safety — nested quantifiers use RE2")
     let hint = HighlightHint(text: "((a+)+)+", matchMode: .regex)
     let ranges = computeRangesForHint(in: String(repeating: "a", count: 64) + "!", hint: hint)
-    assertEqual(ranges.count, 0, "nested quantifier should not reach ICU")
+    assertEqual(ranges.count, 1, "nested quantifier is safe with RE2")
 }
 
-func testRegexRepeatedAlternationRejected() {
-    print("  test: regex safety — repeated alternation is rejected")
+func testRegexRepeatedAlternationRE2() {
+    print("  test: regex safety — repeated alternation uses RE2")
     for pattern in ["(a|ab)+", "(a|aa)+"] {
         let hint = HighlightHint(text: pattern, matchMode: .regex)
         let ranges = computeRangesForHint(in: String(repeating: "a", count: 64) + "!", hint: hint)
-        assertEqual(ranges.count, 0, "repeated alternation should not reach ICU: \(pattern)")
+        assertEqual(ranges.count, 1, "repeated alternation is safe with RE2: \(pattern)")
     }
     for (pattern, text) in [("(foo|bar)+", "foobarfoo"), ("(a|b)+", "ababab"), ("(ab|cd)+", "abcdabcd")] {
         let hint = HighlightHint(text: pattern, matchMode: .regex)
@@ -365,6 +360,31 @@ func testMixedModes() {
     assertEqual(o[1].1, 9, "123 to 9")
 }
 
+func testRegexUnicodeEmptyAndBounds() {
+    let text = "前🙂中文_中文"
+    let unicode = computeRangesForHint(in: text, hint: HighlightHint(text: "中文", matchMode: .regex))
+    assertEqual(unicode.map { String(text[$0]) }, ["中文", "中文"], "UTF-8 offsets map to Swift indices")
+    let empty = computeRangesForHint(in: "🙂a", hint: HighlightHint(text: "^|a", matchMode: .regex))
+    assertEqual(empty.map { String("🙂a"[$0]) }, ["a"], "zero-width matches advance safely over Unicode")
+    assertEqual(computeRangesForHint(in: "aaa", hint: HighlightHint(text: "^a", matchMode: .regex)).count,
+                1, "anchors retain original input after the first match")
+    assertEqual(computeRangesForHint(in: "aaaa", hint: HighlightHint(text: #"(a)\1"#, matchMode: .regex)).count,
+                0, "RE2 rejects backreferences consistently with search")
+    let start = Date()
+    for pattern in ["(a+)+$", "(a|aa)+$", "a*a*a*a*a*a*b"] {
+        assertEqual(computeRangesForHint(in: String(repeating: "a", count: 32000) + "!",
+                                        hint: HighlightHint(text: pattern, matchMode: .regex)).count,
+                    0, "pathological nonmatch completes: \(pattern)")
+    }
+    assertEqual(Date().timeIntervalSince(start) < 2, true, "pathological input stays responsive")
+    assertEqual(computeRangesForHint(in: String(repeating: "a", count: 1000),
+                                    hint: HighlightHint(text: "a", matchMode: .regex)).count,
+                256, "per-row highlight count is bounded")
+    assertEqual(computeRangesForHint(in: "abc", hint: HighlightHint(text: String(repeating: "a", count: 1025),
+                                                                  matchMode: .regex)).count,
+                0, "oversized patterns disable highlighting")
+}
+
 // ---------------------------------------------------------------------------
 // Entry point
 // ---------------------------------------------------------------------------
@@ -389,12 +409,13 @@ struct TestRunner {
         testGlobMatch()
         testGlobMultipleLiterals()
         testGlobAllWild()
+        testRegexUnicodeEmptyAndBounds()
         testRegexMatch()
         testRegexCaseInsensitive()
         testRegexCaseSensitive()
         testRegexInvalid()
-        testRegexNestedQuantifierRejected()
-        testRegexRepeatedAlternationRejected()
+        testRegexNestedQuantifierRE2()
+        testRegexRepeatedAlternationRE2()
         testRegexEscapesAndCharacterClassesRemainValid()
         testWholeWordMatch()
         testWholeWordNoPartial()

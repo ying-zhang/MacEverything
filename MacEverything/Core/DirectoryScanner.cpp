@@ -442,7 +442,6 @@ void DirectoryScanner::scanDirectory(const std::string& dirPath, dev_t rootDev,
             off_t datalength = 0;
             if (returned.fileattr & ATTR_FILE_DATALENGTH) {
                 memcpy(&datalength, field, sizeof(off_t));
-                field += sizeof(off_t);
             }
 
             // Skip entries with errors

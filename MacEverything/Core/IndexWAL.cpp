@@ -114,7 +114,10 @@ bool IndexWAL::open(const std::string& walPath) {
         existingSize = static_cast<size_t>(end);
         if (existingSize > 0) {
             uint32_t magic = 0, version = 0;
-            rewind(existing);
+            if (fseek(existing, 0, SEEK_SET) != 0) {
+                fclose(existing);
+                return false;
+            }
             bool compatible = existingSize >= 2 * sizeof(uint32_t) &&
                 fread(&magic, sizeof(magic), 1, existing) == 1 &&
                 fread(&version, sizeof(version), 1, existing) == 1 &&
@@ -279,7 +282,11 @@ std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath, size_t* vali
         magic == kMagic && version == kVersion;
     if (!hasHeader) {
         // Legacy WAL without header — try reading from the beginning
-        fseek(f, 0, SEEK_SET);
+        if (fseek(f, 0, SEEK_SET) != 0) {
+            fclose(f);
+            if (validBytes) *validBytes = 0;
+            return entries;
+        }
     }
     size_t lastValidOffset = hasHeader ? 2 * sizeof(uint32_t) : 0;
 
@@ -307,7 +314,7 @@ std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath, size_t* vali
 
         // Read and verify CRC32
         long endPos = ftell(f);
-        if (endPos < 0) break;
+        if (endPos < startPos) break;
         size_t entryLen = static_cast<size_t>(endPos - startPos);
 
         uint32_t storedCRC;
@@ -316,9 +323,9 @@ std::vector<WALEntry> IndexWAL::readAll(const std::string& walPath, size_t* vali
         // Re-read entry bytes for CRC computation
         std::vector<uint8_t> rawBuf(entryLen);
         long afterCRC = ftell(f);
-        fseek(f, startPos, SEEK_SET);
+        if (afterCRC < 0 || fseek(f, startPos, SEEK_SET) != 0) break;
         if (fread(rawBuf.data(), 1, entryLen, f) != entryLen) break;
-        fseek(f, afterCRC, SEEK_SET);
+        if (fseek(f, afterCRC, SEEK_SET) != 0) break;
 
         uint32_t computedCRC = crc32(rawBuf.data(), rawBuf.size());
         if (computedCRC != storedCRC) {

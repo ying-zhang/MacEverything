@@ -1,6 +1,6 @@
 # MacEverything 项目说明文档
 
-> 从零开始理解 MacEverything 的完整指南
+> 当前源码架构与开发指南。可下载安装包以 [GitHub Releases](https://github.com/ying-zhang/MacEverything/releases) 为准；本文的源码能力不代表已发布版本包含全部功能。
 
 ## 目录
 
@@ -35,7 +35,7 @@ MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Wind
 
 ## 2. 架构总览
 
-当前发布架构由 GUI 进程持有唯一的 `ServiceEngine`。关闭搜索窗口不会退出应用；应用继续在菜单栏运行并维护索引、FSEvents、HTTP API、CLI 和 MCP 服务。只有用户明确退出应用时才停止引擎。
+当前源码架构由 GUI 进程持有唯一的 `ServiceEngine`。关闭搜索窗口不会退出应用；应用继续在菜单栏运行并维护索引、FSEvents、HTTP API、CLI 和 MCP 服务。只有用户明确退出应用时才停止引擎。
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -109,9 +109,9 @@ MacEverything 是 macOS 平台上的超快文件搜索工具，灵感来自 Wind
 #### 3.2.1 核心数据结构
 
 ```
-FileRecord (14 bytes + strings)
+FileRecord（输入/输出结构，内部不逐条存放此对象）
 ├── name: string       // 文件名（如 "main.cpp"）
-├── path: string       // 父目录路径（加载后被 PathTable 替代，string 被释放）
+├── path: string       // 父目录路径（导入后驻留到 pathPool_）
 ├── type: uint8_t      // 0=墓碑, 1=文件, 2=目录, 3=符号链接, 5=App Bundle
 ├── size: uint64_t     // 文件大小（字节）
 ├── modTime: time_t    // 最后修改时间（秒级时间戳）
@@ -119,29 +119,18 @@ FileRecord (14 bytes + strings)
 └── devId: int32_t     // ATTR_CMN_DEVID
 ```
 
-**记录存储**：
-- `records_`：`vector<FileRecord>`，平坦数组，下标即为 recordIndex
-- `lowerNames_`：`vector<string>`，并行数组，每个元素是对应记录的小写文件名
-- `pathIndices_`：`vector<uint32_t>`，并行数组，每个元素是对应记录在 PathTable 中的路径索引
-- `pathIndex_`：`unordered_map<string, uint32_t>`，全路径 → recordIndex 的映射表，提供 O(1) 的路径查找
+**内部记录存储（SoA）**：
+- `origNamePool_` / `namePool_`：`StringPool`，原始文件名和小写文件名。
+- `pathPool_`：去重的父目录字符串池；`pathIndices_` 为每条记录保存一个 4 字节路径索引。
+- `types_`、`sizes_`、`modTimes_`、`inodes_`、`devIds_`：并行的定长数组，共用 recordIndex；`type=0` 表示墓碑。
+- `pathLookup_` / `lowerPathLookup_`：目录路径到字符串池索引的查找表，小写路径在需要时计算。
+- `pathIndex_`：小写完整路径的 64 位哈希到 recordIndex 的映射；`pathIndexCollisions_` 单独处理碰撞。
 
-**PathTable（路径字符串驻留表）**：
-```
-┌─────────────────────────────────┐
-│ PathTable                       │
-│ paths_: ["/usr/bin", "/usr/lib",│
-│          "/home/user/Desktop"]  │
-│ lookup_: {"/usr/bin"→0,         │
-│           "/usr/lib"→1, ...}    │
-│                                 │
-│ 数百万文件共享约数万个目录路径   │
-│ 每条记录仅存储 4 字节的索引     │
-└─────────────────────────────────┘
-```
+`FileRecord` 用于扫描、导入和结果导出；`PathTable` 保留兼容快照接口，当前存储以 `StringPool` 和列数组为准。多个文件共用驻留后的目录路径，避免每条记录重复存储长路径。
 
 #### 3.2.2 Trigram 倒排索引
 
-**核心思想**：将每个文件名拆分为所有连续 3 字符子串（trigram），建立从 trigram 到记录索引列表的倒排映射。
+**核心思想**：将每个文件名拆分为所有连续 3 字节子串（trigram），建立从 trigram 到记录索引列表的倒排映射。
 
 ```
 例：文件名 "readme.txt"
@@ -163,13 +152,13 @@ FileRecord (14 bytes + strings)
 pathTrigramIndex_: trigram → sorted vector<pathIdx>
 pathIdxToRecords_: pathIdx → sorted vector<recordIdx>
 ```
-路径索引利用 PathTable 的去重特性——约 80,000 个唯一路径远少于数百万条记录，避免了路径 trigram 的大量重复。
+路径索引利用 pathPool_ 的去重特性——约 80,000 个唯一路径远少于数百万条记录，避免了路径 trigram 的大量重复。
 
 #### 3.2.3 搜索算法
 
-`query()` 方法采用两阶段搜索：
+`query()` 根据查询类型、候选规模和索引可用性选择倒排索引或扫描：
 
-**Phase 1 — Trigram 加速（关键词 ≥ 3 字符，非 glob）**：
+**文件名 Trigram 候选（关键词至少 3 字节）**：
 1. 从关键词提取所有 trigram
 2. 在 `nameTrigramIndex_` 中查找每个 trigram 的 posting list
 3. 按 posting list 长度排序（最短优先）
@@ -181,10 +170,10 @@ pathIdxToRecords_: pathIdx → sorted vector<recordIdx>
 posting-list 求交统一由 `PostingListIntersection.h` 处理：尺寸接近时使用低开销
 双指针标量合并，列表长度比达到 32:1 时切换到 libc++ 的不均衡列表快速路径。
 
-**Phase 2 — 路径补充扫描**：
-1. 通过 `dispatch_apply`（GCD）并行线性扫描全部记录
-2. 检查关键词是否出现在路径中（而非文件名）
-3. 合并 Phase 1 和 Phase 2 结果
+**路径匹配与扫描回退**：
+1. 普通词同时尝试文件名和路径 trigram；路径候选通过 `pathIdxToRecords_` 展开并与文件名候选合并，不能遗漏仅路径命中的记录。
+2. 多词查询可选择更小的候选集，再验证其余条件；路径候选过大或索引不适用时，使用自适应并行扫描。
+3. 不改变匹配语义：每个普通词都可以在文件名或完整路径中命中。
 
 **结果排序**（4 级相关度）：
 | 优先级 | 匹配类型 | 示例（搜索 "readme"） |
@@ -194,9 +183,11 @@ posting-list 求交统一由 `PostingListIntersection.h` 处理：尺寸接近�
 | 2 | 文件名包含匹配 | `my-readme-file.txt` |
 | 3（最低） | 仅路径匹配 | `/readme-project/config.json` |
 
+正则查询及结果正则高亮均使用 RE2；高亮通过 `RegexHighlight.h/.cpp` 的 C 接口返回 UTF-8 字节区间，再映射为 Swift 字符串区间。高亮有模式长度、文本长度、编译内存和匹配条数上限；超限只停用高亮，不改变搜索结果。
+
 同级内按完整路径长度升序（短路径优先），路径长度也相同则按记录号升序。扫描时每个线程只保留最好的 `maxResults` 条（缓冲区达到 2K 后用 `nth_element` 截断），合并后再 `partial_sort`。普通子串查询会另存全部命中记录号；下一次能证明是收窄的输入只重验这批记录。OR、NOT、通配符、正则、过滤器和索引变更都不复用。
 
-**短关键词和 glob 模式**：关键词 < 3 字符或包含 `*`/`?` 时，无法使用 trigram 索引，退化为并行线性扫描。
+**短关键词和 Glob**：不足三字节的关键词通常使用扫描；Glob 会尝试从字面片段中提取 trigram，无可用候选或选择性不足时再扫描。
 
 #### 3.2.4 增量变更
 
@@ -216,7 +207,7 @@ posting-list 求交统一由 `PostingListIntersection.h` 处理：尺寸接近�
 Phase 1 [shared_lock]：快照当前活跃记录（仅复制非墓碑记录）
                         ↓
 Phase 2 [无锁]        ：在副本上构建新的记录数组、trigram 索引、
-                        PathTable、pathIndex_（耗时最长，不阻塞查询）
+                        StringPool、pathIndex_（耗时最长，不持有引擎锁）
                         ↓
 Phase 3 [unique_lock] ：原子交换新旧数据，重放 Phase 2 期间的变更
 ```
@@ -255,9 +246,11 @@ Phase 3 [unique_lock] ：原子交换新旧数据，重放 Phase 2 期间的变�
 - 串行 dispatch queue：保证事件处理顺序
 
 **事件处理**（在 `ServiceEngine+FSEvents.cpp` 中）：
-- 事件分类为 create / modify / remove
-- 应用到 SearchEngine + WAL
-- `kFSEventStreamEventFlagMustScanSubDirs`（日志截断）触发子树全量重扫
+- 普通文件创建、修改、删除按文件更新 SearchEngine、WAL 和内容索引，不因一次文件保存重扫整目录。
+- 单边重命名在生命周期锁外核对文件身份与新旧路径；仍存在的硬链接保留。目录删除、移动与重命名需要协调后代记录。
+- `kFSEventStreamEventFlagMustScanSubDirs` 触发事件目录自身的子树重扫，不扩大到父目录。
+- 重扫保留目录自身的已有记录，并遵循隐藏目录、排除规则、App 包和显式嵌套根的扫描规则。
+- 路径映射统一配置路径与真实路径拼写；根边界校验拒绝 `../` 越界。EACCES/EIO 等临时错误保留原索引，不误判为删除。
 
 **Rescan 防抖**：
 - 5 秒防抖延迟（`kRescanDebounceDelaySec`）
@@ -328,7 +321,7 @@ shutdown()
 | 步骤 | 操作 | 复杂度 |
 |------|------|--------|
 | 1 | 并行小写化（`dispatch_apply`） | O(N·L)，L = 平均文件名长度 |
-| 2 | PathTable 构建（路径驻留） | O(N)，每条记录一次哈希查找 |
+| 2 | StringPool 构建（名称和路径驻留） | O(N)，每条记录一次哈希查找 |
 | 3 | pathIndex_ 构建（全路径映射） | O(N)，每条记录一次哈希插入 |
 | 4 | Trigram 倒排索引构建 | O(N·L)，提取每个文件名的所有 trigram |
 | 5 | 路径 Trigram 索引构建 | O(P·Lp)，P = 唯一路径数（约数万），Lp = 平均路径长度 |
@@ -339,23 +332,23 @@ shutdown()
 
 ### 4.3 查询性能
 
-#### 4.3.1 Trigram 路径（关键词 ≥ 3 字符）
+#### 4.3.1 Trigram 路径（关键词 ≥ 3 字节）
 
 | 阶段 | 操作 | 复杂度 |
 |------|------|--------|
 | Trigram 提取 | 从关键词生成 trigram | O(Q)，Q = 关键词长度 |
 | Posting list 查找 | 按最短列表优先排序 | O(T·log T)，T = trigram 数（≤ Q-2） |
-| 列表交集 | 迭代最短列表 | O(min(k1, k2, ...))，ki = posting list 长度 |
+| 列表交集 | 根据列表长度比分别合并或跳跃查找 | 耗时取决于各 posting list 长度及分布 |
 | 子串验证 | 每个候选做子串匹配 | O(C·L)，C = 候选数，L = 文件名长度 |
-| Phase 2 路径扫描 | 并行线性扫描 | O(N/P)，P = 并行度 |
-| 排序 | 线程内有界保留 + partial_sort | O(K·log K)，K = maxResults；匹配本身仍要看完候选 |
+| 路径匹配 | 路径候选展开与验证，必要时扫描 | 取决于候选规模；最坏遍历全部记录 |
+| 排序 | 线程内有界保留 + partial_sort | 输出最多 K 条；匹配和筛选仍需处理全部候选 |
 
 **关键路径优化**：
-- `__builtin_prefetch`：提前 4 条预取 `records_[]` 数据，隐藏随机访问延迟
+- `__builtin_prefetch`：提前预取名称池与记录列数据，隐藏随机访问延迟
 - `ReusableBitmap`：线程局部位图，O(dirty_count) 重置而非 O(N) 的 memset
 - `queryGeneration_`：原子计数器，每 1024 次迭代检查，支持快速用户输入取消旧查询
 
-#### 4.3.2 线性扫描路径（关键词 < 3 字符或 glob 模式）
+#### 4.3.2 扫描回退（短词、低选择性或索引不适用）
 
 | 操作 | 复杂度 |
 |------|--------|
@@ -364,7 +357,7 @@ shutdown()
 
 #### 4.3.3 典型查询延迟
 
-以下数据基于约 500 万条记录的实测基准（来自 `test_query_perf.h` 和 benchmark）：
+以下为历史基准中约 500 万条记录的参考数据（来自 `test_query_perf.h` 和 benchmark），不是本轮修复后的重新测量，也不作为所有设备的延迟保证：
 
 | 查询类型 | 典型延迟 | 说明 |
 |----------|----------|------|
@@ -384,43 +377,23 @@ SLOW_QUERY keyword="xxx" lock_wait=0.1ms trigram=0.5ms phase1=45ms
 
 ### 4.4 持久化性能
 
-#### 4.4.1 索引加载
+| 操作 | 当前实现与开销 |
+|------|----------------|
+| 基础索引加载 | 读取 `index.v6` 中的 SoA 列与字符串池，校验头和各节 CRC；随后回放 WAL |
+| 延迟构建 | 基础记录先可搜索，trigram 等辅助索引在 Phase 2 构建 |
+| WAL 追加 | 每条变更序列化并追加；默认每 64 条 fsync；单段上限 50MB |
+| 基础快照刷新 | 全量序列化快照到临时文件，检查写入、定位、flush、fsync 和 close，然后原子替换 |
+| 旧格式迁移 | 尝试读取兼容的旧格式并写为 v6；不支持或损坏的格式需要重建 |
+| 压缩整理 | 快照活跃记录、在副本构建、短暂独占交换，再重写 v6 文件 |
 
-| 步骤 | 操作 | 复杂度/特点 |
-|------|------|------------|
-| 页面加载 | 读取 `.pages` + `.ptable` 文件 | O(N/1024) 次页面 CRC32 校验 |
-| WAL 重放 | 逐条应用 WAL 变更 | O(E)，E = WAL 条目数，每条 O(1) 查找 |
-| 自动迁移 | v3 → v4 格式（仅首次） | O(N) 一次性 |
-
-#### 4.4.2 增量写入
-
-| 操作 | 复杂度/特点 |
-|------|------------|
-| WAL 追加 | O(1) 每条变更（CRC32 计算 + 追加写入） |
-| WAL fsync | 每 64 条批量同步（分摊 fsync 开销） |
-| 脏页刷新 | O(D·1024)，D = 脏页数（仅写修改过的页面） |
-| 页表重写 | 原子写入（tmp + fsync + rename）|
-| WAL 交换 | 无缝切换：打开新 WAL → 原子交换 → 刷页面 → 重命名 |
-
-#### 4.4.3 Full Compaction
-
-| 阶段 | 操作 | 阻塞查询？ |
-|------|------|-----------|
-| 快照活跃记录 | shared_lock 下复制 | 是（短暂） |
-| 构建压缩数据 | 无锁重建所有结构 | 否 |
-| 原子交换 | unique_lock 下替换 | 是（短暂） |
-| 重写页面文件 | tmp + rename | 否 |
-
-**自适应定时器**：30s - 600s 动态调整，基于脏页比例和 WAL 大小：
-- WAL 超过 2MB → 缩短到最小 30s
-- 无脏页 → 延长到最大 600s
+当前基础索引不是“只写脏页”的分页持久化。脏页统计仍参与刷新间隔计算，但每次基础快照刷新会重写完整 v6 文件；WAL 负责承接两次快照之间的增量。定时器按变更规模和 WAL 大小自适应调整。
 
 ### 4.5 内存优化
 
 | 优化手段 | 效果 |
 |----------|------|
-| **PathTable 路径驻留** | 数百万条记录共享约数万个路径字符串，每条记录仅存 4 字节索引 |
-| **FileRecord.path 释放** | `loadRecords()` 后每条记录的 `path` 字段被 `clear()` + `shrink_to_fit()`，释放堆内存 |
+| **StringPool 路径驻留** | 数百万条记录共享约数万个路径字符串，每条记录仅存 4 字节索引 |
+| **SoA 列存储** | 输入的 FileRecord 转换为字符串池和定长列，避免长期保留逐条 string 对象 |
 | **type 字段** | `uint8_t`（1 字节）而非 `int`（4 字节） |
 | **thread_local 位图** | 避免每次 trigram 提取分配 2MB 位图，且仅清理脏位（O(dirty) vs O(16M)） |
 | **每线程扫描缓冲区** | 每线程固定 1MB，避免重复分配 |
@@ -436,7 +409,7 @@ SLOW_QUERY keyword="xxx" lock_wait=0.1ms trigram=0.5ms phase1=45ms
 
 ```bash
 # 编译
-clang++ -std=c++20 -O2 MacEverything/Core/*.cpp benchmark.cpp -o benchmark
+make benchmark  # 使用 Makefile 中的 RE2、Abseil 和系统框架配置
 
 # 运行（默认扫描 /）
 ./benchmark [root_path]
@@ -475,11 +448,11 @@ App 启动
 ```
 App 启动
   → ServiceEngine.startIncremental()
-    → IndexPersistence.load()               // 加载页面索引 + WAL 重放
-    → engine.loadRecords(cached_records)    // 从缓存恢复
-    → startMonitoring()                     // 开启 FSEvents
-    → FSEvents 历史回放（lastEventId → now） // 追赶离线期间的变更
-    → backgroundSyncEngine()                // 后台验证与同步
+    → IndexPersistence.load()               // 优先 v6 Flat SoA，回放 WAL
+    → 缓存记录先可搜索，后台完成 Phase 2 索引
+    → backgroundSyncEngine()                // 回放本地历史事件；网络目录轮询协调
+    → startMonitoring(replayResumeId)        // 成功回放后沿用已交付水位
+      （回放失败则后台全扫，完成后从扫描起点继续监听）
     → startContentIndexing()
     → startHttpServer(19860)
 ```
@@ -489,7 +462,8 @@ App 启动
 ```
 文件系统变更
   → FSEvents 回调（300ms 合并延迟）
-    → applyFSEvents()
+    → applyOrDeferEvents()                   // 核对生命周期与快照编号
+      → applyFSEvents()                     // 普通文件走单条变更
       → engine.addRecord() / removeByPath() / updateByPath()
       → WAL.append()
       → contentIndex.updateContentForPath()
@@ -506,8 +480,7 @@ App 启动
   → SearchViewModel（80ms 去抖动，内容搜索 300ms）
     → MacSearchBridge.queryResults()
       → engine.query(keyword, maxResults)
-        → Phase 1: trigram 交集 + 验证
-        → Phase 2: 路径补充扫描
+        → 文件名与路径候选合并、验证；必要时回退扫描
         → 有界 Top-K + 记录号同分；普通子串可复用上一轮完整候选
       → forEachRecordWithPath()（单次 shared_lock 批量读取）
     → UI 更新结果列表
@@ -517,80 +490,37 @@ App 启动
 
 ## 6. 持久化系统
 
-### 6.1 文件格式
+### 6.1 当前文件与兼容格式
 
 ```
 ~/Library/Caches/com.maceverything.app/
-├── index.pages          # 页面数据文件（magic "MEPG"，追加写入）
-├── index.ptable         # 页表文件（magic "MEPT"，原子重写）
-├── index.wal            # 写前日志（magic "WAL1"，CRC32 校验）
-├── index.bin            # v3 遗留格式（仅用于迁移）
+├── index.v6             # 当前基础索引（magic "MEV6"，SoA + 字符串池）
+├── index.wal            # WAL 基础名称，另有轮转段；恢复时按顺序回放
+├── index.pages          # 旧分页数据，仅用于兼容读取/迁移
+├── index.ptable         # 旧分页页表，仅用于兼容读取/迁移
+├── index.bin            # 更早的索引格式，仅用于兼容读取/迁移
 ├── content_index.bin    # 内容索引（magic "MECI" v2）
 ├── content_index.wal    # 内容 WAL（magic "CWL1"）
 └── maceverything.lock   # 单实例锁（flock）
 ```
 
-### 6.2 页面格式（v4）
+### 6.2 v6 基础快照
 
-```
-index.pages 文件结构:
-┌──────────────────────────────────┐
-│ Magic: "MEPG" (4 bytes)         │
-│ Version: 1 (4 bytes)            │
-├──────────────────────────────────┤
-│ Page 0 数据 (≤1024 条记录序列化) │
-│ Page 1 数据                      │
-│ ...                              │
-│ Page N 数据（追加写入，旧版本     │
-│           成为"死空间"）          │
-└──────────────────────────────────┘
+`FlatIndexWriter` 写入一个文件：64 字节头、每项 24 字节的节表，以及 10 个数据节。数据节分别存放原始名称、小写名称、目录路径池、路径索引、类型、大小、修改时间、inode、设备号和元数据。头与各节均有 CRC；读取时校验大小、偏移和记录列之间的一致性。早期 v6 文件多出的 lowerPathPool 节保留读取兼容，当前不再写出。
 
-index.ptable 文件结构:
-┌──────────────────────────────────┐
-│ Magic: "MEPT" (4 bytes)         │
-│ Version: 1 (4 bytes)            │
-│ PageCount: uint32_t             │
-│ 元数据块 (IndexMetadata)         │
-├──────────────────────────────────┤
-│ PageEntry[0]: offset(8) +       │
-│   byteLength(4) + recordCount(2)│
-│   + CRC32(4) = 18 bytes         │
-│ PageEntry[1]: ...               │
-│ ...                              │
-└──────────────────────────────────┘
-```
-
-**写入策略**：
-- 正常刷新：仅追加脏页到 `.pages`，原子重写 `.ptable`
-- 死空间超过 50%（`kDeadSpaceRewriteRatio`）时，全量重写两个文件
-- 使用 `F_NOCACHE`（`fcntl`）旁路内核页缓存，避免大量顺序写入污染缓存
+写入先生成 `.tmp`，检查每次写入和文件定位，完成 `fflush`、`fsync`、`fclose` 后再 rename，并同步父目录。遇错不继续处理后面的数据节。替换前的写入失败会删除临时文件并保留原快照；若替换后的父目录同步失败，则返回失败并保留 WAL 供恢复，不能把它等同于“旧快照仍在”。
 
 ### 6.3 WAL（写前日志）
 
-```
-WAL 条目格式:
-┌────────────────────────────────┐
-│ Op: uint8_t (Add/Remove/Update)│
-│ PathLen: uint32_t              │
-│ Path: [PathLen bytes]          │
-│ Record 字段 (name, type, etc.) │
-│ CRC32: uint32_t                │
-└────────────────────────────────┘
-```
+WAL 由带版本的头和连续条目组成。条目保存操作类型、路径、记录字段及 CRC32，正常追加先 flush，默认每 64 条 fsync，单段硬上限为 50MB。恢复时按段顺序读取，只回放完整且校验有效的条目，遇到损坏或截断停止该段。
 
-- **批量 fsync**：每 64 条（`syncInterval_`）做一次 fsync，分摊开销
-- **大小限制**：50MB 硬上限
-- **CRC32**：ISO 3309 多项式（`0xEDB88320`），函数局部静态查找表（线程安全）
+### 6.4 快照与 WAL 轮转
 
-### 6.4 WAL 交换协议
+1. 创建新的 WAL 段，并将引擎后续变更切换到新段。
+2. 从引擎取得快照，完整重写 v6 基础索引。
+3. 只有基础索引成功写入后，才清理旧 WAL 段。
+4. 基础写入失败时保留各段；下次先重试基础写入，避免每次定时器触发都再新建一段。按路径幂等回放允许恢复时重新应用已包含在基础快照中的变更。
 
-```
-1. 创建新 WAL 文件（walPath_.new）
-2. 原子切换引擎到新 WAL（detachWAL → attachWAL(new)）
-3. 刷新脏页到 pages 文件
-4. 将新 WAL 重命名覆盖旧 WAL
-→ 确保切换窗口中的变更不丢失
-```
 
 ---
 
@@ -747,7 +677,7 @@ scripts/build-release-dmgs.sh
 make test          # 快速回归，包含 C++、Swift、Bridge、签名和文档检查
 make test-slow     # 慢速测试（含全盘扫描）
 make test-asan     # AddressSanitizer
-make test-tsan     # ThreadSanitizer
+make test-tsan     # ThreadSanitizer（默认 Part 5）
 make benchmark     # 性能基准测试
 ```
 
@@ -763,7 +693,7 @@ make benchmark     # 性能基准测试
 - 集成测试：端到端扫描+搜索、FSEvents、ServiceEngine 生命周期
 - 性能测试：500K/10M 记录查询基准、WAL 批量 fsync、并行 snippet 生成
 - 协议测试：MCP JSON-RPC 2.0（进程外子进程测试）
-- 快速/慢速分类，快速测试保持 < 5 秒
+- 快速/慢速分类；快速集跳过基准和压力测试，耗时随设备与模块数量变化
 
 ---
 
@@ -793,7 +723,7 @@ find MacEverything -type f \( -name '*.cpp' -o -name '*.h' -o -name '*.mm' -o -n
 | `kRecordsPerPage` | 1024 | 每页记录数 |
 | `kCompactThreshold` | 100 | WAL 条目数最小刷新阈值 |
 | `kTombstoneCompactRatio` | 0.25 | 墓碑占比 > 25% 触发全量压缩 |
-| `kDeadSpaceRewriteRatio` | 0.5 | 死空间 > 50% 触发文件重写 |
+| `kDeadSpaceRewriteRatio` | 0.5 | 旧分页写入器的历史阈值，非当前 v6 刷新策略 |
 | `kWALSizeFlushThreshold` | 2MB | WAL 大小超此值缩短刷新间隔 |
 | `kBaseIntervalSec` | 300s | 自动 compaction 基础间隔 |
 | `kMinIntervalSec` | 30s | 自动 compaction 最短间隔 |

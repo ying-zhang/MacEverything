@@ -21,11 +21,11 @@ class ReleaseVersionTests(unittest.TestCase):
         for directory in ("MacEverything", "docs/changelog", "scripts", "tests"):
             (self.root / directory).mkdir(parents=True)
         with (self.root / "MacEverything/Info.plist").open("wb") as stream:
-            plistlib.dump({"CFBundleShortVersionString": "1.10.20"}, stream)
+            plistlib.dump({"CFBundleShortVersionString": "1.11.15"}, stream)
         for version in VERSIONS.ALLOWED_VERSIONS:
             (self.root / f"docs/changelog/release-{version}.md").write_text(version)
         for name in ("README.md", "README_EN.md"):
-            (self.root / name).write_text("1.5.30 released; 1.10.20 pending")
+            (self.root / name).write_text("1.5.30 released; 1.11.15 released")
 
     def test_current_versions_pass(self):
         self.assertEqual(VERSIONS.audit(self.root), [])

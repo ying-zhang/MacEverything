@@ -4,7 +4,7 @@
 
 <h1 align="center">MacEverything</h1>
 
-<p align="center">最新正式版本：1.10.20 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+<p align="center">最新正式版本：1.11.15 · Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
 
 <p align="center">
   <b>macOS 极速文件搜索工具</b> — 在数百万文件中毫秒级定位任意文件。<br/>
@@ -55,7 +55,7 @@
 
 ### [Everything](https://www.voidtools.com/) 风格查询语法
 
-完整的 AST 解析器，支持 15+ 过滤器、布尔运算、glob 通配符、正则表达式。内置语法帮助窗口（**Cmd+?**）。
+完整的 AST 解析器，支持 15+ 过滤器、布尔运算、glob 通配符、正则表达式。内置语法帮助窗口（**Cmd+?**）；[官网提供完整语法参考](https://ying-zhang.cn/MacEverything/#syntax)。
 
 | 查询 | 说明 |
 |------|------|
@@ -66,7 +66,7 @@
 | `report pdf` | 同时匹配路径/文件名片段，如 `/Users/username/reports/xx.pdf` |
 | `config path:/usr` | `/usr` 下包含 "config" 的文件 |
 | `"exact phrase"` | 精确短语匹配 |
-| `foo OR bar` | 布尔 OR 运算 |
+| `foo \| bar` | 布尔 OR 运算 |
 | `case:Makefile` | 区分大小写搜索 |
 | `regex:^test_.*\.py$` | 正则表达式搜索 |
 | `type:folder node_modules` | 仅搜索目录 |
@@ -84,35 +84,37 @@
 
 | 过滤器 | 说明 | 示例 |
 |--------|------|------|
-| `ext:` | 文件扩展名 | `ext:swift,h` |
-| `size:` | 文件大小 | `size:>1mb`, `size:100kb-5mb` |
+| `ext:` | 文件扩展名 | `ext:swift;h` |
+| `size:` | 文件大小 | `size:>1mb`, `size:100kb..5mb` |
 | `type:` | 文件/目录 | `type:folder` |
 | `path:` | 路径包含 | `path:Downloads` |
 | `nopath:` | 路径排除 | `nopath:node_modules` |
-| `parent:` | 直接父目录 | `parent:src` |
+| `parent:` | 直接父目录完整路径相等 | `parent:/usr/local/src` |
 | `depth:` | 目录深度 | `depth:<3` |
 | `dm:` | 修改日期 | `dm:today`, `dm:>2024-01-01` |
-| `dc:` | 创建日期 | `dc:thisweek` |
-| `da:` | 访问日期 | `da:last7days` |
-| `len:` | 文件名长度 | `len:>50` |
+| `dc:` | 创建日期兼容前缀（目前按修改时间匹配） | `dc:thisweek` |
+| `da:` | 访问日期兼容前缀（目前按修改时间匹配） | `da:last7days` |
+| `len:` | 文件名 UTF-8 字节长度 | `len:>50` |
 | `case:` | 区分大小写 | `case:README` |
 | `regex:` | 正则表达式 | `regex:^test_` |
 | `ww:` | 全词匹配 | `ww:test` |
 | `wfn:` | 全文件名匹配 | `wfn:Makefile` |
 | `content:` / `infile:` | 内容搜索 | `infile:TODO` |
-| `audio:` `video:` `pic:` `doc:` `zip:` | 文件类型宏 | `audio:` = 所有音频文件 |
+| `audio:` `video:` `pic:` `doc:` `exe:` `zip:` | 文件类型宏 | `audio:` = 所有音频文件 |
 
 </details>
+
+正则使用 RE2；`regex:` 消费其后的全部文本，请将其他条件放在它之前。`wfn:` 匹配含扩展名的完整文件名；`parent:` 需要完整的父目录路径。日期长前缀为 `datemodified:`、`datecreated:`、`dateaccessed:`；后两者目前同样按修改时间匹配。
 
 ### 全文内容搜索
 
 输入 `infile:关键词` 搜索文件内容，结果附带关键词高亮上下文片段。基于 Trigram 索引加速，仅重新索引变更文件。可在「内容设置」中配置索引的文件类型和最大文件大小。
 
-### 实时同步，永不过时
+### 文件变化自动同步
 
-- **文件监控** — 基于 FSEvents 实时监听文件系统变更，新建、重命名、删除的文件立即出现在搜索结果中
+- **文件监控** — 基于 FSEvents 实时监听文件系统变更，增量同步新建、修改、重命名和删除；网络目录使用轮询协调
 - **USB 热插拔** — 插入 USB 设备后自动扫描并索引新文件，拔出后自动清理索引，无需重启应用
-- **两阶段即时启动** — 启动时先加载磁盘缓存（立即可搜），后台通过 FSEvents 增量追赶变更，搜索零等待
+- **两阶段即时启动** — 启动时先加载磁盘缓存（立即可搜），后台通过 FSEvents 增量追赶变更，先提供缓存结果，再同步磁盘变化
 - **焦点感知省电** — 窗口不在前台时暂停刷新，回到前台时批量追赶，几乎零后台 CPU 占用
 
 ### 交互细节
@@ -196,19 +198,11 @@ ln -sf /Applications/MacEverything.app/Contents/MacOS/mace ~/.local/bin/mace
 
 #### 发布状态与下载
 
-**1.10.20 已正式发布（2026-10-21，构建号 14）。** 安装后闪退问题已通过静态链接 RE2/Abseil 修复，并经用户异机启动验证。GitHub Releases、Homebrew Cask 和个人博客下载页同步提供 Apple Silicon 与 Intel 安装包；1.5.30 保留为历史正式版本。
+**当前正式版本：**1.11.15，提供 Apple Silicon 与 Intel 安装包。
 
-使用 Homebrew Cask 安装或升级：
+从 [v1.11.15 GitHub Release](https://github.com/ying-zhang/MacEverything/releases/tag/v1.11.15) 下载对应架构的 DMG：
 
-```bash
-brew tap ying-zhang/maceverything
-brew install --cask maceverything
-# 后续升级：brew upgrade --cask maceverything
-```
-
-也可以从 [Releases](https://github.com/ying-zhang/MacEverything/releases) 下载对应架构的 DMG：
-
-1. Apple Silicon 选择 `MacEverything-arm64.dmg`，Intel 选择 `MacEverything-x86_64.dmg`
+1. Apple Silicon 选择 [MacEverything-arm64.dmg](https://github.com/ying-zhang/MacEverything/releases/download/v1.11.15/MacEverything-arm64.dmg)，Intel 选择 [MacEverything-x86_64.dmg](https://github.com/ying-zhang/MacEverything/releases/download/v1.11.15/MacEverything-x86_64.dmg)
 2. 将 `MacEverything.app` 拖入「应用程序」文件夹
 3. 首次启动选择 **快速开始**（仅所选文件夹）或 **全盘搜索**（需要完全磁盘访问权限）
 4. 等待初始扫描完成（约 14 秒）
@@ -275,14 +269,14 @@ Release 构建和 GitHub Actions 使用相同的静态 RE2/Abseil 依赖，不�
 | **SearchEngine** | Trigram 倒排索引（name + path 双索引）+ 多词路径/文件名候选合并 + 竞争选择最优候选集 + SoA 列式过滤 |
 | **ContentIndex** | Trigram 全文倒排索引，FNV-1a 哈希增量更新，仅重新索引变更文件 |
 | **SIMDSearch** | ARM NEON 128-bit first-last byte 向量化匹配 + 2x 循环展开，单线程 11.5 GB/s |
-| **IndexPersistence** | WAL + CRC32 + 分页脏页刷写 + 原子 rename，COW 无阻塞压缩（锁持有 < 100ms） |
+| **IndexPersistence** | WAL + CRC32 + v6 SoA 基础快照 + 原子替换；COW 在副本上构建压缩数据 |
 | **FileSystemWatcher** | FSEvents + eventId 增量回放 + 日志截断检测自动子树重扫 |
-| **PathTable** | 路径字符串 intern 化 — 目录路径仅存 `uint32` 索引，百万文件节省 ~550MB |
+| **StringPool** | 名称和目录字符串驻留；目录去重后，每条记录仅存 `uint32` 路径索引 |
 | **QueryParser** | 完整 AST 管线：Tokenizer → FilterParser → Parser → QueryAST，30+ 过滤器关键词 |
 
 ### 基准测试
 
-测试环境：macOS Darwin 24.3.0，**540 万索引文件**，48 种查询类型：
+历史基准环境：macOS Darwin 24.3.0，**540 万索引文件**，48 种查询类型；以下数字不是本轮修复后的重新测量：
 
 #### 搜索延迟
 
@@ -316,13 +310,13 @@ Release 构建和 GitHub Actions 使用相同的静态 RE2/Abseil 依赖，不�
 |------|------|
 | `getattrlistbulk` | 单次系统调用批量获取文件属性 — 避免逐文件 `stat` |
 | Trigram 倒排索引 | 亚线性搜索：比线性扫描快 33x–308x |
-| 文件名/路径双索引 | 普通词同时检索文件名与完整路径，复用现有 Trigram 和 PathTable，不增加内容索引级别的磁盘占用 |
+| 文件名/路径双索引 | 普通词同时检索文件名与完整路径，复用现有 Trigram 和路径字符串池，不增加内容索引级别的磁盘占用 |
 | SoA 列式布局 | 缓存友好的内存访问模式，纯过滤查询 SIMD 批量判断 16 条记录 |
 | `__builtin_prefetch` | 预取距离 8，隐藏候选验证阶段的随机内存访问延迟 |
 | ARM NEON SIMD | 128-bit 向量化字符串匹配，2x 循环展开，逼近内存带宽上限 |
 | GCD 并行扫描 | Trigram 无法加速时启用多核线性扫描 |
 | StringPool 连续内存 | 文件名紧凑排列在单一 `char` 缓冲区，SIMD 友好 |
-| PathTable intern 化 | 目录路径仅存 `uint32` 索引 — 百万文件节省 ~550MB |
+| 路径字符串池 | 目录去重存储，每条记录仅保留 `uint32` 索引 |
 | v6 Flat SoA 两阶段加载 | 启动时先装载基础记录立即可搜，后台构建 Trigram、拼音、路径、扩展名、CJK bigram 和最近文件索引 |
 | Phase 2 索引可靠性保护 | 后台索引构建期间新增/更新记录先写入基础数据，索引完成时统一回放；内存不足时跳过 Phase 2，避免半成品索引 |
 | Unicode 查询归一化 | 对非 ASCII 查询在查询阶段尝试 NFC/NFD 变体，兼容 macOS 文件名表示且不维护第二份索引 |
@@ -336,19 +330,19 @@ Release 构建和 GitHub Actions 使用相同的静态 RE2/Abseil 依赖，不�
 | 多词组合评分 | 按 miss count（文件名未命中词数）+ match quality（精确/前缀/词界/子串）+ 路径长度三级排序，同分再按记录号，多词查询结果更精准 |
 | 连续输入候选复用 | 普通子串查询继续打字时，只在上一轮的全部命中里重验，不复用界面截断后的结果 |
 | 匹配阶段 Top-K | 每个线程只保留最好的 maxResults 条再合并，降低大命中查询的临时内存和排序开销 |
-| COW 无阻塞压缩 | 写时复制，压缩期间独占锁持有 < 100ms（原 30–60s） |
-| 分页增量持久化 | 仅写入脏页，典型 flush I/O 从 ~112MB 降至 KB 级 |
+| COW 压缩 | 在副本上构建压缩数据，交换时短暂持有独占锁 |
+| v6 快照与 WAL | 日常变更追加 WAL，刷新时完整重写基础快照；写入失败保留恢复日志 |
 
 ### 测试体系
 
-88 个 C++ 测试模块覆盖完整技术栈，另有 Swift 测试，支持 AddressSanitizer 和 ThreadSanitizer：
+C++ 模块测试覆盖完整技术栈，另有 Swift 和 Python 测试，支持 AddressSanitizer 和 ThreadSanitizer：
 
 ```bash
 make test          # 快速单元测试 + 桥接层 lint
 make test-slow     # 集成测试（全盘扫描、FSEvents、端到端）
 make test-all      # 全部测试
 make test-asan     # AddressSanitizer
-make test-tsan     # ThreadSanitizer
+make test-tsan     # ThreadSanitizer（默认 Part 5）
 ```
 
 覆盖范围：
@@ -373,7 +367,7 @@ MacEverything/
 │   ├── HttpServer         # 内嵌 REST API 服务器
 │   ├── SIMDSearch         # ARM NEON 向量化搜索
 │   ├── QueryAST/Parser    # 完整查询语言管线
-│   ├── PathTable          # 字符串 intern 表
+│   ├── StringPool         # 名称/路径字符串池（PathTable 保留兼容接口）
 │   └── ServiceEngine      # 生命周期编排
 ├── Bridge/                # Objective-C++ 桥接层
 │   └── MacSearchBridge    # C++ ↔ Swift 零开销互操作

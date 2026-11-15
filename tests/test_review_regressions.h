@@ -25,6 +25,28 @@ static bool engineHasFileName(ServiceEngine& service, const std::string& query,
     return false;
 }
 
+static bool startReviewService(ServiceEngine& service) {
+    auto completed = std::make_shared<std::atomic<bool>>(false);
+    service.startFullScan([completed](uint32_t, bool) {
+        completed->store(true, std::memory_order_release);
+    });
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+    while (std::chrono::steady_clock::now() < deadline) {
+        if (completed->load(std::memory_order_acquire) && service.startupCompletedForTests() &&
+            service.deferredDrainCountForTests() > 0) return true;
+        CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
+    }
+    return false;
+}
+
+static bool drainReviewMutations(ServiceEngine& service, const fs::path& root) {
+    auto drained = std::make_shared<std::atomic<bool>>(false);
+    service.removeSubtree((root / "zz-review-mutation-barrier").string(), [drained](uint32_t) {
+        drained->store(true, std::memory_order_release);
+    });
+    return waitForMainFlag(*drained, 20);
+}
+
 static void writeVolumeKindFile(const fs::path& file, const std::string& kind,
                                 const std::string& uuid, const std::string& indexedUuid,
                                 const std::string& volumePath) {
@@ -593,10 +615,320 @@ static void runReviewRegressionTests() {
         fs::remove_all(cache);
     }
 
-    // Rename is queued before a removal event. Both must run in that order,
-    // including when the drain is already on the mutation queue. The missing
-    // root keeps this scan from publishing a snapshot, which would drop the
-    // removal event instead of ordering it after the rename.
+    // Rescanning a parent must retain the parent's own searchable record.
+    // The scan root itself has no record, so deleting its direct child would
+    // not expose this regression.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_rescan_parent_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        const auto left = root / "left";
+        const auto right = root / "right";
+        fs::remove_all(cache);
+        fs::create_directories(left / "deleted" / "nested");
+        fs::create_directories(left / "moved");
+        fs::create_directories(right);
+        std::ofstream(left / "deleted" / "nested" / "gone.txt") << "gone";
+        std::ofstream(left / "moved" / "kept.txt") << "kept";
+        ServiceConfig config;
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+        ServiceEngine service(config);
+        const bool ready = startReviewService(service);
+        auto engine = service.safeEngine();
+        auto hasPath = [&](const fs::path& path) {
+            return engine && engine->indexForPath(path.string()) != UINT32_MAX;
+        };
+        check(ready && hasPath(left) && hasPath(right),
+              "Review: parent rescan starts with both parent records indexed");
+        fs::remove_all(left / "deleted");
+        service.queueWatcherEventsForTests({
+            {(left / "deleted").string(), kFSEventStreamEventFlagItemRemoved}
+        });
+        const bool removed = drainReviewMutations(service, root);
+        check(removed && hasPath(left) && !hasPath(left / "deleted" / "nested" / "gone.txt"),
+              "Review: deleting a nested directory preserves its indexed parent");
+        fs::rename(left / "moved", right / "moved");
+        service.queueWatcherEventsForTests({
+            {fs::canonical(right / "moved").string(), kFSEventStreamEventFlagItemRenamed}
+        });
+        const bool renamed = drainReviewMutations(service, root);
+        check(renamed && hasPath(left) && hasPath(right) &&
+              !hasPath(left / "moved") && !hasPath(left / "moved" / "kept.txt") &&
+              hasPath(right / "moved") && hasPath(right / "moved" / "kept.txt"),
+              "Review: directory rename preserves both parents and replaces descendant paths");
+        fs::rename(right / "moved", cache / "moved-out");
+        service.queueWatcherEventsForTests({
+            {(right / "moved").string(), kFSEventStreamEventFlagItemRenamed}
+        });
+        const bool movedOut = drainReviewMutations(service, root);
+        check(movedOut && hasPath(right) && !hasPath(right / "moved") &&
+              !hasPath(right / "moved" / "kept.txt") && !hasPath(cache / "moved-out" / "kept.txt"),
+              "Review: an old-path-only directory rename removes descendants moved outside the root");
+        // A root rename notification must reconcile inside the root, never
+        // scan its parent. Also reject lexical ../ escapes with hidden files
+        // enabled, so hidden-name pruning cannot accidentally hide the bug.
+        config.includeHidden = true;
+        service.updateConfig(config);
+        fs::create_directories(cache / "outside");
+        std::ofstream(cache / "outside" / "outside.txt") << "outside";
+        std::ofstream(root / "root-event.txt") << "discovered by root event";
+        service.queueWatcherEventsForTests({
+            {root.string(), kFSEventStreamEventFlagItemRenamed},
+            {(root / ".." / "outside").string(), kFSEventStreamEventFlagMustScanSubDirs}
+        });
+        const bool rootDrained = drainReviewMutations(service, root);
+        check(rootDrained && hasPath(root / "root-event.txt") &&
+              !hasPath(cache / "outside" / "outside.txt"),
+              "Review: root events stay inside the configured root and reject ../ escapes");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // Both filename and content metadata survive non-missing lstat errors.
+    // Fault injection is per service and also covers the directory preflight:
+    // an inaccessible directory must not trigger a destructive parent rescan.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_event_stat_errors_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        const auto dir = root / "directory";
+        const auto file = dir / "keep.txt";
+        fs::remove_all(cache);
+        fs::create_directories(dir);
+        std::ofstream(file) << "original searchable content";
+        ServiceConfig config;
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+        ServiceEngine service(config);
+        const bool ready = startReviewService(service);
+        // Enable event content maintenance after the scan, and seed content
+        // synchronously so background content startup cannot mask a removal.
+        config.contentIndexingEnabled = true;
+        service.updateConfig(config);
+        auto engine = service.safeEngine();
+        auto content = service.safeContentIndex();
+        content->setExtensions({"txt"});
+        const auto index = engine->indexForPath(file.string());
+        const auto dirIndex = engine->indexForPath(dir.string());
+        const auto original = engine->getRecord(index);
+        content->indexFile(index, file.string(), original.modTime);
+        ContentFileInfo before {};
+        check(ready && index != UINT32_MAX && dirIndex != UINT32_MAX &&
+              content->getFileInfo(index, before),
+              "Review: stat-error test starts with filename and content metadata");
+        std::ofstream(file) << "changed content with a different length";
+        for (const int error : {EACCES, EIO}) {
+            service.setEventLstatErrorForTests(error);
+            service.queueWatcherEventsForTests({
+                {file.string(), kFSEventStreamEventFlagItemModified},
+                {dir.string(), kFSEventStreamEventFlagItemRemoved}
+            });
+            const bool drained = drainReviewMutations(service, root);
+            ContentFileInfo after {};
+            check(drained && engine->indexForPath(file.string()) == index &&
+                  engine->indexForPath(dir.string()) == dirIndex &&
+                  engine->getRecord(index).size == original.size &&
+                  content->getFileInfo(index, after) && after.contentHash == before.contentHash &&
+                  after.lastModTime == before.lastModTime,
+                  error == EACCES ? "Review: EACCES preserves file, directory, and content metadata"
+                                  : "Review: EIO preserves file, directory, and content metadata");
+        }
+        service.setEventLstatErrorForTests(0);
+        service.queueWatcherEventsForTests({{file.string(), kFSEventStreamEventFlagItemModified}});
+        const bool retried = drainReviewMutations(service, root);
+        const auto refreshedIndex = engine->indexForPath(file.string());
+        check(retried && refreshedIndex != UINT32_MAX && content->isFileIndexed(refreshedIndex) &&
+              engine->getRecord(refreshedIndex).size == fs::file_size(file),
+              "Review: a later successful event refreshes metadata after lstat errors");
+        // ENOTDIR must still delete a missing descendant, not preserve it as
+        // an I/O error. Use Modified to exercise the common stat result path.
+        fs::remove_all(dir);
+        std::ofstream(dir) << "now a regular file";
+        service.queueWatcherEventsForTests({{file.string(), kFSEventStreamEventFlagItemModified}});
+        const bool missing = drainReviewMutations(service, root);
+        check(missing && engine->indexForPath(file.string()) == UINT32_MAX &&
+              !content->isFileIndexed(refreshedIndex),
+              "Review: ENOTDIR still removes the missing filename and content entry");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // An explicit nested root bypasses ancestor pruning during the full scan.
+    // Direct events and subsequent broad rescans must use the same scope.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_overlapping_roots_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        const auto explicitRoot = root / "node_modules" / "pkg";
+        const auto sibling = root / "node_modules" / "other";
+        fs::remove_all(cache);
+        fs::create_directories(explicitRoot);
+        fs::create_directories(sibling);
+        std::ofstream(explicitRoot / "existing.txt") << "initial";
+        std::ofstream(sibling / "excluded.txt") << "excluded";
+        ServiceConfig config;
+        config.scanRoots = {root.string(), explicitRoot.string()};
+        config.excludedPatterns = {"node_modules"};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+        ServiceEngine service(config);
+        const bool ready = startReviewService(service);
+        auto engine = service.safeEngine();
+        auto hasPath = [&](const fs::path& path) {
+            return engine->indexForPath(path.string()) != UINT32_MAX;
+        };
+        check(ready && hasPath(explicitRoot / "existing.txt") && !hasPath(sibling / "excluded.txt"),
+              "Review: overlapping full scan honors explicit nested root and excludes sibling");
+        const auto created = explicitRoot / "created.txt";
+        std::ofstream(created) << "new";
+        service.queueWatcherEventsForTests({{created.string(), kFSEventStreamEventFlagItemCreated}});
+        const bool added = drainReviewMutations(service, root);
+        check(added && hasPath(created), "Review: explicit nested root receives create events");
+        std::ofstream(created) << "new and longer";
+        service.queueWatcherEventsForTests({{created.string(), kFSEventStreamEventFlagItemModified}});
+        const bool modified = drainReviewMutations(service, root);
+        check(modified && engine->getRecord(engine->indexForPath(created.string())).size == fs::file_size(created),
+              "Review: explicit nested root receives metadata updates");
+        fs::remove(created);
+        service.queueWatcherEventsForTests({{created.string(), kFSEventStreamEventFlagItemRemoved}});
+        const bool removed = drainReviewMutations(service, root);
+        check(removed && !hasPath(created), "Review: explicit nested root receives removal events");
+        service.queueWatcherEventsForTests({
+            {(sibling / "excluded.txt").string(), kFSEventStreamEventFlagItemCreated},
+            {root.string(), kFSEventStreamEventFlagMustScanSubDirs}
+        });
+        const bool rescanned = drainReviewMutations(service, root);
+        check(rescanned && hasPath(explicitRoot / "existing.txt") && !hasPath(sibling / "excluded.txt"),
+              "Review: broad rescan retains explicit nested roots without indexing excluded siblings");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // A one-sided rename event must reconcile both parents of a cross-directory move.
+    {
+        const auto cache = fs::temp_directory_path() /
+            ("maceverything_one_sided_rename_" + std::to_string(getpid()));
+        const auto root = cache / "files";
+        const auto left = root / "left";
+        const auto right = root / "right";
+        const auto gitObjects = root / ".git" / "objects" / "ab";
+        const auto modules = root / "node_modules" / "pkg";
+        const auto appResources = root / "Sample.app" / "Contents" / "Resources";
+        const auto deletedTree = root / "deleted-tree" / "nested";
+        fs::remove_all(cache);
+        fs::create_directories(left);
+        fs::create_directories(right);
+        fs::create_directories(gitObjects);
+        fs::create_directories(modules);
+        fs::create_directories(appResources);
+        fs::create_directories(deletedTree);
+        std::ofstream(left / "before.txt") << "move";
+        fs::create_hard_link(left / "before.txt", left / "still-linked.txt");
+        std::ofstream(gitObjects / "existing-git-object") << "git";
+        std::ofstream(modules / "existing-module") << "module";
+        std::ofstream(appResources / "existing-app-resource") << "app";
+        std::ofstream(deletedTree / "stale-child.txt") << "remove with parent";
+
+        ServiceConfig config;
+        config.scanRoot = root.string();
+        config.scanRoots = {root.string()};
+        config.cachePath = cache.string();
+        config.realtimeMonitoring = false;
+        config.contentIndexingEnabled = false;
+        config.automaticMaintenanceEnabled = false;
+        config.excludedPatterns = {"node_modules"};
+
+        ServiceEngine service(config);
+        dispatch_semaphore_t started = dispatch_semaphore_create(0);
+        service.startFullScan([&](uint32_t, bool) { dispatch_semaphore_signal(started); });
+        const bool scanDone = dispatch_semaphore_wait(
+            started, dispatch_time(DISPATCH_TIME_NOW, 20 * NSEC_PER_SEC)) == 0;
+        dispatch_release(started);
+        const auto startupDeadline = std::chrono::steady_clock::now() + std::chrono::seconds(20);
+        while (std::chrono::steady_clock::now() < startupDeadline &&
+               (!service.startupCompletedForTests() || service.deferredDrainCountForTests() == 0)) {
+            CFRunLoopRunInMode(kCFRunLoopDefaultMode, 0.02, true);
+        }
+
+        fs::rename(left / "before.txt", right / "after.txt");
+        const auto reportedNewPath = fs::canonical(right / "after.txt").string();
+        service.queueWatcherEventsForTests({
+            {reportedNewPath, kFSEventStreamEventFlagItemRenamed}
+        });
+        std::atomic<bool> drained{false};
+        service.removeSubtree((root / "zz-barrier-not-a-file").string(), [&](uint32_t) {
+            drained.store(true, std::memory_order_release);
+        });
+        const bool barrier = waitForMainFlag(drained, 20);
+        const bool oldGone = !engineHasFileName(service, "before", "before.txt");
+        const bool newFound = engineHasFileName(service, "after", "after.txt");
+        const bool hardLinkRemains = engineHasFileName(service, "still-linked", "still-linked.txt");
+        size_t movedPathCopies = 0;
+        if (auto engine = service.safeEngine()) {
+            for (const auto& record : engine->exportRecords()) {
+                if (record.name == "after.txt") ++movedPathCopies;
+            }
+        }
+        service.queueWatcherEventsForTests({
+            {(right / "after.txt").string(), kFSEventStreamEventFlagItemRemoved}
+        });
+        std::atomic<bool> staleRemovalDrained{false};
+        service.removeSubtree((root / "zz-second-barrier-not-a-file").string(), [&](uint32_t) {
+            staleRemovalDrained.store(true, std::memory_order_release);
+        });
+        const bool staleRemovalBarrier = waitForMainFlag(staleRemovalDrained, 20);
+        const bool survivesStaleRemoval = engineHasFileName(service, "after", "after.txt");
+        check(scanDone && service.startupCompletedForTests() && barrier && oldGone && newFound &&
+              hardLinkRemains && movedPathCopies == 1 &&
+              staleRemovalBarrier && survivesStaleRemoval,
+              "Review: one-sided rename maps path aliases and preserves other hard links");
+
+        std::ofstream(gitObjects / "new-git-object") << "git";
+        std::ofstream(modules / "new-module") << "module";
+        std::ofstream(appResources / "new-app-resource") << "app";
+        service.queueWatcherEventsForTests({
+            {(gitObjects / "new-git-object").string(), kFSEventStreamEventFlagItemCreated},
+            {(modules / "new-module").string(), kFSEventStreamEventFlagItemCreated},
+            {(appResources / "new-app-resource").string(), kFSEventStreamEventFlagItemCreated}
+        });
+        std::atomic<bool> excludedBarrierDone{false};
+        service.removeSubtree((root / "zz-exclusion-barrier").string(), [&](uint32_t) {
+            excludedBarrierDone.store(true, std::memory_order_release);
+        });
+        const bool excludedBarrier = waitForMainFlag(excludedBarrierDone, 20);
+        const bool gitStayedExcluded = !engineHasFileName(service, "new-git-object", "new-git-object");
+        const bool modulesStayedExcluded = !engineHasFileName(service, "new-module", "new-module");
+        const bool appStayedExcluded = !engineHasFileName(service, "new-app-resource", "new-app-resource");
+        check(excludedBarrier && gitStayedExcluded && modulesStayedExcluded && appStayedExcluded,
+              "Review: direct events cannot index hidden, excluded, or app bundle descendants");
+
+        fs::remove_all(root / "deleted-tree");
+        service.queueWatcherEventsForTests({
+            {(root / "deleted-tree").string(), kFSEventStreamEventFlagItemRemoved}
+        });
+        std::atomic<bool> directoryRemovalBarrierDone{false};
+        service.removeSubtree((root / "zz-directory-removal-barrier").string(), [&](uint32_t) {
+            directoryRemovalBarrierDone.store(true, std::memory_order_release);
+        });
+        const bool directoryRemovalBarrier = waitForMainFlag(directoryRemovalBarrierDone, 20);
+        const bool deletedChildGone = !engineHasFileName(service, "stale-child", "stale-child.txt");
+        check(directoryRemovalBarrier && deletedChildGone,
+              "Review: removing a directory reconciles its indexed descendants");
+        service.shutdown();
+        fs::remove_all(cache);
+    }
+
+    // A rename followed by removal during a scan must leave the published index
+    // consistent with disk after deferred work drains.
     {
         const auto cache = fs::temp_directory_path() /
             ("maceverything_deferred_order_" + std::to_string(getpid()));
@@ -626,6 +958,7 @@ static void runReviewRegressionTests() {
         fs::rename(root / "old-name.txt", root / "new-name.txt");
         service.refreshRenamedPath((root / "old-name.txt").string(),
                                    (root / "new-name.txt").string());
+        fs::remove(root / "new-name.txt");
         service.queueWatcherEventsForTests({
             {(root / "new-name.txt").string(), kFSEventStreamEventFlagItemRemoved}
         });
@@ -692,9 +1025,12 @@ static void runReviewRegressionTests() {
                 dispatch_release(pause);
             }
         }
-        check(completed && armed.load(std::memory_order_acquire) && kept &&
+        const bool staleBarrier = drainReviewMutations(service, root);
+        check(completed && staleBarrier && armed.load(std::memory_order_acquire) && kept &&
               fs::exists(root / "keep.txt"),
               "Review: events queued before rebuild are not applied to the new index");
+        check(staleBarrier && service.directEventApplyCountForTests() == 0,
+              "Review: rebuild discards old events before even a no-op upsert can run");
         service.shutdown();
         fs::remove_all(cache);
     }
@@ -750,6 +1086,8 @@ static void runReviewRegressionTests() {
         const bool kept = engineHasFileName(service, "keep", "keep.txt");
         check(staleBarrier && kept && fs::exists(root / "keep.txt"),
               "Review: events taken off the deferred queue do not delete a background replacement");
+        check(staleBarrier && service.directEventApplyCountForTests() == 0,
+              "Review: snapshot replacement discards old events before application");
 
         fs::remove(root / "keep.txt");
         service.queueWatcherEventsForTests({
@@ -762,6 +1100,8 @@ static void runReviewRegressionTests() {
         const bool freshBarrier = waitForMainFlag(freshDrained, 20);
         check(freshBarrier && !engineHasFileName(service, "keep", "keep.txt"),
               "Review: an event queued after replacement still updates the new index");
+        check(freshBarrier && service.directEventApplyCountForTests() == 1,
+              "Review: application probe observes a fresh event after replacement");
         service.shutdown();
         fs::remove_all(cache);
     }
@@ -814,6 +1154,7 @@ static void runReviewRegressionTests() {
         const bool firstReady = waitUntilReady(0);
         check(firstScan && firstReady && service.isMonitoring(),
               "Review: full scan starts live monitoring");
+        const auto applicationsBeforeScan = service.directEventApplyCountForTests();
 
         std::atomic<bool> attempted{false};
         std::atomic<bool> monitoringDuringScan{true};
@@ -848,6 +1189,8 @@ static void runReviewRegressionTests() {
               "Review: a volume notification does not start monitoring during a full scan");
         check(barrier && kept && fs::exists(root / "keep.txt"),
               "Review: events queued during a full scan do not delete the published scan");
+        check(barrier && service.directEventApplyCountForTests() == applicationsBeforeScan,
+              "Review: full scan retires old snapshot events before application");
         check(service.isMonitoring() && anchor != 0 &&
               anchor != kFSEventStreamEventIdSinceNow,
               "Review: full scan replay replaces a watcher that started from now");

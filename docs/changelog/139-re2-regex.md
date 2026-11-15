@@ -29,7 +29,7 @@ Replaced `std::regex` with Google RE2 — a linear-time regex engine that guaran
 
 ### Compatibility Notes
 
-- RE2 uses POSIX-like syntax (not ECMAScript); `\d` → `[0-9]`, `\w` → `[a-zA-Z0-9_]`
+- RE2 has its own regex syntax and supports `\d`, `\w`, and `\s`; it does not support backreferences or lookaround.
 - RE2 does not support backreferences (`\1`), lookahead (`(?=...)`), or lookbehind (`(?<=...)`)
 - For file name search, these limitations have no practical impact
 

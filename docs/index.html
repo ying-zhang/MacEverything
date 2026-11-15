@@ -1,146 +1,159 @@
-<!DOCTYPE html><html><head><meta charset="utf-8">
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <link rel="stylesheet" href="https://ying-zhang.cn/style.css">
-  <title>MacEverything >> Ying ZHANG</title>
-</head><body>
-  <header> <a href="https://ying-zhang.cn/">Home</a> </header>
-  <button id="btn">☀️</button>
-  <script src="https://ying-zhang.cn/dark.js"></script>
+  <meta name="description" content="MacEverything，macOS 上的快速本地文件搜索工具。文件名、路径、中文拼音和内容搜索，配合筛选、预览与文件操作，更快找到要用的文件。">
+  <meta name="theme-color" content="#f6f7f3">
+  <link rel="canonical" href="https://ying-zhang.cn/MacEverything/">
+  <link rel="icon" href="assets/icon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="assets/site.css">
+  <title>MacEverything · 快速找到 Mac 上的文件</title>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到正文</a>
+  <header class="site-header wrap">
+    <a class="brand" href="./" aria-label="MacEverything 首页"><span class="brand-icon"><img src="assets/icon.svg" width="26" height="26" alt=""></span>MacEverything</a>
+    <nav aria-label="主导航">
+      <a href="#features">功能</a><a href="#syntax">搜索语法</a><a href="#download">下载</a>
+      <a class="source-link" href="https://github.com/ying-zhang/MacEverything">GitHub <span aria-hidden="true">↗</span></a>
+    </nav>
+  </header>
 
-<div class="title">
-  <h1>MacEverything：macOS 快速文件搜索工具（fork自joshua-wu）</h1>
-  <p><time>2026-08-21</time><span id="url">https://ying-zhang.cn/misc/2026-maceverything/</span></p>
-</div>
-<p>MacEverything 是 macOS 的极速文件搜索工具，灵感来自 Windows 上的 <a href="https://www.voidtools.com/">Everything</a>。Fork 自 <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a>，在搜索速度、查询语法、中文体验、实时索引、AI 工具集成和应用可用性上做了系统改进。</p>
-<p><strong>最新版本：</strong>见 <a href="https://github.com/ying-zhang/MacEverything/releases/latest">GitHub Releases</a>，提供 Apple Silicon 与 Intel 安装包，并支持 Homebrew Cask 安装。</p>
+  <main id="main" class="wrap">
+    <section class="hero" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span>为 macOS 打造的本地文件搜索</p>
+        <h1 id="hero-title">快速搜索<br>Mac 上的文件。</h1>
+        <p class="hero-description">按文件名、路径或中文拼音首字母查找文件，结合类型、大小和日期筛选。支持本机与外接磁盘。</p>
+        <div id="download" class="actions">
+          <a class="button primary" href="https://github.com/ying-zhang/MacEverything/releases/download/v1.11.15/MacEverything-arm64.dmg">下载 Apple Silicon 版 <span aria-hidden="true">↓</span></a>
+          <a class="button secondary" href="https://github.com/ying-zhang/MacEverything/releases/download/v1.11.15/MacEverything-x86_64.dmg">Intel 版 <span aria-hidden="true">↓</span></a>
+        </div>
+        <p class="download-meta">v1.11.15 <span>·</span> macOS 15 及以上 <span>·</span> 免费开源</p>
+        <div class="download-help"><a href="https://github.com/ying-zhang/MacEverything/releases/tag/v1.11.15">发布说明与校验信息 ↗</a><details class="install-note"><summary>首次安装</summary><p>打开 DMG，将 MacEverything 拖到“应用程序”。应用采用 ad-hoc 签名；若首次启动被 macOS 阻止，先尝试打开一次，再到“系统设置 → 隐私与安全性”选择“仍要打开”。</p></details></div>
+      </div>
+      <div class="hero-product">
+        <div class="product-caption"><span>搜索界面</span><span class="shortcut"><kbd>⌥</kbd><kbd>Space</kbd> 随时唤出</span></div>
+        <a class="screenshot-link" href="assets/search-preview.jpg" target="_blank" rel="noopener" aria-label="在新标签页查看完整的 MacEverything 搜索界面">
+          <img src="assets/search-preview.jpg" width="1440" height="1059" alt="MacEverything 搜索界面：搜索框、文件列表、路径筛选和文件信息" fetchpriority="high">
+          <span class="expand-hint">查看界面 <span aria-hidden="true">↗</span></span>
+        </a>
+        <p class="product-footnote">输入 · 筛选 · 预览 · 处理<span>支持键盘操作与多窗口</span></p>
+      </div>
+    </section>
 
-<h2>完整功能列表</h2>
+    <section id="features" class="benefits" aria-label="主要功能">
+      <article><h2>文件名、路径与拼音</h2><p>多词组合查找，支持中文拼音首字母。默认 <kbd>⌥ Space</kbd> 唤出搜索，快捷键可自定。</p></article>
+      <article><h2>索引自动更新</h2><p>监听文件变化，维护本地索引。可设置索引目录、排除规则和隐藏文件选项。</p></article>
+      <article><h2>预览与文件操作</h2><p>预览、打开、改名、访达定位与拖放。提供简体中文和英文界面。</p></article>
+      <article><h2>脚本与 AI 集成</h2><p>通过本机 HTTP API 和 MCP 调用文件搜索。<a class="text-link" href="https://github.com/ying-zhang/MacEverything#ai-工具集成-mcp">集成说明 ↗</a></p></article>
+    </section>
 
-<h3>搜索与索引</h3>
-<ul>
-<li><strong>极速文件名搜索</strong> — 面向数百万文件的毫秒级搜索，基于文件名与路径 Trigram 倒排索引。</li>
-<li><strong>全盘快速扫描</strong> — 使用 macOS 底层批量文件属性 API 扫描目录树，减少逐文件系统调用开销。</li>
-<li><strong>文件名与完整路径同时匹配</strong> — 普通关键词默认同时搜索文件名和路径，支持多个词按 AND 组合。</li>
-<li><strong>路径片段搜索</strong> — 支持 `src/main`、`/project/*/target`、`/local/bin/*` 等结构化路径查询。</li>
-<li><strong>Glob 通配符</strong> — 支持 `*.swift`、`~/Documents/*.pdf` 等常见通配符搜索。</li>
-<li><strong>正则表达式搜索</strong> — 支持 `regex:` 查询，并通过 Trigram 预过滤加速候选集生成。</li>
-<li><strong>区分大小写、全词、全文件名匹配</strong> — 支持 `case:`、`ww:`、`wfn:` 等精确匹配模式。</li>
-<li><strong>最近文件视图</strong> — 搜索框为空时显示最近修改的文件，便于快速回到刚处理的内容。</li>
-<li><strong>搜索取消与防抖</strong> — 快速输入时取消过期查询，避免旧结果覆盖新结果。</li>
-<li><strong>快速过滤器</strong> — 在当前结果中筛选文件、文件夹、文档、图片、代码和压缩包；过滤后无结果时可自动恢复全部结果。</li>
-<li><strong>路径过滤器</strong> — 在结果集内按路径片段继续缩小范围，适合大目录或多项目工作区。</li>
-<li><strong>最近目录</strong> — 可直接选择文件夹作为路径过滤条件，并管理最近使用的 5 个目录。</li>
-<li><strong>结果导出</strong> — 支持将查询上限内的完整过滤结果导出为 CSV 或 TXT；GUI 分页不截断导出。文件名搜索默认 10,000、最多 100,000，内容搜索独立设置、默认且最多 200。</li>
-</ul>
-
-<h3>查询语法</h3>
-<ul>
-<li><strong><a href="https://www.voidtools.com/">Everything</a> 风格查询</strong> — 保留随手输入片段即可命中的体验，并扩展为完整 AST 查询管线。</li>
-<li><strong>布尔运算</strong> — 支持 AND、OR、NOT 组合复杂条件。</li>
-<li><strong>扩展名过滤</strong> — `ext:swift,h`、`ext:py` 等。</li>
-<li><strong>大小过滤</strong> — `size:&gt;1mb`、`size:100kb-5mb` 等。</li>
-<li><strong>类型过滤</strong> — `type:file`、`type:folder`。</li>
-<li><strong>路径过滤</strong> — `path:`、`nopath:`、`parent:`、`depth:`。</li>
-<li><strong>日期过滤</strong> — `dm:` 修改日期、`dc:` 创建日期、`da:` 访问日期，支持 today、thisweek、last7days 和比较表达式。</li>
-<li><strong>文件名长度过滤</strong> — `len:&gt;50` 等。</li>
-<li><strong>文件类型宏</strong> — `audio:`、`video:`、`pic:`、`doc:`、`zip:` 快速筛选常见媒体和文档类型。</li>
-<li><strong>Home 目录展开</strong> — 支持 `~` 查询，如 `~/Downloads/*.dmg`。</li>
-<li><strong>内置语法帮助</strong> — 应用内提供搜索语法帮助窗口。</li>
-</ul>
-
-<h3>全文内容搜索</h3>
-<ul>
-<li><strong>文件内容检索</strong> — 使用 `content:` 或 `infile:` 搜索文件内部文本。</li>
-<li><strong>内容 Trigram 索引</strong> — 为全文搜索建立独立索引，避免每次查询都全盘 grep。</li>
-<li><strong>增量内容索引</strong> — 仅重新索引变更文件。</li>
-<li><strong>上下文片段</strong> — 内容搜索结果显示命中关键词附近的文本片段。</li>
-<li><strong>内容索引设置</strong> — 可配置参与内容索引的文件类型和最大文件大小。</li>
-</ul>
-
-<h3>实时同步与启动</h3>
-<ul>
-<li><strong>FSEvents 实时监控</strong> — 新建、删除、重命名和修改文件后自动更新索引。</li>
-<li><strong>两阶段即时启动</strong> — 启动时先加载磁盘缓存，让搜索尽快可用，再在后台追赶文件系统变更。</li>
-<li><strong>WAL 与增量持久化</strong> — 使用写前日志和分页脏页刷新降低崩溃恢复与落盘成本。</li>
-<li><strong>自动子树重扫</strong> — 检测事件截断或目录级变化后自动触发必要范围的重扫。</li>
-<li><strong>焦点感知刷新</strong> — 窗口不在前台时减少刷新，回到前台后批量追赶，降低后台 CPU 占用。</li>
-</ul>
-
-<h3>界面与交互</h3>
-<ul>
-<li><strong>全局快捷键</strong> — 默认 `Option+Space` 唤出搜索窗口，快捷键可配置。</li>
-<li><strong>搜索框自动聚焦</strong> — 打开窗口即可输入。</li>
-<li><strong>Ghost 自动补全</strong> — 根据搜索历史和系统关键词显示半透明建议，按 Tab 接受。</li>
-<li><strong>搜索栏语法高亮</strong> — 过滤器、参数、字符串和运算符使用不同颜色标识。</li>
-<li><strong>搜索选项徽章</strong> — 以菜单和徽章切换正则、大小写敏感、全词、全文件名等模式。</li>
-<li><strong>结果高亮</strong> — 基于查询 AST 标注命中部分，能处理 glob、正则、大小写和排除条件。</li>
-<li><strong>可配置结果列</strong> — 支持名称、扩展名、路径、大小、修改日期列，列可隐藏、排序并拖拽调整宽度。</li>
-<li><strong>列表与图标模式</strong> — 快速筛选栏中的控件垂直居中，“显示方式”明确标识布局入口；常驻的五档缩略图滑块在列表模式或无结果时置灰。</li>
-<li><strong>结果外观设置</strong> — 列表缩略图默认开启，可将列表结果调整得更紧凑或更舒展；颜色编辑器自动选中当前生效的浅色或深色模式。</li>
-<li><strong>高级筛选</strong> — 底部状态栏右侧以文字标识文件大小与修改日期筛选入口，支持常用预设和自定义范围，启用数量以紧凑徽标显示。</li>
-<li><strong>键盘工作流</strong> — Enter 可配置为打开或重命名，方向键可移动选中项，选择结果后焦点可进入列表继续操作。</li>
-<li><strong>拖放文件</strong> — 可将搜索结果直接拖到 Finder、VS Code、Xcode 或其他应用。</li>
-<li><strong>右键菜单</strong> — 支持打开、在 Finder 中显示、复制完整路径等常用操作。</li>
-<li><strong>Cmd+Click 定位</strong> — 快速在 Finder 中显示目标文件。</li>
-<li><strong>中英文界面</strong> — 应用界面、菜单、设置和帮助支持简体中文与英文。</li>
-</ul>
-
-<h3>设置与部署</h3>
-<ul>
-<li><strong>分级权限引导</strong> — 首次启动可选择无需完全磁盘访问的快速开始，或授权后的全盘搜索。</li>
-<li><strong>开机启动</strong> — 支持登录后自动启动，并可最小化后台运行。</li>
-<li><strong>快捷键设置</strong> — 可自定义全局唤出快捷键。</li>
-<li><strong>内容搜索设置</strong> — 管理全文索引范围和资源限制。</li>
-<li><strong>GUI 应用</strong> — SwiftUI 菜单栏应用，面向日常桌面使用。</li>
-<li><strong>本地构建与 DMG 发布</strong> — 支持 Xcode 本地构建与 DMG 打包；发布脚本可分别产出 arm64 和 Intel DMG。</li>
-<li><strong>RE2 依赖嵌入</strong> — 构建流程会准备并嵌入 RE2/Abseil dylib，验证主应用、MCP 程序和依赖库不再引用 Homebrew 绝对路径。</li>
-</ul>
-
-<h3>自动化与 AI 工具集成</h3>
-<ul>
-<li><strong>本地 HTTP API</strong> — 默认监听 `localhost:19860`，支持文件搜索、内容搜索、最近文件、状态和内存信息接口。</li>
-<li><strong>HTTP 服务健壮性</strong> — 仅绑定回环地址，支持并发连接，启动端口短暂占用时自动重试，并限制异常请求体大小。</li>
-<li><strong>HTTP API 鉴权</strong> — 可选启用当前用户专属的本地 Bearer token；无论是否启用，始终拒绝非回环 Host 和浏览器 Origin 请求。</li>
-<li><strong>MCP Server</strong> — 内置 Model Context Protocol 支持，可供 Claude Code、Cursor、Claude Desktop 等 AI 工具调用。</li>
-<li><strong>一键配置 MCP</strong> — 应用菜单中提供 MCP 集成入口。</li>
-<li><strong>AI 可用工具</strong> — 提供 `search_files`、`search_content`、`recent_files`、`index_status` 等能力。</li>
-</ul>
-
-<h3>性能与可靠性</h3>
-<ul>
-<li><strong>C++20 核心引擎</strong> — 搜索、扫描、索引、持久化由 GUI 中的唯一引擎驱动，CLI 和 MCP 通过本机 API 查询。</li>
-<li><strong>SoA 列式数据布局</strong> — 提升大规模候选过滤时的缓存局部性。</li>
-<li><strong>路径字符串驻留</strong> — 目录路径使用表索引复用，降低百万文件规模下的内存占用。</li>
-<li><strong>v6 Flat SoA 两阶段索引</strong> — 启动先加载基础记录，后台再构建 Trigram、拼音、路径、扩展名、CJK bigram 和最近文件索引。</li>
-<li><strong>Phase 2 可靠性保护</strong> — 后台索引构建期间新增/更新记录先进入基础数据，索引切换时回放变更；内存不足时跳过 Phase 2 避免半成品索引。</li>
-<li><strong>ARM NEON SIMD</strong> — 对不可索引加速的字符串匹配路径使用向量化优化。</li>
-<li><strong>APFS Firmlink 去重</strong> — 处理 macOS System/Data 卷合并路径带来的重复遍历问题。</li>
-<li><strong>Unicode 查询归一化</strong> — 对非 ASCII 查询尝试常见 NFC/NFD 变体，适配 macOS 文件名表示。</li>
-<li><strong>FSEvents 安全重放</strong> — 规范化排除路径、过滤自身缓存事件，并在停止监听时排空回调队列，降低竞态和误重扫风险。</li>
-<li><strong>自动化测试覆盖</strong> — 覆盖扫描、查询、持久化、内容索引、HTTP、MCP、并发和内存安全等模块。</li>
-</ul>
-
-<h2>链接</h2>
-<ul>
-<li><a href="https://github.com/ying-zhang/MacEverything">源代码</a></li>
-<li><a href="https://github.com/ying-zhang/MacEverything/releases">Release 页面</a></li>
-<li><a href="https://github.com/joshua-wu/MacEverything">上游项目 (joshua-wu/MacEverything)</a></li>
-<li><a href="https://www.voidtools.com/">Everything 官网</a></li>
-<li><a href="https://ying-zhang.cn/misc/2026-maceverything/">简介</a></li>
-</ul>
-
-<h2>许可</h2>
-
-<p><a href="https://github.com/ying-zhang/MacEverything/blob/main/LICENSE">MIT License（继承自上游项目）</a></p>
-
-<footer>
-<hr/>
-<img src="https://ying-zhang.cn/up.png" style="height: 120px; border-radius: 59px"/><br/>
-<p>&copy; <a href="https://ics.nju.edu.cn/people/yingzhang/index.html" target="_blank">Ying ZHANG</a><br/>
-由<a href="https://gohugo.io/" target="_blank">Hugo</a>生成；
-主题修改自<a href="https://themes.gohugo.io/themes/hugo-xmin/" target="_blank">XMin</a>；
-源文件在<a href="https://github.com/ying-zhang/ying-zhang.github.io" target="_blank">Github</a></p>
-<p><a href="https://ying-zhang.cn/misc/udpn.html">双拼是什么？</a> | <a href="https://ying-zhang.cn/misc/udpnlmxi.html">双拼在线练习</a></p>
-</footer>
+    <section id="syntax" class="syntax-section" aria-labelledby="search-title">
+      <div class="syntax-heading"><div><p class="eyebrow">使用说明</p><h2 id="search-title">搜索语法</h2></div><p>平时直接输入文件名、路径或拼音首字母即可。<br>需要进一步筛选时，再使用下面的搜索语法。</p></div>
+      <article id="syntax-everyday" class="syntax-card everyday-search" aria-labelledby="everyday-title">
+        <div class="everyday-heading"><h3 id="everyday-title">常用搜索：直接输入就能查找</h3><p>不必记住语法。输入你记得的名称或路径，结果会随输入更新；默认不区分大小写。</p></div>
+        <dl>
+          <div><dt><code>报告</code></dt><dd>输入文件名的一部分，查找名称或路径中包含“报告”的文件。</dd></div>
+          <div><dt><code>report pdf</code></dt><dd>用空格分隔多个关键词，查找同时匹配这两个词的结果。</dd></div>
+          <div><dt><code>Downloads</code></dt><dd>输入文件夹名，也能找到路径中包含它的文件。</dd></div>
+          <div><dt><code>dl</code></dt><dd>中文名称可用拼音首字母查找，例如“电力”。</dd></div>
+        </dl>
+      </article>
+      <nav class="syntax-nav" aria-label="搜索语法目录">
+        <a href="#syntax-everyday">常用搜索</a>
+        <a href="#syntax-basic">关键词与运算</a>
+        <a href="#syntax-regex">正则表达式</a>
+        <a href="#syntax-files">文件类型</a>
+        <a href="#syntax-size">大小与长度</a>
+        <a href="#syntax-dates">日期</a>
+        <a href="#syntax-paths">路径</a>
+        <a href="#syntax-modifiers">匹配方式</a>
+        <a href="#syntax-content">文件内容</a>
+      </nav>
+      <div class="syntax-grid">
+        <div class="syntax-column">
+          <article id="syntax-basic" class="syntax-card"><h3>关键词与布尔运算</h3><dl>
+          <div><dt><code>readme</code></dt><dd>文件名或完整路径包含 readme；默认不区分大小写。</dd></div>
+          <div><dt><code>report pdf</code></dt><dd>空格表示 AND：两个词都要匹配，可以分别命中文件名和路径。</dd></div>
+          <div><dt><code>&quot;exact phrase&quot;</code></dt><dd>匹配包含空格的连续短语。</dd></div>
+          <div><dt><code>A | B</code></dt><dd>OR：匹配任意一个条件；使用竖线，不使用单词 OR。</dd></div>
+          <div><dt><code>!draft</code></dt><dd>NOT：排除匹配 draft 的结果。</dd></div>
+          <div><dt><code>&lt;hello | world&gt; .txt</code></dt><dd>尖括号分组。优先级：NOT → AND → OR。</dd></div>
+          <div><dt><code>*.txt · test* · file?.pdf</code></dt><dd>通配符 * 匹配零个或多个字符，? 匹配一个字符。</dd></div>
+        </dl><p class="syntax-note">中文名称支持拼音首字母，例如 dl 可匹配“电力”。</p></article>
+          <article id="syntax-dates" class="syntax-card"><h3>修改日期</h3><dl>
+          <div><dt><code>dm:today · dm:yesterday</code></dt><dd>今天 / 昨天。dm: 的完整写法是 datemodified:。</dd></div>
+          <div><dt><code>dm:thisweek · dm:lastweek</code></dt><dd>本周 / 上周；一周从星期日开始。</dd></div>
+          <div><dt><code>dm:thismonth · dm:lastmonth</code></dt><dd>本月 / 上月。</dd></div>
+          <div><dt><code>dm:thisyear · dm:lastyear</code></dt><dd>今年 / 去年。</dd></div>
+          <div><dt><code>dm:last7days · dm:last3months</code></dt><dd>最近 N 天、周、月或年：lastNdays / weeks / months / years。</dd></div>
+          <div><dt><code>dm:2026 · dm:2026-01 · dm:2026-01-15</code></dt><dd>指定年、月或日期。</dd></div>
+          <div><dt><code>dm:&gt;=2026-01 · dm:&gt;2026-01</code></dt><dd>从 2026 年 1 月起 / 2026 年 1 月之后。也支持 &lt;、&lt;=。</dd></div>
+          <div><dt><code>dm:2026-01..2026-06</code></dt><dd>包含 1 月到 6 月；可省略一端，如 dm:..2026-06。</dd></div>
+        </dl><p class="syntax-note">日期按本机时区解释。兼容 dc:/datecreated: 和 da:/dateaccessed:，但目前均按修改时间匹配，不能用于区分创建或访问时间。</p></article>
+          <article id="syntax-size" class="syntax-card"><h3>大小、名称长度与目录深度</h3><dl>
+          <div><dt><code>size:&gt;1mb · size:&gt;=1gb</code></dt><dd>大于 1 MB / 至少 1 GB。也支持 &lt; 和 &lt;=。</dd></div>
+          <div><dt><code>size:1024</code></dt><dd>大小等于 1024 字节。</dd></div>
+          <div><dt><code>size:100kb..5mb</code></dt><dd>包含两端的大小区间，用两个点连接。</dd></div>
+          <div><dt><code>size:1gb.. · size:..5mb</code></dt><dd>省略一端，表示无上限或从零开始。</dd></div>
+          <div><dt><code>len:&gt;10 · len:5..20</code></dt><dd>文件名长度，按 UTF-8 字节数计算。</dd></div>
+          <div><dt><code>depth:&lt;3</code></dt><dd>所在目录路径中的 / 数量，小于 3。</dd></div>
+        </dl><p class="syntax-note">大小单位：b、k/kb、m/mb、g/gb、t/tb；按 1024 进位，支持 1.5mb。比较与区间语法也适用于 len:、depth:。</p></article>
+          <article id="syntax-modifiers" class="syntax-card"><h3>匹配方式</h3><dl>
+          <div><dt><code>case:Makefile</code></dt><dd>区分大小写匹配这个词。</dd></div>
+          <div><dt><code>nocase:readme</code></dt><dd>不区分大小写匹配这个词。</dd></div>
+          <div><dt><code>ww:hello · wholeword:hello</code></dt><dd>文件名中的完整单词匹配。</dd></div>
+          <div><dt><code>wfn:readme.md · wholefilename:readme.md</code></dt><dd>匹配整个文件名，包含扩展名。</dd></div>
+        </dl><p class="syntax-note">可将匹配方式与其他条件组合，例如 case:Makefile path:src。</p></article>
+        </div>
+        <div class="syntax-column">
+          <article id="syntax-regex" class="syntax-card"><h3>正则表达式</h3><dl>
+          <div><dt><code>regex:^test_.*\.py$</code></dt><dd>查找以 test_ 开头、以 .py 结尾的匹配文本。</dd></div>
+          <div><dt><code>ext:py regex:^test_</code></dt><dd>筛选条件放在 regex: 之前；其后的全部文本都作为正则，包括空格和 |。</dd></div>
+          <div><dt><code>^ · $ · .</code></dt><dd>文本开头、文本结尾、任意字符。</dd></div>
+          <div><dt><code>\. · \\</code></dt><dd>转义：匹配字面上的点或反斜线。</dd></div>
+          <div><dt><code>[abc] · [^abc] · [a-z]</code></dt><dd>字符集合、排除集合和范围。</dd></div>
+          <div><dt><code>\d / \D · \w / \W · \s / \S</code></dt><dd>数字、单词字符、空白；大写形式表示相反集合。</dd></div>
+          <div><dt><code>* · + · ?</code></dt><dd>重复零次或多次、一次或多次、零次或一次。</dd></div>
+          <div><dt><code>{3} · {2,} · {2,5}</code></dt><dd>重复指定次数、至少两次、两到五次。</dd></div>
+          <div><dt><code>(foo|bar) · (?:foo|bar)</code></dt><dd>分组与交替；(?:...) 为非捕获分组。</dd></div>
+        </dl><p class="syntax-note">使用 RE2 语法，默认不区分大小写；不支持反向引用和环视。开启菜单中的“正则表达式”选项后，整个输入都按正则解析，不再解析普通过滤器、布尔运算或通配符。</p></article>
+          <article id="syntax-paths" class="syntax-card"><h3>路径筛选与路径查询</h3><dl>
+          <div><dt><code>path:Downloads</code></dt><dd>完整路径（含文件名）包含 Downloads。</dd></div>
+          <div><dt><code>nopath:node_modules</code></dt><dd>排除完整路径包含 node_modules 的结果。</dd></div>
+          <div><dt><code>parent:/usr/local/bin</code></dt><dd>直接父目录必须与给定的完整路径相等。</dd></div>
+          <div><dt><code>src/main</code></dt><dd>文件名包含 main，父路径包含 src。</dd></div>
+          <div><dt><code>/abc/def/</code></dt><dd>查找 abc 下名称匹配 def 的目录。</dd></div>
+          <div><dt><code>/abc/def/*</code></dt><dd>列出 abc 下 def 目录的直接子项。</dd></div>
+          <div><dt><code>/abc/*/def</code></dt><dd>非相邻路径段：中间允许有其他目录。</dd></div>
+          <div><dt><code>~/Documents/*.pdf</code></dt><dd>查询开头的 ~ 展开为当前用户的主目录。</dd></div>
+        </dl><p class="syntax-note">路径段保持子串匹配语义，从右往左匹配。过滤器参数在空格处结束；含空格或特殊运算符的复杂路径，宜用普通短语或正则表达式查找。</p></article>
+          <article id="syntax-files" class="syntax-card"><h3>文件类型</h3><dl>
+          <div><dt><code>ext:pdf</code></dt><dd>按扩展名筛选。</dd></div>
+          <div><dt><code>ext:cpp;h;hpp</code></dt><dd>多个扩展名用分号分隔。</dd></div>
+          <div><dt><code>file: · type:file</code></dt><dd>仅文件。</dd></div>
+          <div><dt><code>folder: · type:folder · type:dir</code></dt><dd>仅目录。</dd></div>
+          <div><dt><code>audio: · video: · pic:</code></dt><dd>按音频、视频或图片扩展名筛选。</dd></div>
+          <div><dt><code>doc: · exe: · zip:</code></dt><dd>按文档、应用/脚本/安装包或压缩包扩展名筛选。</dd></div>
+        </dl><p class="syntax-note">例如 ext:pdf report 或 video: size:&gt;1gb。类型宏按扩展名识别，不检查文件内容。</p></article>
+          <article id="syntax-content" class="syntax-card"><h3>文件内容</h3><dl>
+          <div><dt><code>infile:TODO · content:TODO</code></dt><dd>搜索文件内容，两个前缀等价。</dd></div>
+          <div><dt><code>ext:cpp infile:TODO</code></dt><dd>在 C++ 文件内容中查找 TODO。</dd></div>
+        </dl><p class="syntax-note">先在应用的“内容设置”中启用内容索引，并设置文件类型和最大文件大小。仅搜索已纳入内容索引的文件。</p></article>
+        </div>
+      </div>
+      <details class="macro-reference"><summary>文件类型宏对应的完整扩展名</summary><dl>
+        <div><dt><code>audio:</code></dt><dd><code>mp3 wav flac aac ogg m4a wma alac</code></dd></div>
+        <div><dt><code>video:</code></dt><dd><code>mp4 avi mkv mov wmv flv webm m4v</code></dd></div>
+        <div><dt><code>pic:</code></dt><dd><code>jpg jpeg png gif bmp tiff tif webp svg ico heic heif raw</code></dd></div>
+        <div><dt><code>doc:</code></dt><dd><code>pdf doc docx xls xlsx ppt pptx txt rtf odt ods odp csv md</code></dd></div>
+        <div><dt><code>exe:</code></dt><dd><code>app dmg pkg sh command csh action</code></dd></div>
+        <div><dt><code>zip:</code></dt><dd><code>zip rar 7z tar gz bz2 xz tgz zst lz4</code></dd></div>
+      </dl></details>
+    </section>
+  </main>
+  <footer class="site-footer wrap"><p>MacEverything <span>·</span> 免费开源的 macOS 文件搜索工具</p><div><a href="https://github.com/ying-zhang/MacEverything">GitHub</a><a href="https://ying-zhang.cn/misc/2026-maceverything/">开发者博客</a></div></footer>
 </body>
 </html>

@@ -158,7 +158,6 @@ uint64_t IndexPersistence::load(const std::string& expectedConfigSignature) {
                 LOG_WARN("IndexPersistence", "Ignoring legacy index because config signature is unavailable");
                 engine_->loadRecords({});
                 removeWalSegmentsExcept(walPath_);
-                loaded = false;
             } else {
                 LOG_INFO("IndexPersistence", "Loaded legacy index, lastEventId=" << lastEventId
                           << ", liveRecords=" << engine_->liveRecordCount());

@@ -357,6 +357,10 @@ public:
     /// Look up the record index for a given full path. Returns UINT32_MAX if not found.
     uint32_t indexForPath(const std::string& fullPath) const;
 
+    /// Find indexed paths with a filesystem identity. Used only for rename
+    /// events to reconcile the old parent when FSEvents reports one side only.
+    std::vector<std::string> pathsForFileIdentity(uint64_t inode, int32_t devId) const;
+
     /// Export a copy of all live records with their paths restored. Thread-safe.
     std::vector<FileRecord> exportRecords() const;
 

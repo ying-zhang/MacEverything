@@ -8,6 +8,6 @@
 
 ## 文档边界
 
-`main-branch-review.md` 是当前状态的唯一审查入口。历史审查快照已合并到该文件的“历史审查要点”章节；历史研究和基准数据保留原始时间点，不应直接当作当前性能或缺陷结论。性能数据集中在 [`docs/benchmark/`](../benchmark/README.md)，功能变化集中在 [`docs/changelog/`](../changelog/README.md)。
+`main-branch-review.md` 是当前状态的唯一审查入口。历史审查结论已在该文件汇总并更新状态；历史研究和基准数据保留原始时间点，不应直接当作当前性能或缺陷结论。性能数据集中在 [`docs/benchmark/`](../benchmark/README.md)，功能变化集中在 [`docs/changelog/`](../changelog/README.md)。
 
 竞品分析与 Joshua Wu fork 分析属于独立研究，继续单独保留。

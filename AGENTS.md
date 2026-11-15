@@ -4,6 +4,9 @@
 - Build Release app: `xcodebuild -scheme MacEverything -configuration Release build`. The output is in `~/Library/Developer/Xcode/DerivedData/MacEverything-*/Build/Products/Release/MacEverything.app`. After building, copy the `.app` to `artifacts/`: `cp -R .../Release/MacEverything.app artifacts/`.
 - GitHub Actions can still be used for verification when explicitly needed, using the local `gh` CLI.
 - Always push code changes to the `fork` remote, not `origin`; use `git push fork main` for the main branch.
+- Release only after the user explicitly supplies and authorizes a version number. Preparing code or a test DMG does not authorize a release.
+- The product website is `https://ying-zhang.cn/MacEverything/`, generated from this repository's `docs/` directory. The page at `/misc/2026-maceverything/` belongs to the personal blog; do not replace it with the product website.
+- Website redesigns stay local for review until the user authorizes deployment. Pushing `docs/` to `main` deploys the product website. Public download pages should show the available release, without internal withdrawal or verification history.
 - After a successful local or GitHub Actions build, put the generated `.app` or `.dmg` in the local `artifacts/` directory. Keep `artifacts/` clean — only final deliverables (`.app`, `.dmg`), not build dependencies or source trees.
 - When downloading files from GitHub, use the macOS system proxy settings to speed up downloads when a proxy is configured.
 - The downloaded `.dmg` is for manual testing by the user. Code changes should still be covered by appropriate automated checks such as unit tests where applicable.

@@ -30,7 +30,7 @@ class ReleaseSigningTests(unittest.TestCase):
                 "CFBundleIdentifier": "org.example.signingfixture",
                 "CFBundleExecutable": "SigningFixture",
                 "CFBundlePackageType": "APPL",
-                "CFBundleShortVersionString": "1.10.20",
+                "CFBundleShortVersionString": "1.11.15",
             }, plist)
         self.source = self.root / "main.cpp"
 
@@ -118,7 +118,7 @@ class ReleaseSigningTests(unittest.TestCase):
             }) + "\n", capture_output=True, text=True, timeout=15)
         self.assertEqual(result.returncode, 0, result.stderr)
         response = json.loads(result.stdout)
-        self.assertEqual(response["result"]["serverInfo"]["version"], "1.10.20")
+        self.assertEqual(response["result"]["serverInfo"]["version"], "1.11.15")
         standalone = self.root / "StandaloneMCP"
         shutil.copy2(self.binary, standalone)
         result = subprocess.run(

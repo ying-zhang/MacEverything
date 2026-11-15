@@ -4,7 +4,7 @@
 
 <h1 align="center">MacEverything</h1>
 
-<p align="center">Latest release: 1.10.20 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
+<p align="center">Latest release: 1.11.15 · Forked from <a href="https://github.com/joshua-wu/MacEverything">joshua-wu/MacEverything</a></p>
 
 <p align="center">
   <b>Instant file search for macOS</b> — find any file among millions in milliseconds.<br/>
@@ -66,7 +66,7 @@ Full AST parser supporting 15+ filters, boolean operators, glob wildcards, and r
 | `report pdf` | Match path/name fragments together, such as `/Users/username/reports/xx.pdf` |
 | `config path:/usr` | Files containing "config" under `/usr` |
 | `"exact phrase"` | Exact phrase matching |
-| `foo OR bar` | Boolean OR operation |
+| `foo \| bar` | Boolean OR operation |
 | `case:Makefile` | Case-sensitive search |
 | `regex:^test_.*\.py$` | Regular expression search |
 | `type:folder node_modules` | Search directories only |
@@ -84,25 +84,27 @@ Queries containing `/` enable structured path matching while keeping substring s
 
 | Filter | Description | Example |
 |--------|-------------|---------|
-| `ext:` | File extension | `ext:swift,h` |
-| `size:` | File size | `size:>1mb`, `size:100kb-5mb` |
+| `ext:` | File extension | `ext:swift;h` |
+| `size:` | File size | `size:>1mb`, `size:100kb..5mb` |
 | `type:` | File/folder | `type:folder` |
 | `path:` | Path contains | `path:Downloads` |
 | `nopath:` | Path excludes | `nopath:node_modules` |
-| `parent:` | Direct parent directory | `parent:src` |
+| `parent:` | Exact full parent directory path | `parent:/usr/local/src` |
 | `depth:` | Directory depth | `depth:<3` |
 | `dm:` | Date modified | `dm:today`, `dm:>2024-01-01` |
-| `dc:` | Date created | `dc:thisweek` |
-| `da:` | Date accessed | `da:last7days` |
-| `len:` | Filename length | `len:>50` |
+| `dc:` | Creation-date alias (currently uses modified time) | `dc:thisweek` |
+| `da:` | Access-date alias (currently uses modified time) | `da:last7days` |
+| `len:` | Filename length in UTF-8 bytes | `len:>50` |
 | `case:` | Case-sensitive | `case:README` |
 | `regex:` | Regular expression | `regex:^test_` |
 | `ww:` | Whole word match | `ww:test` |
 | `wfn:` | Whole filename match | `wfn:Makefile` |
 | `content:` / `infile:` | Content search | `infile:TODO` |
-| `audio:` `video:` `pic:` `doc:` `zip:` | File type macros | `audio:` = all audio files |
+| `audio:` `video:` `pic:` `doc:` `exe:` `zip:` | File type macros | `audio:` = all audio files |
 
 </details>
+
+Regex uses RE2. Put other conditions before `regex:`, which consumes all remaining input. `wfn:` matches the complete filename including its extension; `parent:` requires a full directory path. The long date aliases are `datemodified:`, `datecreated:`, and `dateaccessed:`; the latter two currently use modification time as well. See the [complete website reference](https://ying-zhang.cn/MacEverything/#syntax).
 
 ### Full-Text Content Search
 
@@ -196,19 +198,11 @@ Make sure `~/.local/bin` is in `PATH`, or invoke `/Applications/MacEverything.ap
 
 #### Release Status and Downloads
 
-**1.10.20 is officially released (October 21, 2026, build 14).** Static RE2/Abseil linking fixes the post-install startup crash, with startup verified by the user on another Mac. GitHub Releases, the Homebrew Cask, and the personal blog download page provide Apple Silicon and Intel packages; 1.5.30 remains available as a historical release.
+**Current release:** 1.11.15, available for Apple Silicon and Intel Macs.
 
-Install or upgrade with Homebrew Cask:
+Download the appropriate DMG from the [v1.11.15 GitHub Release](https://github.com/ying-zhang/MacEverything/releases/tag/v1.11.15):
 
-```bash
-brew tap ying-zhang/maceverything
-brew install --cask maceverything
-# Later upgrades: brew upgrade --cask maceverything
-```
-
-Alternatively, download the appropriate DMG from [Releases](https://github.com/ying-zhang/MacEverything/releases):
-
-1. Choose `MacEverything-arm64.dmg` for Apple Silicon or `MacEverything-x86_64.dmg` for Intel
+1. Choose [MacEverything-arm64.dmg](https://github.com/ying-zhang/MacEverything/releases/download/v1.11.15/MacEverything-arm64.dmg) for Apple Silicon or [MacEverything-x86_64.dmg](https://github.com/ying-zhang/MacEverything/releases/download/v1.11.15/MacEverything-x86_64.dmg) for Intel
 2. Drag `MacEverything.app` to Applications
 3. On first launch choose **Quick Start** (selected folders only) or **Full Disk Search** (requires Full Disk Access)
 4. Wait for initial scan (~14 seconds)
@@ -275,14 +269,14 @@ The same C++20 core engine supports three usage modes:
 | **SearchEngine** | Trigram inverted index (name + path dual indexes) + multi-term path/name candidate merging + competitive optimal candidate selection + SoA columnar filtering |
 | **ContentIndex** | Trigram full-text inverted index, FNV-1a hash incremental updates, only re-indexes changed files |
 | **SIMDSearch** | ARM NEON 128-bit first-last byte vectorized matching + 2x loop unrolling, 11.5 GB/s single-thread |
-| **IndexPersistence** | WAL + CRC32 + paged dirty-page flushing + atomic rename, COW non-blocking compaction (lock held < 100ms) |
+| **IndexPersistence** | WAL + CRC32 + v6 SoA base snapshots + atomic replacement; COW builds compacted data in a separate copy |
 | **FileSystemWatcher** | FSEvents + eventId incremental replay + log truncation detection with automatic subtree rescan |
-| **PathTable** | Path string interning — directory paths stored as `uint32` index, saving ~550MB at million-file scale |
+| **StringPool** | Interned names and deduplicated directory paths; each record stores a `uint32` path index |
 | **QueryParser** | Full AST pipeline: Tokenizer → FilterParser → Parser → QueryAST, 30+ filter keywords |
 
 ### Benchmarks
 
-Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query types:
+Historical benchmark environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query types. These figures were not remeasured for the current fixes:
 
 #### Search Latency
 
@@ -316,13 +310,13 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 |------------|--------|
 | `getattrlistbulk` | Single syscall for bulk file attributes — avoids per-file `stat` |
 | Trigram inverted index | Sub-linear search: 33x–308x faster than linear scan |
-| Filename/path dual indexes | Plain terms search both filenames and full paths, reusing the existing Trigram index and PathTable without content-index-scale disk growth |
+| Filename/path dual indexes | Plain terms search both filenames and full paths, reusing the existing Trigram index and path string pool without content-index-scale disk growth |
 | SoA columnar layout | Cache-friendly memory access, SIMD batch-checks 16 records for pure filter queries |
 | `__builtin_prefetch` | Prefetch distance 8, hides random memory access latency during candidate verification |
 | ARM NEON SIMD | 128-bit vectorized string matching, 2x loop unrolling, approaches memory bandwidth ceiling |
 | GCD parallel scan | Multi-core linear scan when trigram can't accelerate |
 | StringPool contiguous memory | Filenames packed in a single `char` buffer, SIMD-friendly |
-| PathTable interning | Directory paths stored as `uint32` index — saves ~550MB at million-file scale |
+| Path string pool | Deduplicated directory strings with a `uint32` index per record |
 | v6 Flat SoA two-phase load | Loads base records first so search becomes available quickly, then builds Trigram, pinyin, path, extension, CJK bigram, and recent-file indexes in the background |
 | Phase 2 index reliability guard | Records added or updated during background index construction are committed to base data first and replayed when indexes swap in; Phase 2 is skipped under low-memory pressure to avoid partial indexes |
 | Unicode query normalization | Tries NFC/NFD variants for non-ASCII queries at query time, matching macOS filename representations without maintaining a second index |
@@ -336,19 +330,19 @@ Test environment: macOS Darwin 24.3.0, **5.4 million indexed files**, 48 query t
 | Multi-term composite scoring | Ranks by miss count (query terms not in filename) + match quality (exact/prefix/boundary/substring) + path length, then record index — more precise results for multi-word queries |
 | Continuous-input candidate reuse | A longer plain substring query rechecks the previous query's full hit list, not the truncated rows shown in the window |
 | Match-stage top-K | Each thread keeps only the best `maxResults` rows before merging, cutting temporary memory and sort cost on wide queries |
-| COW non-blocking compaction | Copy-on-write, exclusive lock held < 100ms during compaction (was 30–60s) |
-| Paged incremental persistence | Only writes dirty pages, typical flush I/O drops from ~112MB to KB-level |
+| COW compaction | Builds compacted data in a separate copy, with a brief exclusive lock for the swap |
+| v6 snapshots and WAL | Appends changes to WAL, fully rewrites base snapshots on flush, and retains recovery logs on write failure |
 
 ### Testing
 
-88 C++ test modules plus Swift tests cover the full stack, with AddressSanitizer and ThreadSanitizer support:
+C++ module tests plus Swift and Python tests cover the full stack, with AddressSanitizer and ThreadSanitizer support:
 
 ```bash
 make test          # Fast unit tests + bridge lint
 make test-slow     # Integration tests (full disk scan, FSEvents, E2E)
 make test-all      # All tests
 make test-asan     # AddressSanitizer
-make test-tsan     # ThreadSanitizer
+make test-tsan     # ThreadSanitizer (Part 5 by default)
 ```
 
 Coverage:
@@ -373,7 +367,7 @@ MacEverything/
 │   ├── HttpServer         # Embedded REST API server
 │   ├── SIMDSearch         # ARM NEON vectorized search
 │   ├── QueryAST/Parser    # Full query language pipeline
-│   ├── PathTable          # String interning table
+│   ├── StringPool         # Name/path pools (PathTable retained for compatibility)
 │   └── ServiceEngine      # Lifecycle orchestration
 ├── Bridge/                # Objective-C++ bridge
 │   └── MacSearchBridge    # C++ ↔ Swift zero-overhead interop

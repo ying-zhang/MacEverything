@@ -1269,6 +1269,18 @@ uint32_t SearchEngine::indexForPath(const std::string& fullPath) const {
     return findIndexForLowerPathUnlocked(me::toLower(fullPath));
 }
 
+std::vector<std::string> SearchEngine::pathsForFileIdentity(uint64_t inode, int32_t devId) const {
+    std::vector<std::string> paths;
+    if (inode == 0) return paths;
+
+    std::shared_lock lock(mutex_);
+    for (uint32_t idx = 0; idx < types_.size(); ++idx) {
+        if (types_[idx] == 0 || inodes_[idx] != inode || devIds_[idx] != devId) continue;
+        paths.push_back(makeFullPath(pathPool_.str(pathIndices_[idx]), origNamePool_.str(idx)));
+    }
+    return paths;
+}
+
 std::vector<FileRecord> SearchEngine::exportRecords() const {
     std::shared_lock lock(mutex_);
     std::vector<FileRecord> result;

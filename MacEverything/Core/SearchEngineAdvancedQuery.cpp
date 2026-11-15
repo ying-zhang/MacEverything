@@ -1026,7 +1026,6 @@ std::vector<uint32_t> SearchEngine::queryAdvanced(const std::string& input,
                         cjkCands.size() <= totalSize / 4) {
                         nameCands = std::move(cjkCands);
                         nameOk = true;
-                        stage1AllFound = true;
                     }
                 }
             }

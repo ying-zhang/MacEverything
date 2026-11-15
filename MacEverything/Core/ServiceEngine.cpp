@@ -7,6 +7,7 @@
 #include <filesystem>
 #include <fnmatch.h>
 #include <sstream>
+#include <cctype>
 
 namespace fs = std::filesystem;
 
@@ -1450,17 +1451,23 @@ void ServiceEngine::shutdown() {
 
 bool ServiceEngine::isInsideAppBundle(const std::string& path) {
     size_t pos = 0;
-    while ((pos = path.find(".app/", pos)) != std::string::npos) {
-        if (pos >= 1 && path[pos - 1] != '/') {
-            return true;
+    while ((pos = path.find('.', pos)) != std::string::npos) {
+        if (pos + 5 <= path.size() && path[pos + 4] == '/') {
+            const bool appSuffix =
+                std::tolower(static_cast<unsigned char>(path[pos + 1])) == 'a' &&
+                std::tolower(static_cast<unsigned char>(path[pos + 2])) == 'p' &&
+                std::tolower(static_cast<unsigned char>(path[pos + 3])) == 'p';
+            if (appSuffix && pos > 0 && path[pos - 1] != '/') return true;
         }
-        pos += 5;
+        ++pos;
     }
     return false;
 }
 
 bool ServiceEngine::pathEndsWithApp(const std::string& path) {
     return path.size() > 4 &&
-           path[path.size()-4] == '.' && path[path.size()-3] == 'a' &&
-           path[path.size()-2] == 'p' && path[path.size()-1] == 'p';
+           path[path.size()-4] == '.' &&
+           std::tolower(static_cast<unsigned char>(path[path.size()-3])) == 'a' &&
+           std::tolower(static_cast<unsigned char>(path[path.size()-2])) == 'p' &&
+           std::tolower(static_cast<unsigned char>(path[path.size()-1])) == 'p';
 }

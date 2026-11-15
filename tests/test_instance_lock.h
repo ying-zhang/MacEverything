@@ -63,13 +63,13 @@ static void runInstanceLockTests() {
     // Test 6: Lock file contains diagnostic metadata
     {
         InstanceLock lock;
-        check(lock.tryLock(lockPath, "1.10.20"), "Lock succeeds with version");
+        check(lock.tryLock(lockPath, "1.11.15"), "Lock succeeds with version");
         // Read the lock file contents
         std::ifstream lf(lockPath);
         std::string content((std::istreambuf_iterator<char>(lf)),
                             std::istreambuf_iterator<char>());
         check(content.find("pid=") != std::string::npos, "Lock file contains PID");
-        check(content.find("version=1.10.20") != std::string::npos, "Lock file contains version");
+        check(content.find("version=1.11.15") != std::string::npos, "Lock file contains version");
         check(content.find("started=") != std::string::npos, "Lock file contains startup timestamp");
         lock.unlock();
     }
@@ -78,7 +78,7 @@ static void runInstanceLockTests() {
     {
         InstanceLock lock;
         InstanceLockError err = InstanceLockError::None;
-        check(!lock.tryLock("/nonexistent_dir_xyzzy/sub/lock", "1.10.20", &err),
+        check(!lock.tryLock("/nonexistent_dir_xyzzy/sub/lock", "1.11.15", &err),
               "Lock fails on non-existent directory");
         check(err == InstanceLockError::OpenFailed,
               "Error reason is OpenFailed for invalid path");
@@ -96,7 +96,7 @@ static void runInstanceLockTests() {
               "Hard-linked lock test fixture is created");
         InstanceLock lock;
         InstanceLockError err = InstanceLockError::None;
-        check(!lock.tryLock(lockPath, "1.10.20", &err),
+        check(!lock.tryLock(lockPath, "1.11.15", &err),
               "Hard-linked lock file is rejected");
         std::ifstream victim(victimPath);
         std::string content((std::istreambuf_iterator<char>(victim)),

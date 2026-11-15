@@ -330,7 +330,7 @@
 "File Size and Modified Date Filters" = "File size and modified date filters";
 "%d active filters" = "%d active filters";
 "Files containing keyword" = "Files containing keyword";
-"ECMAScript regex (case-insensitive)" = "ECMAScript regex (case-insensitive)";
+"RE2 regex (case-insensitive)" = "RE2 regex (case-insensitive)";
 "Example: regex:^test  regex:\\.cpp$" = "Example: regex:^test  regex:\\.cpp$";
 "Extension Filter" = "Extension Filter";
 "Files with .cpp extension" = "Files with .cpp extension";
@@ -349,7 +349,7 @@
 "Path Filter" = "Path Filter";
 "Path contains keyword" = "Path contains keyword";
 "Path does not contain keyword" = "Path does not contain keyword";
-"Immediate parent matches" = "Immediate parent matches";
+"Exact full parent directory path" = "Exact full parent directory path";
 "Directory depth less than 3" = "Directory depth less than 3";
 "Directory depth greater than 5" = "Directory depth greater than 5";
 "Date Filter" = "Date Filter";
@@ -365,14 +365,14 @@
 "Modified between Jan and Jun 2024" = "Modified between Jan and Jun 2024";
 "Also: datemodified:  datecreated:  dateaccessed:" = "Also: datemodified:  datecreated:  dateaccessed:";
 "Name Length Filter" = "Name Length Filter";
-"Filename longer than 10 chars" = "Filename longer than 10 chars";
-"Filename shorter than 5 chars" = "Filename shorter than 5 chars";
-"Filename at least 8 chars" = "Filename at least 8 chars";
+"Filename longer than 10 UTF-8 bytes" = "Filename longer than 10 UTF-8 bytes";
+"Filename shorter than 5 UTF-8 bytes" = "Filename shorter than 5 UTF-8 bytes";
+"Filename at least 8 UTF-8 bytes" = "Filename at least 8 UTF-8 bytes";
 "Match Modifiers" = "Match Modifiers";
 "Force case-sensitive match" = "Force case-sensitive match";
 "Force case-insensitive match" = "Force case-insensitive match";
 "Whole word match" = "Whole word match";
-"Whole filename match (without extension)" = "Whole filename match (without extension)";
+"Whole filename match (including extension)" = "Whole filename match (including extension)";
 "Aliases: wholeword:  wholefilename:" = "Aliases: wholeword:  wholefilename:";
 "File Type Macros" = "File Type Macros";
 "Structured Path Query" = "Structured Path Query";
